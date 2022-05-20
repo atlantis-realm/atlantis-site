@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to Atlantis</title>
+
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
+
+            video {
+                object-fit: cover;
+                width: 100vw;
+                height: 100vh;
+                position: fixed;
+                top: 0;
+                left: 0;
+            }
+
+            body {
+                background-color: #2e4057;
+                margin: 0;
+                overflow: hidden;
+            }
+
+            #container {
+                position: relative;
+                height: 100vh;
+                text-align: center;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }
+
+            svg {
+                width: 100%;
+            }
+
+
+            svg text {
+                font-family: 'Cinzel Decorative', cursive;
+                letter-spacing: 2px;
+                stroke: #eeefb7;
+                font-size: 1em;
+                font-weight: 900;
+                stroke-width: 0.24;
+                animation: textAnimate 5s infinite alternate;
+            }
+
+            @keyframes textAnimate {
+                0% {
+                    stroke-dasharray: 0 50%;
+                    stroke-dashoffset: 20%;
+                    fill: hsl(45, 67%, 74%)
+                }
+
+                100% {
+                    stroke-dasharray: 50% 0;
+                    stroke-dashoffstet: -20%;
+                    fill: rgba(8, 107, 125, 0.666);
+                }
+
+            }
+        </style>
+    </head>
+    <body>
+        <video autoplay muted loop id="myVideo">
+            <source src="background.m4v" type="video/mp4">
+            Your browser does not support HTML5 video.
+        </video>
+        <div id="container">
+            <svg viewBox="0 0 100 80">
+                <text x="52%" y="55%" text-anchor="middle">
+                    Atlantis
+                </text>
+            </svg>
+        </div>
+    </body>
+</html>
