@@ -20,12 +20,6 @@
 		left: 0;
 	}
 
-	body {
-		background-color: #2e4057;
-		margin: 0;
-		overflow: hidden;
-	}
-
 	#container {
 		position: relative;
 		height: 100vh;
