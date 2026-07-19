@@ -35,6 +35,11 @@
 		<p>We're creating a collective mood board to define our design language direction... And brainstorm ideas for visualising Atlantis as an actual city.</p>
 		
 		<p>We're also starting a collaborative playlist to share favourite songs with each other. :D</p>
+
+		<p>
+			<a href="/dice/themes" class="dice-themes-link">Browse stream dice themes</a>
+			— preview materials and grab the <code>!dicethemes</code> chat command for each one.
+		</p>
 	</div>
 </section>
 
@@ -182,6 +187,24 @@
 	.discord-button:active {
 		transform: translateY(0);
 		box-shadow: 0 2px 10px hsla(45, 67%, 74%, 0.4);
+	}
+
+	.dice-themes-link {
+		color: hsl(45, 67%, 74%);
+		font-weight: 600;
+		text-decoration: underline;
+		text-underline-offset: 0.18em;
+	}
+
+	.dice-themes-link:hover {
+		color: hsl(45, 67%, 82%);
+	}
+
+	#community-section code {
+		font-size: 0.95em;
+		padding: 0.1rem 0.35rem;
+		border-radius: 4px;
+		background: rgba(0, 0, 0, 0.22);
 	}
 
 	@media (max-width: 768px) {
