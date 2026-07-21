@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@ladyofcode/dice-engine@0.1.14'
+  - '@ladyofcode/dice-themes@0.1.14'

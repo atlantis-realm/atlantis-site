@@ -3,6 +3,7 @@
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
+	"packageManager": "pnpm@11.9.0",
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
@@ -11,7 +12,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
-		"lint": "prettier --check . && eslint ."
+		"lint": "prettier --check . && eslint .",
+		"update:dice": "pnpm update @ladyofcode/dice-engine @ladyofcode/dice-themes"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",
@@ -34,8 +36,8 @@
 		"vite": "^7.1.7"
 	},
 	"dependencies": {
-		"@ladyofcode/dice-engine": "0.1.12",
-		"@ladyofcode/dice-themes": "0.1.12",
+		"@ladyofcode/dice-engine": "^0.1.14",
+		"@ladyofcode/dice-themes": "^0.1.14",
 		"three": "^0.184.0"
 	}
 }
