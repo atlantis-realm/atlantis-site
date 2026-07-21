@@ -36,8 +36,8 @@
 		"vite": "^7.1.7"
 	},
 	"dependencies": {
-		"@ladyofcode/dice-engine": "^0.1.14",
-		"@ladyofcode/dice-themes": "^0.1.14",
+		"@ladyofcode/dice-engine": "^0.1.15",
+		"@ladyofcode/dice-themes": "^0.1.15",
 		"three": "^0.184.0"
 	}
 }
