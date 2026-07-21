@@ -5,9 +5,14 @@ ARG PACKAGES_READ_TOKEN
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN corepack enable pnpm && \
-    if [ -n "$PACKAGES_READ_TOKEN" ]; then \
-      echo "//npm.pkg.github.com/:_authToken=${PACKAGES_READ_TOKEN}" >> .npmrc; \
+    if [ -z "$PACKAGES_READ_TOKEN" ]; then \
+      echo "ERROR: PACKAGES_READ_TOKEN is empty during build." >&2; \
+      echo "Shared variables are not injected automatically. On each Coolify app add:" >&2; \
+      echo "  PACKAGES_READ_TOKEN={{server.PACKAGES_READ_TOKEN}}" >&2; \
+      echo "Enable Build Variable (and Literal if the token contains \$)." >&2; \
+      exit 1; \
     fi && \
+    echo "//npm.pkg.github.com/:_authToken=${PACKAGES_READ_TOKEN}" >> .npmrc && \
     pnpm install --frozen-lockfile
 
 COPY . .
