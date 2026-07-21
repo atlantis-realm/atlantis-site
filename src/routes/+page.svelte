@@ -37,7 +37,7 @@
 		<p>We're also starting a collaborative playlist to share favourite songs with each other. :D</p>
 
 		<p>
-			<a href="/dice/themes" class="dice-themes-link">Browse stream dice themes</a>
+			<a href="/ladyofcode/dice-themes" class="dice-themes-link">Browse stream dice themes</a>
 			— preview materials and grab the <code>!dicethemes</code> chat command for each one.
 		</p>
 	</div>
