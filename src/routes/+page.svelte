@@ -33,7 +33,7 @@
 
 		<h2>Some things we're doing right now</h2>
 		<p>We're creating a collective mood board to define our design language direction... And brainstorm ideas for visualising Atlantis as an actual city.</p>
-		
+
 		<p>We're also starting a collaborative playlist to share favourite songs with each other. :D</p>
 
 		<p>
