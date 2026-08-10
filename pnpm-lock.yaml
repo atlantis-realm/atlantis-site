@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@ladyofcode/dice-engine':
-        specifier: ^0.1.15
-        version: 0.1.15(three@0.184.0)
+        specifier: ^0.1.16
+        version: 0.1.16(three@0.184.0)
       '@ladyofcode/dice-themes':
-        specifier: ^0.1.15
-        version: 0.1.15
+        specifier: ^0.1.16
+        version: 0.1.16
       three:
         specifier: ^0.184.0
         version: 0.184.0
@@ -317,13 +317,13 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@ladyofcode/dice-engine@0.1.15':
-    resolution: {integrity: sha512-vOm8iLZzTcGkRwseiZbnikmteSMrx5hrr/ucMsDeZQGni/RUdDeejeiR+o0tN+Ad01EChMS0xbbfaUh1YhwnAg==, tarball: https://npm.pkg.github.com/download/@ladyofcode/dice-engine/0.1.15/6a33b2e280243b58ec1e175797c52552e9d3e69f}
+  '@ladyofcode/dice-engine@0.1.16':
+    resolution: {integrity: sha512-dWCDgIJI3hSXQ+IV0Bln1gd+2ibl5wrpFParRRxyt7eyVycPZGkbQktim9aob/1s/gdbGRlvmtRZwfHPff1jjQ==, tarball: https://npm.pkg.github.com/download/@ladyofcode/dice-engine/0.1.16/166fa8ff804332ec71b72779c9bd4ec0f122146a}
     peerDependencies:
       three: ^0.184.0
 
-  '@ladyofcode/dice-themes@0.1.15':
-    resolution: {integrity: sha512-8lz+uTQT4NBeShWDDYjkdc5zGq1ibUdkxS8+H+rIYNglCHii3T0318Y6M1fALJk25VhevGeNRZFAeiwkYZOgqA==, tarball: https://npm.pkg.github.com/download/@ladyofcode/dice-themes/0.1.15/a9b34d71dfd77c9fa8042f93afd79f9f6f4ec65f}
+  '@ladyofcode/dice-themes@0.1.16':
+    resolution: {integrity: sha512-Te6lGjqv6hIU0QUWhyn4IsDDusmL+Posn6XGPdMHLbQ3Gcpf87TcWbKFfS5OjiMW7FxbmpVtAXg3la9OUnLH/A==, tarball: https://npm.pkg.github.com/download/@ladyofcode/dice-themes/0.1.16/72e005843fee7cea4e2597f9151b38e39a52d0ef}
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
@@ -1377,12 +1377,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@ladyofcode/dice-engine@0.1.15(three@0.184.0)':
+  '@ladyofcode/dice-engine@0.1.16(three@0.184.0)':
     dependencies:
-      '@ladyofcode/dice-themes': 0.1.15
+      '@ladyofcode/dice-themes': 0.1.16
       three: 0.184.0
 
-  '@ladyofcode/dice-themes@0.1.15': {}
+  '@ladyofcode/dice-themes@0.1.16': {}
 
   '@polka/url@1.0.0-next.29': {}
 
