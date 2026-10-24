@@ -108,12 +108,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .inspector { display: flex; flex-direction: column; align-self: start; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); max-height: calc(100vh - 24px); }
 @media (max-width: 960px) { .inspector { position: static; max-height: none; } }
-.tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
-.tab { flex: 1 0 auto; border: 0; background: none; padding: 11px 10px 9px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 12px; color: var(--muted); line-height: 1.2; text-align: left; }
-.tab b { display: block; font: 400 15px/1.2 var(--font-display); color: var(--ink); }
-.tab[aria-selected="true"] { border-bottom-color: var(--gold); }
+.tabs { flex: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); }
+.tab { min-width: 0; border: 1px solid transparent; border-radius: 6px; background: none; padding: 7px 9px; cursor: pointer; font-size: 11.5px; color: var(--muted); line-height: 1.25; text-align: left; overflow: hidden; }
+.tab b { display: block; font: 400 15px/1.2 var(--font-display); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab:hover { border-color: var(--line); }
+.tab[aria-selected="true"] { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 10%, transparent); }
 .tab[aria-selected="true"] b { color: var(--gold); }
-.panel { overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+.tab:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
 .panel h3 { font-size: 21px; }
 .kind { font: 500 11px/1 var(--font-data); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -2659,7 +2662,7 @@ if (typeof module !== "undefined") module.exports = CityGen;
   const NBTAB = "neighbourhoods";
   const TABS = () => [{ id: CITY, name: "Whole city", sub: "Terrain · spokes · skyline" }, { id: NBTAB, name: "Neighbourhoods", sub: "Blobs · types · names" }, ...plan.districts.map((d) => ({ id: d.id, name: d.name, sub: plan.scene.rings.find((r) => r.id === d.ring)?.label || "" }))];
   function drawTabs() {
-    $("tabs").innerHTML = TABS().map((t) => `<button class="tab" role="tab" type="button" id="tab-${t.id}" aria-selected="${t.id === selected}" data-tab="${t.id}"><b>${esc(t.name)}</b>${esc(t.sub)}</button>`).join("");
+    $("tabs").innerHTML = TABS().map((t) => `<button class="tab" role="tab" type="button" id="tab-${t.id}" aria-selected="${t.id === selected}" data-tab="${t.id}" title="${esc(t.name)}${t.sub ? " · " + esc(t.sub) : ""}"><b>${esc(t.name)}</b><span>${esc(t.sub)}</span></button>`).join("");
   }
   const num = (path, label, unit, o = {}) => ({ path, label, unit, ...o });
   function owner() { return selected === CITY || selected === NBTAB ? null : plan.districts.find((x) => x.id === selected); }
@@ -2932,7 +2935,7 @@ if (typeof module !== "undefined") module.exports = CityGen;
     if (plan && JSON.stringify(body) === JSON.stringify(plan)) return;
     const first = !plan;
     plan = clone(body);
-    if (selected !== CITY && !plan.districts.some((d) => d.id === selected)) selected = CITY;
+    if (selected !== CITY && selected !== NBTAB && !plan.districts.some((d) => d.id === selected)) selected = CITY;
     if (first) { showPlan(); return; }
     const typing = $("panel").contains(document.activeElement) && document.activeElement !== document.body;
     if (typing) { formStale = true; render(false); } else render(true);

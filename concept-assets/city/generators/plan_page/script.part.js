@@ -282,7 +282,7 @@
   const NBTAB = "neighbourhoods";
   const TABS = () => [{ id: CITY, name: "Whole city", sub: "Terrain · spokes · skyline" }, { id: NBTAB, name: "Neighbourhoods", sub: "Blobs · types · names" }, ...plan.districts.map((d) => ({ id: d.id, name: d.name, sub: plan.scene.rings.find((r) => r.id === d.ring)?.label || "" }))];
   function drawTabs() {
-    $("tabs").innerHTML = TABS().map((t) => `<button class="tab" role="tab" type="button" id="tab-${t.id}" aria-selected="${t.id === selected}" data-tab="${t.id}"><b>${esc(t.name)}</b>${esc(t.sub)}</button>`).join("");
+    $("tabs").innerHTML = TABS().map((t) => `<button class="tab" role="tab" type="button" id="tab-${t.id}" aria-selected="${t.id === selected}" data-tab="${t.id}" title="${esc(t.name)}${t.sub ? " · " + esc(t.sub) : ""}"><b>${esc(t.name)}</b><span>${esc(t.sub)}</span></button>`).join("");
   }
   const num = (path, label, unit, o = {}) => ({ path, label, unit, ...o });
   function owner() { return selected === CITY || selected === NBTAB ? null : plan.districts.find((x) => x.id === selected); }
@@ -555,7 +555,7 @@
     if (plan && JSON.stringify(body) === JSON.stringify(plan)) return;
     const first = !plan;
     plan = clone(body);
-    if (selected !== CITY && !plan.districts.some((d) => d.id === selected)) selected = CITY;
+    if (selected !== CITY && selected !== NBTAB && !plan.districts.some((d) => d.id === selected)) selected = CITY;
     if (first) { showPlan(); return; }
     const typing = $("panel").contains(document.activeElement) && document.activeElement !== document.body;
     if (typing) { formStale = true; render(false); } else render(true);
