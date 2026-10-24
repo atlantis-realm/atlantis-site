@@ -32,35 +32,37 @@
 
 		<div class="divider"></div>
 
-		<h2>News</h2>
-		{#if featuredPost}
-			<div class="news-grid">
-				<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
-					{#if featuredPost.image}
-						<img src={featuredPost.image} alt="" />
-					{:else}
-						<div class="image-placeholder added">Featured image</div>
-					{/if}
-					<h3>{featuredPost.title}</h3>
-					<p class="news-meta">{featuredPost.author} · {featuredPost.date}</p>
-					<p>{featuredPost.excerpt}</p>
-				</a>
-				<div class="news-small">
-					{#each smallPosts as post (post.slug)}
-						<a href="/blog/{post.slug}" class="news-card">
-							{#if post.image}
-								<img src={post.image} alt="" />
-							{:else}
-								<div class="image-placeholder added">Image</div>
-							{/if}
-							<h3>{post.title}</h3>
-							<p class="news-meta">{post.author} · {post.date}</p>
-						</a>
-					{/each}
+		<div class="news-section">
+			<h2>News</h2>
+			{#if featuredPost}
+				<div class="news-grid">
+					<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
+						{#if featuredPost.image}
+							<img src={featuredPost.image} alt="" />
+						{:else}
+							<div class="image-placeholder added">Featured image</div>
+						{/if}
+						<h3>{featuredPost.title}</h3>
+						<p class="news-meta">{featuredPost.author} · {featuredPost.date}</p>
+						<p>{featuredPost.excerpt}</p>
+					</a>
+					<div class="news-small">
+						{#each smallPosts as post (post.slug)}
+							<a href="/blog/{post.slug}" class="news-card">
+								{#if post.image}
+									<img src={post.image} alt="" />
+								{:else}
+									<div class="image-placeholder added">Image</div>
+								{/if}
+								<h3>{post.title}</h3>
+								<p class="news-meta">{post.author} · {post.date}</p>
+							</a>
+						{/each}
+					</div>
 				</div>
-			</div>
-		{/if}
-		<p class="added"><a href="/blog" class="text-link">All news</a></p>
+			{/if}
+			<p class="added"><a href="/blog" class="text-link">All news</a></p>
+		</div>
 
 		<div class="divider"></div>
 
@@ -185,7 +187,7 @@
 	}
 
 	.content-wrapper {
-		max-width: 800px;
+		/* max-width: 800px; */
 		width: 100%;
 		text-align: center;
 	}
@@ -284,7 +286,7 @@
 
 	.news-grid {
 		display: grid;
-		grid-template-columns: 3fr 2fr;
+		grid-template-columns: 1fr 1fr;
 		gap: 1.5rem;
 		text-align: left;
 	}
@@ -305,7 +307,22 @@
 		text-decoration: none;
 		transition: background 0.2s ease;
 	}
+	.news-small .news-card:nth-child(1){
+		clip-path: polygon(100% 0, 100% 5%, 100% 100%, 0 100%, 0 5%, 5% 0);	
+	}
+	.news-small .news-card:nth-child(2){
+		clip-path: polygon(95% 0, 100% 5%, 100% 100%, 0 100%, 0 0, 20% 0);	
+	}
+	.news-small .news-card:nth-child(3){
+		clip-path: polygon(0 0, 100% 0, 100% 100%, 5% 100%, 0 95%, 0% 50%);	
+	}
+	.news-small .news-card:nth-child(4){
+		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);	
+	}
 
+	.news-card--main{
+		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);
+	}
 	.news-card:hover {
 		background: rgba(0, 0, 0, 0.3);
 	}
