@@ -184,6 +184,23 @@
 		font-family: 'Ubuntu Sans Mono', monospace;
 	}
 
+	/* 2px square dots on a 100px grid with a slowly pulsing glow, layered over the gradient */
+	#community-section::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		pointer-events: none;
+		background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='g' filterUnits='userSpaceOnUse' x='0' y='0' width='100' height='100'%3E%3CfeGaussianBlur stdDeviation='4' result='b'/%3E%3CfeMerge%3E%3CfeMergeNode in='b'/%3E%3CfeMergeNode in='b'/%3E%3C/feMerge%3E%3C/filter%3E%3Crect x='49' y='49' width='2' height='2' fill='hsl(45, 67%25, 74%25)' filter='url(%23g)' opacity='0.1'%3E%3Canimate attributeName='opacity' values='0.1;1;0.1' dur='8s' repeatCount='indefinite' calcMode='spline' keySplines='0.4 0 0.6 1;0.4 0 0.6 1'/%3E%3C/rect%3E%3Crect x='49' y='49' width='2' height='2' fill='hsl(45, 67%25, 74%25)'/%3E%3C/svg%3E")
+			0 0 / 100px 100px repeat;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		#community-section::before {
+			background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='g' filterUnits='userSpaceOnUse' x='0' y='0' width='100' height='100'%3E%3CfeGaussianBlur stdDeviation='4' result='b'/%3E%3CfeMerge%3E%3CfeMergeNode in='b'/%3E%3CfeMergeNode in='b'/%3E%3C/feMerge%3E%3C/filter%3E%3Crect x='49' y='49' width='2' height='2' fill='hsl(45, 67%25, 74%25)' filter='url(%23g)' opacity='0.5'/%3E%3Crect x='49' y='49' width='2' height='2' fill='hsl(45, 67%25, 74%25)'/%3E%3C/svg%3E");
+		}
+	}
+
 	.content-wrapper {
 		max-width: 800px;
 		width: 100%;
@@ -300,14 +317,14 @@
 		display: block;
 		padding: 0.75rem;
 		border-radius: 8px;
-		background: rgba(0, 0, 0, 0.18);
+		background: #243448;
 		color: inherit;
 		text-decoration: none;
 		transition: background 0.2s ease;
 	}
 
 	.news-card:hover {
-		background: rgba(0, 0, 0, 0.3);
+		background: #1d2b3c;
 	}
 
 	.news-card img,
@@ -322,7 +339,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(8, 107, 125, 0.35);
+		background: #1d4a5d;
 		color: rgba(238, 239, 183, 0.7);
 	}
 
@@ -367,7 +384,7 @@
 	.project-card {
 		padding: 1rem;
 		border-radius: 8px;
-		background: rgba(0, 0, 0, 0.18);
+		background: #243448;
 	}
 
 	#community-section .project-card p {
@@ -432,7 +449,7 @@
 		font-size: 0.95em;
 		padding: 0.1rem 0.35rem;
 		border-radius: 4px;
-		background: rgba(0, 0, 0, 0.22);
+		background: #223245;
 	}
 
 	@media (max-width: 768px) {
