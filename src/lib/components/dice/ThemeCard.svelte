@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { resolveCatalogTheme, themeChatCommand, type CatalogTheme } from '$lib/dice/themeCatalog';
+	import {
+		resolveCatalogTheme,
+		themeChatCommand,
+		type CatalogTheme
+	} from '#lib/dice/themeCatalog.js';
 
 	interface Props {
 		entry: CatalogTheme;
