@@ -53,50 +53,47 @@
 
 <section id="community-section">
 	<div class="content-wrapper">
-		<div>
-			<h2>Think MMORPG vibes, but tech.</h2>
-			<p class="intro">
-				Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
-			</p>
-			<p class="intro">We approach our crafts and each other with XXX.</p>
-			<p class="added">
-				<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
-			</p>
-		</div>
+		<h2>Think MMORPG vibes, but tech.</h2>
+		<p class="intro">
+			Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
+		</p>
+		<p class="intro">We approach our crafts and each other with XXX.</p>
+		<p class="added">
+			<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
+		</p>
 
 		<div class="divider"></div>
 
-		<div class="news-section">
-			<h2>News</h2>
-			{#if featuredPost}
-				<div class="news-grid">
-					<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
-						{#if featuredPost.image}
-							<img src={featuredPost.image} alt="" />
-						{:else}
-							<div class="image-placeholder added">Featured image</div>
-						{/if}
-						<h3>{featuredPost.title}</h3>
-						<p class="news-meta">{featuredPost.author} · {featuredPost.date}</p>
-						<p>{featuredPost.excerpt}</p>
-					</a>
-					<div class="news-small">
-						{#each smallPosts as post (post.slug)}
-							<a href="/blog/{post.slug}" class="news-card">
-								{#if post.image}
-									<img src={post.image} alt="" />
-								{:else}
-									<div class="image-placeholder added">Image</div>
-								{/if}
-								<h3>{post.title}</h3>
-								<p class="news-meta">{post.author} · {post.date}</p>
-							</a>
-						{/each}
-					</div>
+		<h2>News</h2>
+		{#if featuredPost}
+			<div class="news-grid">
+				<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
+					{#if featuredPost.image}
+						<img src={featuredPost.image} alt="" />
+					{:else}
+						<div class="image-placeholder added">Featured image</div>
+					{/if}
+					<h3>{featuredPost.title}</h3>
+					<p class="news-meta">{featuredPost.author} · {featuredPost.date}</p>
+					<p>{featuredPost.excerpt}</p>
+				</a>
+				<div class="news-small">
+					{#each smallPosts as post (post.slug)}
+						<a href="/blog/{post.slug}" class="news-card">
+							{#if post.image}
+								<img src={post.image} alt="" />
+							{:else}
+								<div class="image-placeholder added">Image</div>
+							{/if}
+							<h3>{post.title}</h3>
+							<p class="news-meta">{post.author} · {post.date}</p>
+						</a>
+					{/each}
 				</div>
-			{/if}
-			<p class="added"><a href="/blog" class="text-link">All news</a></p>
-		</div>
+			</div>
+		{/if}
+		<p class="added"><a href="/blog" class="text-link">All news</a></p>
+	
 
 		<div class="divider"></div>
 
@@ -230,7 +227,6 @@
 	}
 
 	.content-wrapper {
-		/* max-width: 800px; */
 		width: 100%;
 		text-align: center;
 	}
