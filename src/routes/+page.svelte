@@ -53,14 +53,16 @@
 
 <section id="community-section">
 	<div class="content-wrapper">
-		<p class="intro">
-			Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
-		</p>
-		<p class="intro">We approach our crafts and each other with XXX.</p>
-		<p class="tagline">Think MMORPG vibes, but tech.</p>
-		<p class="added">
-			<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
-		</p>
+		<div>
+			<h2>Think MMORPG vibes, but tech.</h2>
+			<p class="intro">
+				Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
+			</p>
+			<p class="intro">We approach our crafts and each other with XXX.</p>
+			<p class="added">
+				<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
+			</p>
+		</div>
 
 		<div class="divider"></div>
 
