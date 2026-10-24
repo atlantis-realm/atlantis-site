@@ -1,0 +1,16 @@
+# Large binary concept assets live in Git LFS. Scoped to concept-assets/ so the site's own images and
+# fonts stay plain git objects (the site build and deploy don't fetch LFS).
+concept-assets/**/*.blend filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.fbx filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.obj filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.glb filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.usd filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.usda filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.usdc filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.usdz filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.abc filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.exr filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.hdr filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.psd filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.tif filter=lfs diff=lfs merge=lfs -text
+concept-assets/**/*.tiff filter=lfs diff=lfs merge=lfs -text
