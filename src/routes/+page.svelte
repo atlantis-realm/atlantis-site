@@ -7,6 +7,38 @@
 
 	// Placeholder slots until there's a member list to pull icons from.
 	const memberSlots = Array.from({ length: 12 }, (_, index) => index);
+
+	// Streams run Tuesday and Thursday, 6:30am - 9:30am GMT+1 (fixed offset, no DST shift).
+	const STREAM_DAYS = [2, 4];
+	const STREAM_END_HOUR = 9.5;
+	const HOUR_MS = 60 * 60 * 1000;
+
+	function nextStreamDates(count: number, now = new Date()) {
+		const nowGmtPlus1 = now.getTime() + HOUR_MS;
+		const today = new Date(nowGmtPlus1);
+		const streams: string[] = [];
+
+		for (let offset = 0; streams.length < count; offset++) {
+			const day = new Date(
+				Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + offset)
+			);
+			if (!STREAM_DAYS.includes(day.getUTCDay())) continue;
+			if (day.getTime() + STREAM_END_HOUR * HOUR_MS <= nowGmtPlus1) continue;
+
+			streams.push(
+				day.toLocaleDateString('en-GB', {
+					weekday: 'short',
+					day: 'numeric',
+					month: 'short',
+					timeZone: 'UTC'
+				})
+			);
+		}
+
+		return streams;
+	}
+
+	const upcomingStreams = nextStreamDates(2);
 </script>
 
 <video autoplay muted loop id="myVideo">
@@ -71,7 +103,16 @@
 			{#each upcomingEvents as event (event.name)}
 				<li><strong>{event.name}:</strong> {event.description}</li>
 			{/each}
-			<li class="added"><strong>Streams:</strong> next stream times and links go here.</li>
+			<li class="added">
+				<strong>Streams:</strong>
+				{upcomingStreams.join(' and ')}, 6:30am–9:30am GMT+1 —
+				<a
+					href="https://www.twitch.tv/ladyofcode"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="text-link">Watch on Twitch</a
+				>
+			</li>
 		</ul>
 		<p class="added"><a href="/events" class="text-link">All events and streams</a></p>
 
@@ -366,7 +407,7 @@
 	.event-list {
 		list-style: none;
 		padding: 0;
-		text-align: left;
+		text-align: center;
 		line-height: 1.8;
 	}
 
