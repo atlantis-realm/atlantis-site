@@ -64,13 +64,14 @@
 	}
 
 	a:hover .nav__char{
-		animation: wave 4s ease-in-out infinite;
-		animation-delay: calc(var(--i) * 100ms);
+		animation: wave 2s infinite;
+		animation-delay: calc(var(--i) * 120ms);
 	}
 
 	@keyframes wave{
-		0%, 50%, 100% { transform: translateY(0); }
-		20%           { transform: translateY(-.7rem); }
-		35%           { transform: translateY(.1rem); }
+		0% 				{ transform: translateY(0); animation-timing-function: ease-out;}
+		33%           	{ transform: translateY(-.4rem); animation-timing-function: ease-in-out;}
+		66% 			{ transform: translateY(.6rem); animation-timing-function: ease-in;}
+		100%			{ transform: translateY(0)}
 	}
 </style>
