@@ -19,6 +19,12 @@
 	</p>
 	<p><em>Atlantis is chaos only a portion of the time, we promise &lt;3</em></p>
 
+	<h2 class="added">Values</h2>
+	<p class="added">Our values go here.</p>
+
+	<h2 class="added">Team</h2>
+	<p class="added"><a href="/about/team">Meet the team</a></p>
+
 	<p>
 		<a href="https://discord.com/invite/4gQAndh" target="_blank" rel="noopener noreferrer">
 			Join us on Discord

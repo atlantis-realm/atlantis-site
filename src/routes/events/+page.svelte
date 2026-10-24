@@ -1,3 +1,7 @@
+<script lang="ts">
+	import { ongoingEvents, upcomingEvents } from '#lib/content/events.js';
+</script>
+
 <svelte:head>
 	<title>Events · Atlantis</title>
 </svelte:head>
@@ -8,27 +12,18 @@
 
 	<h2>Upcoming</h2>
 	<ul>
-		<li>
-			<strong>Atlantis Forum:</strong> Weekly discussion around events and admin, then general chatter.
-		</li>
-		<li>
-			<strong>Project Check-ins:</strong> Weekly accountability on projects and careers — minimal venting,
-			help removing blockers.
-		</li>
+		{#each upcomingEvents as event (event.name)}
+			<li><strong>{event.name}:</strong> {event.description}</li>
+		{/each}
 	</ul>
 
 	<h2>Ongoing</h2>
 	<ul>
-		<li>
-			<strong>Design jam:</strong> Co-creating shared design language and visual identity for Atlantis as
-			a city.
-		</li>
-		<li>
-			<strong>Music Practice:</strong> Voice call, muted practice, mic on for chat, help, and demos. Any
-			instrument or music-related activity.
-		</li>
-		<li>
-			<strong>Syrenware:</strong> Community playlist of guildie favourites old and new.
-		</li>
+		{#each ongoingEvents as event (event.name)}
+			<li><strong>{event.name}:</strong> {event.description}</li>
+		{/each}
 	</ul>
+
+	<h2 class="added">Streams</h2>
+	<p class="added">Stream schedule and links go here — who streams, when, and where.</p>
 </main>

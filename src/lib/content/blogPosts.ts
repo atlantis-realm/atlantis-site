@@ -4,6 +4,7 @@ export type BlogPost = {
 	author: string;
 	date: string;
 	excerpt: string;
+	image?: string;
 	body: string[];
 };
 

@@ -1,3 +1,14 @@
+<script lang="ts">
+	import { blogPosts } from '#lib/content/blogPosts.js';
+	import { upcomingEvents } from '#lib/content/events.js';
+
+	const [featuredPost, ...otherPosts] = [...blogPosts].sort((a, b) => b.date.localeCompare(a.date));
+	const smallPosts = otherPosts.slice(0, 4);
+
+	// Placeholder slots until there's a member list to pull icons from.
+	const memberSlots = Array.from({ length: 12 }, (_, index) => index);
+</script>
+
 <video autoplay muted loop id="myVideo">
 	<source src="background.m4v" type="video/mp4" />
 	Your browser does not support HTML5 video.
@@ -11,35 +22,100 @@
 <section id="community-section">
 	<div class="content-wrapper">
 		<p class="intro">
-			Atlantis is a community of builders. Devs, designers, artists, musicians, whatever - we're all nerds about something, and that something is usually skewed towards tech.
+			Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
 		</p>
+		<p class="intro">We approach our crafts and each other with XXX.</p>
 		<p class="tagline">Think MMORPG vibes, but tech.</p>
+		<p class="added">
+			<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
+		</p>
 
 		<div class="divider"></div>
 
-		<h2>What are we like?</h2>
+		<h2>News</h2>
+		{#if featuredPost}
+			<div class="news-grid">
+				<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
+					{#if featuredPost.image}
+						<img src={featuredPost.image} alt="" />
+					{:else}
+						<div class="image-placeholder added">Featured image</div>
+					{/if}
+					<h3>{featuredPost.title}</h3>
+					<p class="news-meta">{featuredPost.author} · {featuredPost.date}</p>
+					<p>{featuredPost.excerpt}</p>
+				</a>
+				<div class="news-small">
+					{#each smallPosts as post (post.slug)}
+						<a href="/blog/{post.slug}" class="news-card">
+							{#if post.image}
+								<img src={post.image} alt="" />
+							{:else}
+								<div class="image-placeholder added">Image</div>
+							{/if}
+							<h3>{post.title}</h3>
+							<p class="news-meta">{post.author} · {post.date}</p>
+						</a>
+					{/each}
+				</div>
+			</div>
+		{/if}
+		<p class="added"><a href="/blog" class="text-link">All news</a></p>
+
+		<div class="divider"></div>
+
+		<h2>Events</h2>
+		<ul class="event-list">
+			{#each upcomingEvents as event (event.name)}
+				<li><strong>{event.name}:</strong> {event.description}</li>
+			{/each}
+			<li class="added"><strong>Streams:</strong> next stream times and links go here.</li>
+		</ul>
+		<p class="added"><a href="/events" class="text-link">All events and streams</a></p>
+
+		<div class="divider"></div>
+
+		<h2>Community projects</h2>
+		<div class="project-grid">
+			<div class="project-card">
+				<p>We're creating a collective mood board to define our design language direction... And brainstorm ideas for visualising Atlantis as an actual city.</p>
+			</div>
+			<div class="project-card">
+				<p>We're also starting a collaborative playlist to share favourite songs with each other. :D</p>
+			</div>
+			<div class="project-card">
+				<p>
+					<a href="/ladyofcode/dice-themes" class="text-link">Browse stream dice themes</a>
+					— preview materials and grab the <code>!dicethemes</code> chat command for each one.
+				</p>
+			</div>
+		</div>
+
+		<div class="divider"></div>
+
+		<h2>Join Atlantis</h2>
+		<h3 class="added">Who you'll be joining</h3>
+		<ul class="member-grid" aria-label="Members">
+			{#each memberSlots as slot (slot)}
+				<li class="member-icon"></li>
+			{/each}
+		</ul>
+		<p class="added member-note">
+			Member icons go here. Members without an icon get a generated default Atlantis symbol.
+		</p>
+
+		<h3>What are we like?</h3>
 		<p>
 			Everyone approaches their craft with love and a huge amount of effort. Guildies are from around the world, so expect a bunch of different cultures and personalities. The vibe is generally easygoing, littered with puns and terrible jokes.
 		</p>
 		<p class="reassurance">
 			Atlantis is chaos only a portion of the time, we promise &lt;3
 		</p>
+		<p class="age-note">18+ only</p>
 
 		<a href="https://discord.com/invite/4gQAndh" target="_blank" rel="noopener noreferrer" class="discord-button">
 			Join us on Discord
 		</a>
-
-		<div class="divider"></div>
-
-		<h2>Some things we're doing right now</h2>
-		<p>We're creating a collective mood board to define our design language direction... And brainstorm ideas for visualising Atlantis as an actual city.</p>
-
-		<p>We're also starting a collaborative playlist to share favourite songs with each other. :D</p>
-
-		<p>
-			<a href="/ladyofcode/dice-themes" class="dice-themes-link">Browse stream dice themes</a>
-			— preview materials and grab the <code>!dicethemes</code> chat command for each one.
-		</p>
 	</div>
 </section>
 
@@ -189,15 +265,167 @@
 		box-shadow: 0 2px 10px hsla(45, 67%, 74%, 0.4);
 	}
 
-	.dice-themes-link {
+	.text-link {
 		color: hsl(45, 67%, 74%);
 		font-weight: 600;
 		text-decoration: underline;
 		text-underline-offset: 0.18em;
 	}
 
-	.dice-themes-link:hover {
+	.text-link:hover {
 		color: hsl(45, 67%, 82%);
+	}
+
+	h3 {
+		font-size: 1.2rem;
+		margin: 2rem 0 1rem;
+		color: hsl(45, 67%, 74%);
+	}
+
+	.news-grid {
+		display: grid;
+		grid-template-columns: 3fr 2fr;
+		gap: 1.5rem;
+		text-align: left;
+	}
+
+	.news-small {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+		align-content: start;
+	}
+
+	.news-card {
+		display: block;
+		padding: 0.75rem;
+		border-radius: 8px;
+		background: rgba(0, 0, 0, 0.18);
+		color: inherit;
+		text-decoration: none;
+		transition: background 0.2s ease;
+	}
+
+	.news-card:hover {
+		background: rgba(0, 0, 0, 0.3);
+	}
+
+	.news-card img,
+	.image-placeholder {
+		width: 100%;
+		aspect-ratio: 16 / 9;
+		object-fit: cover;
+		border-radius: 6px;
+	}
+
+	.image-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(8, 107, 125, 0.35);
+		color: rgba(238, 239, 183, 0.7);
+	}
+
+	.news-card h3 {
+		margin: 0.75rem 0 0.25rem;
+		font-size: 1rem;
+	}
+
+	.news-card--main h3 {
+		font-size: 1.4rem;
+	}
+
+	#community-section .news-card p {
+		font-size: 0.95rem;
+		line-height: 1.5;
+		margin-bottom: 0.5rem;
+	}
+
+	#community-section .news-meta {
+		font-size: 0.85rem;
+		color: rgba(238, 239, 183, 0.6);
+	}
+
+	.event-list {
+		list-style: none;
+		padding: 0;
+		text-align: left;
+		line-height: 1.8;
+	}
+
+	.event-list li {
+		margin-bottom: 0.75rem;
+	}
+
+	.project-grid {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1rem;
+		text-align: left;
+	}
+
+	.project-card {
+		padding: 1rem;
+		border-radius: 8px;
+		background: rgba(0, 0, 0, 0.18);
+	}
+
+	#community-section .project-card p {
+		margin: 0;
+	}
+
+	.member-grid {
+		list-style: none;
+		padding: 0;
+		margin: 0 auto;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.75rem;
+	}
+
+	.member-icon {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		background: linear-gradient(135deg, #086b7d, #2e4057, hsl(45, 67%, 74%), #086b7d);
+		background-size: 300% 300%;
+		animation: water 8s ease-in-out infinite;
+	}
+
+	.member-icon:nth-child(3n) {
+		animation-delay: -2s;
+	}
+
+	.member-icon:nth-child(3n + 1) {
+		animation-delay: -5s;
+	}
+
+	@keyframes water {
+		0%,
+		100% {
+			background-position: 0% 50%;
+		}
+
+		50% {
+			background-position: 100% 50%;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.member-icon {
+			animation: none;
+		}
+	}
+
+	#community-section .member-note {
+		font-size: 0.95rem;
+		margin-top: 1rem;
+	}
+
+	#community-section .age-note {
+		font-weight: 600;
+		margin-top: 1rem;
 	}
 
 	#community-section code {
@@ -208,6 +436,11 @@
 	}
 
 	@media (max-width: 768px) {
+		.news-grid,
+		.project-grid {
+			grid-template-columns: 1fr;
+		}
+
 		.intro {
 			font-size: 1.2rem;
 		}
