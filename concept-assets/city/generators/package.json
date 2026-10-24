@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "commonjs",
+  "description": "Atlantis city generators (plain node scripts, not part of the site build)"
+}

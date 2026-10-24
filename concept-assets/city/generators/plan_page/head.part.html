@@ -1,0 +1,225 @@
+<title>Atlantis City Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a surveyor's plan — the ring city fills the drawing sheet, the district inspector sits
+   beside it like a schedule, the skyline section runs under the plan. */
+:root {
+  --paper: #edf1ef;
+  --sheet: #f7faf8;
+  --ink: #18252a;
+  --muted: #5a6a6d;
+  --line: #ccd6d3;
+  --land: #e2e7e1;
+  --land-edge: #c5cec8;
+  --water: #7fbcb7;
+  --water-edge: #4d9893;
+  --pave: #d6dcd6;
+  --h-lo: #dfe4dc;
+  --h-hi: #24343c;
+  --tree: #5d8a4c;
+  --gold: #9c7a28;
+  --cyan: #13808c;
+  --warn: #a5541b;
+  --warn-bg: #f7e6d7;
+  --ok: #2f7a4f;
+  --cam: rgba(156, 122, 40, 0.13);
+  --road: #a8b1ae;
+  --u-residential: #cdb88c; --u-commercial: #4f78b3; --u-industrial: #985a3b; --u-hydroponics: #3c9c7e;
+  --u-entertainment: #a5447c; --u-park: #7fb35b; --u-college: #c09a2e; --u-harbour: #2f7fa3; --u-waterworks: #6b8794; --canal: #3b8d93; --skywalk: #b0812b;
+  --font-display: "Marcellus", "Trajan Pro", Georgia, serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e1416; --sheet: #141c1f; --ink: #e2ebe8; --muted: #93a4a3; --line: #2a373a;
+    --land: #1c2528; --land-edge: #2e3b3e; --water: #1f5a5c; --water-edge: #3b8a8a; --pave: #273236;
+    --h-lo: #34434a; --h-hi: #eef3ee; --tree: #6fa55c; --gold: #d2ae58; --cyan: #44c4d0;
+    --warn: #f0a46a; --warn-bg: #3a2416; --ok: #6cc28f; --cam: rgba(210, 174, 88, 0.12); --road: #46524f; --u-residential: #b8a273; --u-commercial: #6f97d1; --u-industrial: #c07a56; --u-hydroponics: #5cc3a0; --u-entertainment: #cf6ea6; --u-park: #7fb35b; --u-college: #d8b452; --u-harbour: #4aa6cf; --u-waterworks: #8fa9b5; --canal: #4fb3ba; --skywalk: #e0b25a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e1416; --sheet: #141c1f; --ink: #e2ebe8; --muted: #93a4a3; --line: #2a373a;
+  --land: #1c2528; --land-edge: #2e3b3e; --water: #1f5a5c; --water-edge: #3b8a8a; --pave: #273236;
+  --h-lo: #34434a; --h-hi: #eef3ee; --tree: #6fa55c; --gold: #d2ae58; --cyan: #44c4d0;
+  --warn: #f0a46a; --warn-bg: #3a2416; --ok: #6cc28f; --cam: rgba(210, 174, 88, 0.12); --road: #46524f; --u-residential: #b8a273; --u-commercial: #6f97d1; --u-industrial: #c07a56; --u-hydroponics: #5cc3a0; --u-entertainment: #cf6ea6; --u-park: #7fb35b; --u-college: #d8b452; --u-harbour: #4aa6cf; --u-waterworks: #8fa9b5; --canal: #4fb3ba; --skywalk: #e0b25a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink); font: 15px/1.5 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 32px;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 400; text-wrap: balance; margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+.masthead { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; margin: 0 0 14px; }
+.masthead .eyebrow { font: 500 11px/1 var(--font-data); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.masthead h1 { font-size: clamp(26px, 3.4vw, 38px); line-height: 1.1; margin-top: 6px; }
+.masthead .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--font-data); padding: 7px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--sheet); color: var(--muted); }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip[data-state="saved"] { color: var(--ok); }
+.chip[data-state="saving"], .chip[data-state="dirty"] { color: var(--gold); }
+.chip[data-state="error"], .chip[data-state="offline"] { color: var(--warn); }
+.btn { border: 1px solid var(--line); background: var(--sheet); padding: 7px 12px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.btn:hover { border-color: var(--muted); }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+
+.app { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); gap: 18px; }
+@media (max-width: 960px) { .app { grid-template-columns: minmax(0, 1fr); } }
+
+.sheet { background: var(--sheet); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.plan-sheet { display: flex; flex-direction: column; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.toolbar .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.toolbar .label { font: 500 11px/1 var(--font-data); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+
+.plan-wrap { position: relative; height: max(420px, calc(100vh - 230px)); min-height: 300px; touch-action: none; overflow: hidden; }
+@media (max-width: 960px) { .plan-wrap { height: min(80vh, calc(100vw - 34px)); } }
+#plan { width: 100%; height: 100%; display: block; cursor: grab; user-select: none; touch-action: none; }
+#plan.dragging { cursor: grabbing; }
+.plan-foot { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; justify-content: space-between; padding: 10px 12px; border-top: 1px solid var(--line); font: 12px/1.3 var(--font-data); color: var(--muted); }
+.legend { display: flex; align-items: center; gap: 8px; }
+.legend .ramp { width: 160px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--h-lo), var(--h-hi)); border: 1px solid var(--line); }
+.scalebar { display: flex; align-items: center; gap: 8px; }
+.scalebar i { display: block; height: 6px; border: 1px solid var(--ink); border-top: 0; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--muted); }
+.empty[hidden], .tip[hidden] { display: none; }
+.empty h2 { font-size: 22px; color: var(--ink); margin-bottom: 6px; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--sheet); font: 12px/1.35 var(--font-data); padding: 6px 8px; border-radius: 5px; white-space: nowrap; transform: translate(12px, 12px); z-index: 3; }
+
+.section-sheet { grid-column: 1 / -1; }
+@media (min-width: 961px) { .section-sheet { grid-column: 1; } }
+.section-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; padding: 12px 14px 0; }
+.section-head h2 { font-size: 19px; }
+.section-head p { margin: 0; color: var(--muted); font-size: 13px; }
+.section-scroll { overflow-x: auto; padding: 6px 8px 10px; }
+#section { display: block; width: 100%; min-width: 640px; height: 240px; }
+
+.inspector { display: flex; flex-direction: column; align-self: start; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); max-height: calc(100vh - 24px); }
+@media (max-width: 960px) { .inspector { position: static; max-height: none; } }
+.tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+.tab { flex: 1 0 auto; border: 0; background: none; padding: 11px 10px 9px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 12px; color: var(--muted); line-height: 1.2; text-align: left; }
+.tab b { display: block; font: 400 15px/1.2 var(--font-display); color: var(--ink); }
+.tab[aria-selected="true"] { border-bottom-color: var(--gold); }
+.tab[aria-selected="true"] b { color: var(--gold); }
+.panel { overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+.panel h3 { font-size: 21px; }
+.kind { font: 500 11px/1 var(--font-data); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; }
+.stat span { display: block; font: 11px/1.2 var(--font-data); color: var(--muted); }
+.stat strong { font: 500 17px/1.3 var(--font-data); font-variant-numeric: tabular-nums; }
+.warns { display: flex; flex-direction: column; gap: 6px; }
+.warn { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+fieldset { border: 0; border-top: 1px solid var(--line); margin: 0; padding: 12px 0 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+legend { font: 500 11px/1 var(--font-data); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 0 0 2px; display: flex; gap: 8px; align-items: center; }
+fieldset.row { position: relative; }
+.f { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.f.wide { grid-column: 1 / -1; }
+.f label { font-size: 12px; color: var(--muted); }
+.f .in { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); }
+.f .in:focus-within { border-color: var(--cyan); }
+.f input[type="number"], .f select, .f textarea { border: 0; background: transparent; padding: 6px 8px; width: 100%; min-width: 0; font-family: var(--font-data); font-size: 14px; font-variant-numeric: tabular-nums; }
+.f select { font-family: var(--font-body); }
+.f input:focus, .f select:focus, .f textarea:focus { outline: none; }
+.f .in:has(input[aria-invalid="true"]) { border-color: var(--warn); }
+.f .unit { font: 12px var(--font-data); color: var(--muted); padding-right: 8px; }
+.f textarea { font-family: var(--font-body); resize: vertical; min-height: 64px; line-height: 1.45; }
+.f input:disabled, .f select:disabled, .f textarea:disabled { color: var(--muted); }
+.mini { border: 1px solid var(--line); background: none; border-radius: 5px; font-size: 12px; padding: 2px 8px; cursor: pointer; color: var(--muted); }
+.mini:hover { color: var(--ink); border-color: var(--muted); }
+.panel-foot { font-size: 12px; color: var(--muted); }
+.mini-select { font: 13px var(--font-body); border: 1px solid var(--line); border-radius: 6px; background: var(--paper); padding: 3px 6px; color: var(--ink); }
+.nbtable input[type=text] { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); padding: 4px 6px; font: 13px var(--font-body); color: var(--ink); }
+.nbtable td, .nbtable th { padding: 3px 4px; font-size: 13px; text-align: left; }
+.nbtable th { font: 500 11px/1.2 var(--font-data); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.mix { display: flex; height: 10px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+.mix i { display: block; height: 100%; }
+table.recipe { width: 100%; border-collapse: collapse; font-size: 13px; grid-column: 1 / -1; }
+table.recipe th { text-align: left; font: 500 11px/1.2 var(--font-data); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 4px 4px; }
+table.recipe td { padding: 3px 4px; }
+table.recipe td:first-child { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+table.recipe td:first-child i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+table.recipe input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); padding: 4px 6px; font: 13px var(--font-data); font-variant-numeric: tabular-nums; }
+table.recipe input[aria-invalid="true"] { border-color: var(--warn); }
+.keys { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.key { display: inline-flex; align-items: center; gap: 6px; }
+.key i { width: 14px; height: 10px; border-radius: 2px; border: 1px solid var(--line); display: inline-block; }
+.section-head label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.section-head select { font: 13px var(--font-body); border: 1px solid var(--line); border-radius: 6px; background: var(--paper); padding: 4px 6px; }
+code { font-family: var(--font-data); font-size: .92em; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (prefers-reduced-motion: no-preference) { .tab, .btn, .chip { transition: color .15s, background-color .15s, border-color .15s; } }
+</style>
+
+<header class="masthead">
+  <div>
+    <div class="eyebrow">Atlantian Plaza · ring districts · greybox</div>
+    <h1>Atlantis City Plan</h1>
+  </div>
+  <div class="actions">
+    <span class="chip" id="status" data-state="idle" role="status">Connecting</span>
+    <button class="btn" id="copy" type="button">Copy plan JSON</button>
+  </div>
+</header>
+
+<main class="app">
+  <section class="sheet plan-sheet" aria-label="Plan view">
+    <div class="toolbar">
+      <div class="group" role="group" aria-label="View">
+        <span class="label">View</span>
+        <button class="btn" type="button" data-view="city" aria-pressed="true">Whole city</button>
+        <button class="btn" type="button" data-view="core" aria-pressed="false">Core</button>
+        <button class="btn" type="button" data-view="hero" aria-pressed="false">Hero corridor</button>
+      </div>
+      <div class="group">
+        <label class="toggle"><input type="checkbox" id="lyr-trees" checked> Trees</label>
+        <label class="toggle"><input type="checkbox" id="lyr-cam" checked> Camera view</label>
+        <label class="toggle"><input type="checkbox" id="lyr-labels" checked> Labels</label>
+        <label class="toggle"><input type="checkbox" id="lyr-cloud"> Cloud</label>
+        <label class="toggle"><input type="checkbox" id="lyr-sky" checked> Skywalks</label>
+        <label class="toggle" for="colorBy">Colour by <select id="colorBy" class="mini-select"><option value="height">Height</option><option value="use">Land use</option><option value="nb">Neighbourhood</option></select></label>
+      </div>
+    </div>
+    <div class="plan-wrap" id="planWrap">
+      <canvas id="plan" role="img" aria-label="Top-down plan of the ring city, north up, coloured by roof height"></canvas>
+      <div class="empty" id="empty"><div><h2>Loading the shared plan</h2><p>The plan lives in this page's shared store, so your edits and Claude's Blender builds use the same numbers.</p></div></div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <div class="plan-foot">
+      <div class="legend" id="legendHeight"><span>Roof height</span><span class="ramp" aria-hidden="true"></span><span id="rampMax">0–240 m</span></div>
+      <div class="keys" id="legendUse" hidden></div>
+      <div class="keys"><span class="key"><i style="background:var(--road)"></i>Road</span><span class="key"><i style="background:var(--gold)"></i>Stairs</span><span class="key"><i style="background:var(--cyan)"></i>Ramp</span><span class="key">➜ one-way ring avenue</span></div>
+      <div class="scalebar"><i id="scaleBar" style="width:80px"></i><span id="scaleTxt">—</span></div>
+      <span>North up · drag to pan · scroll to zoom</span>
+    </div>
+  </section>
+
+  <aside class="sheet inspector" aria-label="District inspector">
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div class="panel" id="panel" role="tabpanel">
+      <p class="panel-foot">District settings appear once the plan loads.</p>
+    </div>
+  </aside>
+
+  <section class="sheet section-sheet" aria-label="Skyline section">
+    <div class="section-head">
+      <h2>Skyline section</h2>
+      <label for="secSpoke">Along <select id="secSpoke"></select></label>
+      <p>Temple at left, docks at right. Ground, road and sidewalk along the chosen spoke; bands show each row's roof range; the dashed line is the hero camera's sightline to the spire tip.</p>
+    </div>
+    <div class="section-scroll"><svg id="section" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Radial section of deck levels and building heights"></svg></div>
+  </section>
+</main>
+

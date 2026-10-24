@@ -1,0 +1,3 @@
+# generated: rebuild with `node citygen_cli.js plan.json build/build.json`
+build/
+__pycache__/
