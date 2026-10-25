@@ -7,6 +7,38 @@
 
 	// Placeholder slots until there's a member list to pull icons from.
 	const memberSlots = Array.from({ length: 12 }, (_, index) => index);
+
+	// Streams run Tuesday and Thursday, 6:30am - 9:30am GMT+1 (fixed offset, no DST shift).
+	const STREAM_DAYS = [2, 4];
+	const STREAM_END_HOUR = 9.5;
+	const HOUR_MS = 60 * 60 * 1000;
+
+	function nextStreamDates(count: number, now = new Date()) {
+		const nowGmtPlus1 = now.getTime() + HOUR_MS;
+		const today = new Date(nowGmtPlus1);
+		const streams: string[] = [];
+
+		for (let offset = 0; streams.length < count; offset++) {
+			const day = new Date(
+				Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + offset)
+			);
+			if (!STREAM_DAYS.includes(day.getUTCDay())) continue;
+			if (day.getTime() + STREAM_END_HOUR * HOUR_MS <= nowGmtPlus1) continue;
+
+			streams.push(
+				day.toLocaleDateString('en-GB', {
+					weekday: 'short',
+					day: 'numeric',
+					month: 'short',
+					timeZone: 'UTC'
+				})
+			);
+		}
+
+		return streams;
+	}
+
+	const upcomingStreams = nextStreamDates(2);
 </script>
 
 <video autoplay muted loop id="myVideo">
@@ -21,11 +53,11 @@
 
 <section id="community-section">
 	<div class="content-wrapper">
+		<h2>Think MMORPG vibes, but tech.</h2>
 		<p class="intro">
 			Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
 		</p>
 		<p class="intro">We approach our crafts and each other with XXX.</p>
-		<p class="tagline">Think MMORPG vibes, but tech.</p>
 		<p class="added">
 			<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
 		</p>
@@ -61,6 +93,7 @@
 			</div>
 		{/if}
 		<p class="added"><a href="/blog" class="text-link">All news</a></p>
+	
 
 		<div class="divider"></div>
 
@@ -69,7 +102,16 @@
 			{#each upcomingEvents as event (event.name)}
 				<li><strong>{event.name}:</strong> {event.description}</li>
 			{/each}
-			<li class="added"><strong>Streams:</strong> next stream times and links go here.</li>
+			<li class="added">
+				<strong>Streams:</strong>
+				{upcomingStreams.join(' and ')}, 6:30am–9:30am GMT+1 —
+				<a
+					href="https://www.twitch.tv/ladyofcode"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="text-link">Watch on Twitch</a
+				>
+			</li>
 		</ul>
 		<p class="added"><a href="/events" class="text-link">All events and streams</a></p>
 
@@ -240,7 +282,6 @@
 	}
 
 	.content-wrapper {
-		max-width: 800px;
 		width: 100%;
 		text-align: center;
 	}
@@ -339,7 +380,7 @@
 
 	.news-grid {
 		display: grid;
-		grid-template-columns: 3fr 2fr;
+		grid-template-columns: 1fr 1fr;
 		gap: 1.5rem;
 		text-align: left;
 	}
@@ -360,7 +401,22 @@
 		text-decoration: none;
 		transition: background 0.2s ease;
 	}
+	.news-small .news-card:nth-child(1){
+		clip-path: polygon(100% 0, 100% 5%, 100% 100%, 0 100%, 0 5%, 5% 0);	
+	}
+	.news-small .news-card:nth-child(2){
+		clip-path: polygon(95% 0, 100% 5%, 100% 100%, 0 100%, 0 0, 20% 0);	
+	}
+	.news-small .news-card:nth-child(3){
+		clip-path: polygon(0 0, 100% 0, 100% 100%, 5% 100%, 0 95%, 0% 50%);	
+	}
+	.news-small .news-card:nth-child(4){
+		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);	
+	}
 
+	.news-card--main{
+		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);
+	}
 	.news-card:hover {
 		background: #1d2b3c;
 	}
@@ -404,7 +460,7 @@
 	.event-list {
 		list-style: none;
 		padding: 0;
-		text-align: left;
+		text-align: center;
 		line-height: 1.8;
 	}
 
