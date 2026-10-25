@@ -46,6 +46,11 @@ test("ground stops at the canal edge", () => { const P = primsOf(O, "NBHD_core_g
 test("canal wall at r 458.8–460 down to the water", () => { const P = primsOf(O, "NBHD_core_ground");
   const wall = P.filter((p) => p.t === "prism" && near(p.z0, 57.5, 0.01) && p.poly.every(([x, y]) => ringR(x, y) >= 458.8 - 1e-6 && ringR(x, y) <= 460 + 1e-6));
   assert.ok(wall.length > 20, `${wall.length} wall segments`); });
+test("canal wall coping is flush with the quay, like the other ring canals (no parapet)", () => {
+  const ter = CityGen.makeTerrain(loadPlan()), g = ter.G(459.5);
+  const wall = primsOf(O, "NBHD_core_ground").filter((p) => p.t === "prism" && near(p.z0, 57.5, 0.01));
+  assert.ok(wall.length > 20);
+  for (const w of wall) assert.ok(near(w.z1, g + 0.35, 1e-6), `wall top ${w.z1} vs quay ${g}`); });
 test("canal wall breaks at the spokes", () => { const p = loadPlan(), sp = CityGen.spokeAngles(p);
   const wall = primsOf(O, "NBHD_core_ground").filter((q) => q.t === "prism" && near(q.z0, 57.5, 0.01));
   assert.ok(wall.length > 0);

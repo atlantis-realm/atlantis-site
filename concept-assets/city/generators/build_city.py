@@ -401,6 +401,9 @@ def reset_collection(name):
 
 
 MATS = []
+# The Lantern heart: saturated cyan emission over a dark base. AgX (the scene's view transform) bleaches
+# bright emission toward white, so the strength stays low (8 rendered white, 1.5+ pale blue).
+GLOW_BASE, GLOW_EMIT, GLOW_STRENGTH = (0.0, 0.05, 0.08, 1.0), (0.0, 0.9, 1.0, 1.0), 0.8
 
 
 def ensure_glow():
@@ -408,9 +411,9 @@ def ensure_glow():
     m = get_mat("MAT_AP_Glow")
     m.use_nodes = True
     bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) or m.node_tree.nodes.new("ShaderNodeBsdfPrincipled")
-    bsdf.inputs["Base Color"].default_value = (0.5, 0.95, 1.0, 1.0)
-    bsdf.inputs["Emission Color"].default_value = (0.5, 0.95, 1.0, 1.0)
-    bsdf.inputs["Emission Strength"].default_value = 8.0
+    bsdf.inputs["Base Color"].default_value = GLOW_BASE
+    bsdf.inputs["Emission Color"].default_value = GLOW_EMIT
+    bsdf.inputs["Emission Strength"].default_value = GLOW_STRENGTH
     if not any(n.type == "OUTPUT_MATERIAL" for n in m.node_tree.nodes):
         out = m.node_tree.nodes.new("ShaderNodeOutputMaterial")
         m.node_tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])

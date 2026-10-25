@@ -1660,7 +1660,9 @@ const CityGen = (() => {
     const ob = o.obj(`NBHD_${d.id}_ground`, d.id), N = Math.ceil(TAU * r1 / 14);
     const gz = (r) => ter.G(Math.min(r, r1 - 0.01));
     const pr = plan.scene.terrain.plateau_r, breaks = [0, ...(pr > 0 && pr < rq ? [pr] : []), rq];
-    const wz = ter.water.inner_water - 0.5, wtop = gz(r1 - 0.5) + 1.1;
+    // the wall's coping sits 0.35 m above the quay, flush like the other ring canals' banks and the
+    // gracht walls: no parapet, so the edge reads as a canal quay rather than a rampart
+    const wz = ter.water.inner_water - 0.5, wtop = gz(r1 - 0.5) + 0.35;
     for (let i = 0; i < N; i++) {
       const a = i * TAU / N, b = (i + 1) * TAU / N;
       const pave = (ra, rb) => {
