@@ -167,7 +167,7 @@ const CityGen = (() => {
 
   // ---------------------------------------------------------------- output builders
   function Out(withSolids) {
-    const o = { lots: [], trees: [], rills: [], spokes: [], objects: [], instances: [], bands: {}, warnings: [], heroFill: [], heroWater: [], avenues: [], squares: [], cells: [], canals: [], canalLines: [], parks: [], basins: [], tanks: [], skywalks: [], skyAccess: [], boats: [], canalBridges: [], cellEdges: [], canalCuts: [], solar: [], blimps: [], noPlant: [] };
+    const o = { lots: [], trees: [], rills: [], spokes: [], objects: [], instances: [], bands: {}, warnings: [], heroFill: [], heroWater: [], avenues: [], squares: [], quarters: [], cells: [], canals: [], canalLines: [], parks: [], basins: [], tanks: [], skywalks: [], skyAccess: [], boats: [], canalBridges: [], cellEdges: [], canalCuts: [], solar: [], blimps: [], noPlant: [] };
     o.obj = (name, coll, props) => { const ob = { name, coll, props: props || {}, prims: [] }; if (withSolids) o.objects.push(ob); return ob; };
     o.prism = (ob, poly, z0, z1, m) => { if (withSolids && z1 > z0 + 1e-3) ob.prims.push({ t: "prism", poly, z0, z1, m }); };
     o.solid = (ob, top, bot, m) => { if (withSolids) ob.prims.push({ t: "solid", top, bot, m }); };
@@ -459,6 +459,46 @@ const CityGen = (() => {
     };
     return merge(OLD_TOWN_DEFAULTS, d || {});
   }
+
+  // Old Town tower massing per culture type (neighbourhoods.types[].style.tower):
+  //   podium [lo, hi] storeys, tiers 1–5, taper 0–0.5, plan rect|round|stepped|twin,
+  //   crown flat|needle|fins|lantern|garden
+  // plan.json carries the same values; these cover a store doc that predates them.
+  const TOWER_DEFAULT = { podium: [2, 5], tiers: 3, taper: 0.3, plan: "rect", crown: "flat" };
+  const TOWER_BY_TYPE = {
+    harbourside: { podium: [3, 5], tiers: 2, taper: 0.2, plan: "rect", crown: "fins" },
+    market: { podium: [4, 6], tiers: 4, taper: 0.35, plan: "stepped", crown: "needle" },
+    gardens: { podium: [2, 4], tiers: 3, taper: 0.25, plan: "twin", crown: "garden" },
+    scholars: { podium: [3, 6], tiers: 3, taper: 0.3, plan: "round", crown: "lantern" },
+    works: { podium: [2, 3], tiers: 1, taper: 0, plan: "rect", crown: "flat" },
+    lantern: { podium: [4, 7], tiers: 5, taper: 0.45, plan: "round", crown: "needle" },
+  };
+  const nbTypes = (plan) => (plan.neighbourhoods && Array.isArray(plan.neighbourhoods.types) ? plan.neighbourhoods.types : []).filter((t) => t && t.id);
+  const isRange = (a) => Array.isArray(a) && a.length === 2 && a.every((x) => Number.isFinite(+x));
+  // a culture's building style for Old Town (an unknown or missing id gets the generic tower)
+  function cultureStyle(plan, id) {
+    const t = nbTypes(plan).find((x) => x.id === id), st = (t && t.style) || {};
+    const T = { ...TOWER_DEFAULT, ...(TOWER_BY_TYPE[id] || {}), ...(st.tower && typeof st.tower === "object" ? st.tower : {}) };
+    const pod = isRange(T.podium) ? T.podium.map((x) => Math.max(0, Math.round(+x))) : TOWER_DEFAULT.podium;
+    T.podium = [Math.min(...pod), Math.max(...pod)];
+    T.tiers = clamp(Math.round(+T.tiers) || 1, 1, 5);
+    T.taper = clamp(+T.taper || 0, 0, 0.5);
+    const gap = isRange(st.gap) ? st.gap.map(Number) : [0, 0];
+    return { tower: T, roofs: st.roofs || {}, lot: isRange(st.lot) ? st.lot.map(Number) : null, gap: [Math.min(...gap), Math.max(...gap)], setback: Math.max(0, +st.setback || 0), storey: plan.storey || 4.3 };
+  }
+  // a seeded type id: weighted over `weights` (known ids with weight > 0), else uniform over the types
+  function pickType(plan, weights, R) {
+    const ids = nbTypes(plan).map((t) => t.id);
+    if (!ids.length) return null;
+    const w = ids.map((id) => Math.max(0, +(weights || {})[id] || 0)), tot = w.reduce((a, b) => a + b, 0);
+    if (!(tot > 0)) return R.choice(ids);
+    let t = R.random() * tot;
+    for (let i = 0; i < ids.length; i++) { t -= w[i]; if (t <= 0 && w[i] > 0) return ids[i]; }
+    for (let i = ids.length - 1; i >= 0; i--) if (w[i] > 0) return ids[i];
+    return ids[0];
+  }
+  // how far bearing a is from b's grid directions (b or b + 90°), in [0, 45°]
+  const offGrid = (a, b) => { const q = TAU / 4, m = (((a - b) % q) + q) % q; return Math.min(m, q - m); };
 
   // ---------------------------------------------------------------- ring layout
   // Every ring carries two ring avenues; counted from the centre, the inner one runs clockwise and
@@ -1634,12 +1674,16 @@ const CityGen = (() => {
       o.prism(ob, [polar(r1 - 1.2, a), polar(r1, a), polar(r1, b), polar(r1 - 1.2, b)], wz, wtop, "stone");
     }
     genLantern(plan, d, ter, o, cfg, spokes);
-    // collect the blocks (layout only), then build on them
+    // collect the blocks (layout only): the grid inside the first ring avenue, the quarters beyond it
     const grid = oldTownGrid(plan, d, spokes.find((sp) => sp.hero));
     o.lantern.square = grid.square;
     o.squares.push(grid.square);
-    const blocks = grid.blocks;
-    buildGridLots(plan, d, ter, o, cfg, blocks, grid.gridR);
+    const qs = oldTownQuarters(plan, d, spokes);
+    o.quarters = qs.quarters.map(({ k, culture, poly, angle, a0, a1, block }) => ({ k, culture, poly, angle, a0, a1, block }));
+    const blocks = [...grid.blocks, ...qs.blocks];
+    // then build on them
+    buildGridLots(plan, d, ter, o, cfg, blocks.filter((b) => b.zone === "grid"), grid.gridR);
+    buildBandLots(plan, d, ter, o, cfg, blocks.filter((b) => b.zone === "band"), qs.r0, qs.r1);
   }
 
   // Old Town's central grid, Manhattan style, aligned to the hero bearing (u along it, v across it).
@@ -1676,71 +1720,312 @@ const CityGen = (() => {
     return { blocks, square, gridR, pitch, axis: ha };
   }
 
-  // Grid lots on the blocks: a fragment becomes a plaza (paving, or a podium of one or two storeys),
-  // every other block a tower lerped through heights.grid, scaled by the cloud and kept under the cap.
+  // Old Town's outer band, from the first ring avenue to the quay, as patchwork quarters: count slices whose
+  // boundaries include every spoke bearing (the rest spread evenly, jittered ±25 %). Each quarter takes a
+  // culture, and lays its own street grid at its own angle (never within 12° of radial or ring-following)
+  // with blocks sized from the culture's lot range. Blocks are clipped clear of the spoke corridors
+  // (blockHalf + 2), half a street off the other seams, 2 m off the avenue and the quay, and with the second
+  // avenue on, 2 m off that too. Layout only: genOldTown builds on the blocks.
+  const QUARTER_STREET = 10;
+  // the biggest rectangle standing on any edge of a convex polygon that runs along axis (or square to it)
+  function alignedRect(poly, axis) {
+    const p = dedupe(signedArea(poly) < 0 ? [...poly].reverse() : poly);
+    let best = null;
+    for (let e = 0; e < p.length; e++) {
+      const a = p[e], b = p[(e + 1) % p.length];
+      if (offGrid(Math.atan2(b[1] - a[1], b[0] - a[0]), axis) >= rad(0.5)) continue;
+      const r = rectOnEdge(p, e);
+      if (r && (!best || r.area > best.area)) best = r;
+    }
+    return best;
+  }
+  function oldTownQuarters(plan, d, spokes) {
+    const cfg = oldTownConfig(d), Q = cfg.quarters, L = ringLayout(plan, d), av = L.avenues[0];
+    const r0 = av ? av.r + av.w / 2 : 0, r1 = L.ring.r1 - cfg.quay, out = { quarters: [], blocks: [], r0, r1 };
+    const rin = r0 + 2, rim = r1 - 2, NG = 96;
+    if (!av || !(rim - rin > 20)) return out;
+    const av2 = cfg.second_avenue ? L.avenues[1] : null, seed = Q.seed ?? 1, key = (...p) => [d.id, "q", seed, ...p].join("|");
+    // boundaries, as bearings relative to the first spoke
+    const norm = (a) => ((a % TAU) + TAU) % TAU, base = spokes.length ? spokes[0].a : SOUTH;
+    const fixed = spokes.length ? spokes.map((sp) => ({ rel: norm(sp.a - base), sp })).sort((a, b) => a.rel - b.rel) : [{ rel: 0, sp: null }];
+    const count = clamp(Math.max(fixed.length, Math.round(+Q.count) || OLD_TOWN_DEFAULTS.quarters.count), 1, 64);
+    const width = fixed.map((f, j) => (j + 1 < fixed.length ? fixed[j + 1].rel : TAU) - f.rel), m = fixed.map(() => 0);
+    const TB = rng(key("alloc")), tb = fixed.map(() => TB.random() * 1e-6);
+    for (let e = fixed.length; e < count; e++) {
+      let best = 0;
+      for (let j = 1; j < fixed.length; j++) if (width[j] / (m[j] + 1) + tb[j] > width[best] / (m[best] + 1) + tb[best]) best = j;
+      m[best]++;
+    }
+    const bounds = [];
+    fixed.forEach((f, j) => {
+      bounds.push({ a: base + f.rel, sp: f.sp });
+      const sub = width[j] / (m[j] + 1);
+      for (let i = 1; i <= m[j]; i++) bounds.push({ a: base + f.rel + sub * i + rng(key(bounds.length)).uniform(-0.25, 0.25) * sub, sp: null });
+    });
+    // the city-wide lot span, rescaled into the quarter block range
+    const lots = nbTypes(plan).map((t) => t.style && t.style.lot).filter(isRange).map((l) => l.map(Number));
+    const lo = lots.length ? Math.min(...lots.map((l) => Math.min(...l))) : 8, hi = lots.length ? Math.max(...lots.map((l) => Math.max(...l))) : 40;
+    const qb = isRange(Q.block) ? [Math.min(...Q.block), Math.max(...Q.block)].map(Number) : OLD_TOWN_DEFAULTS.quarters.block;
+    const toBlock = (x) => (hi > lo ? qb[0] + (clamp(x, lo, hi) - lo) / (hi - lo) * (qb[1] - qb[0]) : (qb[0] + qb[1]) / 2);
+    const ids = nbTypes(plan).map((t) => t.id);
+    const ringClip = (poly, lim) => { for (let s = 0; s < NG; s++) { const a = (s + 0.5) * TAU / NG; poly = clipHalf(poly, Math.cos(a), Math.sin(a), lim * Math.cos(Math.PI / NG)); if (poly.length < 3) break; } return poly; };
+    bounds.forEach((b0, k) => {
+      const b1 = bounds[(k + 1) % bounds.length], a0 = b0.a, a1 = k + 1 < bounds.length ? b1.a : bounds[0].a + TAU, mid = (a0 + a1) / 2;
+      const want = Array.isArray(Q.cultures) ? Q.cultures[k] : undefined;
+      const culture = ids.includes(want) ? want : pickType(plan, Q.weights, rng(key(k, "culture")));
+      // the grid's turn: uniform over [0°, 90°), redrawn when it would read radial or ring-following
+      const RA = rng(key(k, "angle"));
+      let angle = null;
+      for (let t = 0; t < 64 && angle === null; t++) { const x = RA.uniform(0, TAU / 4); if (offGrid(x, mid) >= rad(12)) angle = x; }
+      if (angle === null) angle = norm(mid + TAU / 8) % (TAU / 4);
+      const RB = rng(key(k, "block")), cl = cultureStyle(plan, culture).lot || [lo, hi];
+      const cs = cultureStyle(plan, culture), maxInset = cs.setback + cs.gap[1] / 2;
+      const block = RB.uniform(toBlock(Math.min(...cl)), toBlock(Math.max(...cl))), pitch = block + QUARTER_STREET;
+      const ux = Math.cos(angle), uy = Math.sin(angle), at = (u, v) => [u * ux - v * uy, u * uy + v * ux];
+      const n = Math.max(2, Math.ceil((a1 - a0) / rad(3)));
+      const arc = (r, rev) => Array.from({ length: n + 1 }, (_, i) => polar(r, lerp(a0, a1, rev ? 1 - i / n : i / n)));
+      const poly = [...arc(r1, false), ...arc(r0, true)];
+      out.quarters.push({ k, a0, a1, angle, block, culture, poly });
+      // the lattice, offset by seed, over the quarter's extent in its own frame
+      const us = poly.map(([x, y]) => x * ux + y * uy), vs = poly.map(([x, y]) => -x * uy + y * ux), ou = RB.uniform(0, pitch), ov = RB.uniform(0, pitch);
+      const h0 = b0.sp ? blockHalf(plan, b0.sp) + 2 : QUARTER_STREET / 2, h1 = b1.sp ? blockHalf(plan, b1.sp) + 2 : QUARTER_STREET / 2;
+      let nb = 0;
+      for (let i = Math.floor((Math.min(...us) - ou) / pitch) - 1; i <= Math.ceil((Math.max(...us) - ou) / pitch); i++)
+        for (let j = Math.floor((Math.min(...vs) - ov) / pitch) - 1; j <= Math.ceil((Math.max(...vs) - ov) / pitch); j++) {
+          const u0 = ou + i * pitch, v0 = ov + j * pitch;
+          let p = [at(u0, v0), at(u0 + block, v0), at(u0 + block, v0 + block), at(u0, v0 + block)];
+          p = clipHalf(p, Math.sin(a0), -Math.cos(a0), -h0);
+          if (p.length >= 3) p = clipHalf(p, -Math.sin(a1), Math.cos(a1), -h1);
+          if (p.length < 3) continue;
+          const c = centroid(p), rc = Math.hypot(c[0], c[1]);
+          if (!(rc > 1)) continue;
+          // the inner edge: a tangent cut at the block's bearing (the avenue side), the outer: the quay rim
+          const outer = av2 && rc < av2.r ? av2.r - av2.w / 2 - 2 : rim, inner = av2 && rc >= av2.r ? av2.r + av2.w / 2 + 2 : rin;
+          p = clipHalf(p, -c[0] / rc, -c[1] / rc, -inner);
+          if (p.length >= 3) p = ringClip(p, outer);
+          if (p.length < 3) continue;
+          p = dedupe(p);
+          const area = p.length >= 3 ? polyArea(p) : 0;
+          if (area < 40) continue;
+          // a piece too small for a tower once the culture's podium inset is taken off is a fragment
+          const ar = alignedRect(p, angle), side = ar ? Math.min(dist(ar.q[0], ar.q[1]), dist(ar.q[1], ar.q[2])) : 0;
+          out.blocks.push({ key: `${d.id}|q|${k}|${nb}`, n: nb, i, j, poly: p, zone: "band", quarter: k, culture, angle, fragment: area < 300 || side < 14 + 2 * maxInset });
+          nb++;
+        }
+    });
+    return out;
+  }
+
+  // A fragment's plaza: paving, or a podium of one or two storeys.
+  function plazaLot(plan, ter, o, ob, poly, R) {
+    const storeys = R.randint(0, 2);
+    if (storeys) { const { base, top } = building(o, ob, ter, poly, storeys * plan.storey, "plaza"); return { base, top, storeys }; }
+    const pts = poly.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.12]);
+    o.solid(ob, pts, pts.map((q) => q[2] - 0.42), "paver");
+    return { base: Math.min(...pts.map((q) => q[2])), top: Math.max(...pts.map((q) => q[2])), storeys };
+  }
+  // the lot record of an Old Town tower
+  const towerLot = (plan, t) => ({ tower: t.tower, crown: t.crown, base: t.base, top: t.top, podiumTop: t.podiumTop, height: t.height, capped: t.capped, storeys: Math.round(t.height / plan.storey), plan: t.plan, crownKind: t.crownKind, podiumRoof: t.podiumRoof, roofs: t.roofs });
+
+  // Grid lots on the blocks: a fragment becomes a plaza, every other block a tower lerped through
+  // heights.grid, scaled by the cloud and kept under the cap. Each tower takes a culture's form from the
+  // grid's form mix (grid.forms; empty spreads evenly over all the types), and that culture's roofs.
   function buildGridLots(plan, d, ter, o, cfg, blocks, gridR) {
     const cap = oldTownCap(plan, ter, d), hg = cfg.heights.grid, share = plan.cloud?.tower_share ?? 0.5;
     for (const b of blocks) {
       const R = rng(b.key), ob = o.obj(`NBHD_${d.id}_g_${b.i}_${b.j}`, d.id), area = polyArea(b.poly);
       if (b.fragment) {
-        const storeys = R.randint(0, 2);
-        let base, top;
-        if (storeys) ({ base, top } = building(o, ob, ter, b.poly, storeys * plan.storey, "plaza"));
-        else {
-          const pts = b.poly.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.12]);
-          o.solid(ob, pts, pts.map((q) => q[2] - 0.42), "paver");
-          base = Math.min(...pts.map((q) => q[2])); top = Math.max(...pts.map((q) => q[2]));
-        }
-        o.lots.push({ d: d.id, zone: "grid", kind: "plaza", key: b.key, poly: b.poly, tower: null, crown: null, base, top, podiumTop: top, height: top - base, capped: false, storeys, area });
+        const { base, top, storeys } = plazaLot(plan, ter, o, ob, b.poly, R);
+        o.lots.push({ d: d.id, zone: "grid", kind: "plaza", key: b.key, obj: ob.name, poly: b.poly, tower: null, crown: null, base, top, podiumTop: top, height: top - base, capped: false, storeys, area });
         continue;
       }
+      const form = pickType(plan, cfg.grid.forms, rng(`${d.id}|g|form|${b.i}|${b.j}`));
       const [cx, cy] = centroid(b.poly);
       const H = lerp(hg[0], hg[1], R.random()) * cloudMul(plan, cx, cy, share);
-      const t = oldTownTower(o, ob, ter, b.poly, H, {}, R, cap);
-      o.lots.push({ d: d.id, zone: "grid", key: b.key, poly: b.poly, tower: t.tower, crown: t.crown, base: t.base, top: t.top, podiumTop: t.podiumTop, height: t.height, capped: t.capped, storeys: Math.round(t.height / plan.storey), area });
+      const t = oldTownTower(o, ob, ter, b.poly, H, cultureStyle(plan, form), R, cap);
+      o.lots.push({ d: d.id, zone: "grid", key: b.key, obj: ob.name, form, poly: b.poly, ...towerLot(plan, t), area });
       o.band(`${d.id}|grid`, 0, gridR, t.base, t.top);
     }
   }
 
-  // Tower forms for Old Town: each draws the shaft from z0 up a span over footprint rect(s) (s = 1 is the
-  // tower's full footprint) and returns the scale of its top, which carries the crown. style.tower picks
-  // one; an unknown or missing form is the setback.
+  // Band lots on the quarter blocks: towers through heights.band in the quarter's culture. The podium sits
+  // in from the block by the culture's setback and half a gap from its range, so neighbouring podiums open up.
+  function buildBandLots(plan, d, ter, o, cfg, blocks, r0, r1) {
+    const cap = oldTownCap(plan, ter, d), hb = cfg.heights.band, share = plan.cloud?.tower_share ?? 0.5;
+    for (const b of blocks) {
+      const R = rng(b.key), ob = o.obj(`NBHD_${d.id}_q_${b.quarter}_${b.n}`, d.id), area = polyArea(b.poly);
+      const lot = { d: d.id, zone: "band", key: b.key, obj: ob.name, quarter: b.quarter, culture: b.culture, form: b.culture, poly: b.poly };
+      if (b.fragment) {
+        const { base, top, storeys } = plazaLot(plan, ter, o, ob, b.poly, R);
+        o.lots.push({ ...lot, kind: "plaza", tower: null, crown: null, base, top, podiumTop: top, height: top - base, capped: false, storeys, area });
+        continue;
+      }
+      const st = cultureStyle(plan, b.culture), style = { ...st, inset: st.setback + R.uniform(st.gap[0], st.gap[1]) / 2, axis: b.angle };
+      const [cx, cy] = centroid(b.poly);
+      const H = lerp(hb[0], hb[1], R.random()) * cloudMul(plan, cx, cy, share);
+      const t = oldTownTower(o, ob, ter, b.poly, H, style, R, cap);
+      o.lots.push({ ...lot, ...towerLot(plan, t), area });
+      o.band(`${d.id}|band`, r0, r1, t.base, t.top);
+    }
+  }
+
+  // Tower forms for Old Town, by style.tower.plan. Each draws the shaft from z0 up a span on the tower
+  // envelope (c.env(u0, u1, v0, v1): a rectangle in the envelope's 0–1 frame, v running back from the
+  // front edge) and returns its crowns [{q, z}] (z: the top of the shaft's last lip) and the roof kinds
+  // it used on its terraces. An unknown plan is the setback.
+  const tierFracs = (n) => { const w = Array.from({ length: n }, (_, i) => Math.pow(0.62, i)), s = w.reduce((a, b) => a + b, 0); return w.map((x) => x / s); };
+  const tierScale = (T, i) => (T.tiers > 1 ? 1 - T.taper * i / (T.tiers - 1) : 1);
+  // stacked tiers from z0 up span, a lip at each step; returns each tier's top
+  function towerTiers(o, ob, z0, span, n, shape) {
+    const f = tierFracs(n), tops = [];
+    let z = z0;
+    for (let i = 0; i < n; i++) {
+      const z1 = i === n - 1 ? z0 + span : z + span * f[i], q = shape(i);
+      o.prism(ob, q, z, z1, "stone");
+      o.prism(ob, inset(q, -0.4), z1 - 0.6, z1 + 0.4, "lip");
+      tops.push(z1); z = z1;
+    }
+    return tops;
+  }
+  const centred = (c, s, cu = 0.5, hu = 0.5) => c.env(cu - hu * s, cu + hu * s, 0.5 - 0.5 * s, 0.5 + 0.5 * s);
   const TOWER_FORMS = {
     // four setback tiers, a lip at each step
-    setback(o, ob, rect, z0, span) {
-      for (const [t0, t1, s] of [[0, 0.58, 1], [0.58, 0.78, 0.8], [0.78, 0.91, 0.6], [0.91, 1, 0.4]]) {
-        o.prism(ob, rect(s), z0 + span * t0, z0 + span * t1, "stone");
-        o.prism(ob, rect(s + 0.04), z0 + span * t1 - 0.6, z0 + span * t1 + 0.4, "lip");
+    setback(o, ob, c) {
+      const tops = towerTiers(o, ob, c.z0, c.span, 4, (i) => centred(c, [1, 0.8, 0.6, 0.4][i]));
+      return { crowns: [{ q: centred(c, 0.4), z: tops[3] + 0.4 }], terraces: [] };
+    },
+    // a box shrinking evenly at each tier (the wedding cake)
+    rect(o, ob, c) {
+      const n = c.T.tiers, tops = towerTiers(o, ob, c.z0, c.span, n, (i) => centred(c, tierScale(c.T, i)));
+      return { crowns: [{ q: centred(c, tierScale(c.T, n - 1)), z: tops[n - 1] + 0.4 }], terraces: [] };
+    },
+    // a ziggurat stepping back from the front edge, its lower terraces roofed in the culture's mix
+    stepped(o, ob, c) {
+      const n = c.T.tiers, back = clamp(0.35 + c.T.taper, 0.35, 0.8), vr = (i) => (n > 1 ? back * i / (n - 1) : 0), du = (i) => 0.05 * i;
+      const shape = (i) => c.env(du(i), 1 - du(i), vr(i), 1), tops = towerTiers(o, ob, c.z0, c.span, n, shape), terraces = [];
+      for (let i = 1; i < Math.min(n, 3); i++) {
+        const kind = pickRoof(c.roofs, c.R);
+        roofTop(o, ob, c.ter, c.env(du(i), 1 - du(i), vr(i - 1) + 0.02, vr(i) - 0.02), tops[i - 1] + 0.95, kind, c.R, ob.coll, `${ob.name}_t${i}`);
+        terraces.push(kind);
       }
-      return 0.4;
+      return { crowns: [{ q: shape(n - 1), z: tops[n - 1] + 0.4 }], terraces };
+    },
+    // an elliptical drum in tapering tiers
+    round(o, ob, c) {
+      const n = c.T.tiers, NS = 24;
+      const ell = (s) => Array.from({ length: NS }, (_, k) => { const t = (k + 0.5) * TAU / NS; return c.at(0.5 + 0.5 * s * Math.cos(t), 0.5 + 0.5 * s * Math.sin(t)); });
+      const tops = towerTiers(o, ob, c.z0, c.span, n, (i) => ell(tierScale(c.T, i)));
+      return { crowns: [{ q: ell(tierScale(c.T, n - 1)), z: tops[n - 1] + 0.4 }], terraces: [] };
+    },
+    // two slender shafts of unequal height, a glazed bridge between them
+    twin(o, ob, c) {
+      const n = c.T.tiers, spanB = c.span * c.R.uniform(0.75, 0.9), crowns = [];
+      for (const [cu, span] of [[0.215, c.span], [0.785, spanB]]) {
+        const tops = towerTiers(o, ob, c.z0, span, n, (i) => centred(c, tierScale(c.T, i), cu, 0.215));
+        crowns.push({ q: centred(c, tierScale(c.T, n - 1), cu, 0.215), z: tops[n - 1] + 0.4 });
+      }
+      const zb = c.z0 + spanB * c.R.uniform(0.5, 0.7);
+      o.prism(ob, c.env(0.4, 0.6, 0.38, 0.62), zb, zb + 5, "glass");
+      return { crowns, terraces: [] };
     },
   };
-  const TOWER_CROWN = 22;  // the most a roofTop crown adds above the top lip (a deco crown with a finial)
-  // An Old Town tower on a lot: a podium filling the lot, then the tower form squared to the lot's first
-  // edge, then a roofTop crown (style.roof, default "deco"). H runs from the base to the top of the shaft;
-  // it's clamped so the drawn top, crown included, stays at or under cap (absolute z).
+  // Crowns, by style.tower.crown: each draws on the shaft's top (q, z) and returns how far it rises, at most
+  // TOWER_CROWN. An unknown crown is a roofTop in style.roof (default "deco").
+  const ccwQ = (q) => (signedArea(q) < 0 ? [...q].reverse() : q);
+  const TOWER_CROWNS = {
+    // a plant-room penthouse
+    flat(o, ob, ter, q, z, R) {
+      const s = Math.sqrt(polyArea(q)), h = R.uniform(3.5, 5.5), p = inset(q, s * 0.28);
+      o.prism(ob, p, z - 0.4, z + h, "stone");
+      o.prism(ob, inset(p, -0.3), z + h, z + h + 0.5, "lip");
+      return h + 0.5;
+    },
+    // a stepped cap and a needle
+    needle(o, ob, ter, q, z, R) {
+      const s = Math.sqrt(polyArea(q)), h1 = R.uniform(3, 5), h2 = R.uniform(2, 3), [cx, cy] = centroid(q), w = 0.7;
+      o.prism(ob, inset(q, s * 0.18), z - 0.4, z + h1, "stone");
+      o.prism(ob, inset(q, s * 0.34), z + h1, z + h1 + h2, "lip");
+      o.prism(ob, [[cx - w, cy - w], [cx + w, cy - w], [cx + w, cy + w], [cx - w, cy + w]], z + h1 + h2, z + 20, "lip");
+      return 20;
+    },
+    // a ring of vertical fins round the roof edge
+    fins(o, ob, ter, q, z, R) {
+      const h = R.uniform(8, 14), [cx, cy] = centroid(q);
+      for (let e = 0; e < q.length; e++) {
+        const a = q[e], b = q[(e + 1) % q.length], nf = Math.max(1, Math.floor(dist(a, b) / 3.5));
+        for (let j = 0; j < nf; j++) {
+          const t = (j + 0.5) / nf, p = [lerp(a[0], b[0], t), lerp(a[1], b[1], t)], L = Math.hypot(cx - p[0], cy - p[1]) || 1;
+          const dx = (cx - p[0]) / L, dy = (cy - p[1]) / L, wx = -dy * 0.2, wy = dx * 0.2, dd = Math.min(1.8, L * 0.5);
+          o.prism(ob, ccwQ([[p[0] + wx, p[1] + wy], [p[0] - wx, p[1] - wy], [p[0] - wx + dx * dd, p[1] - wy + dy * dd], [p[0] + wx + dx * dd, p[1] + wy + dy * dd]]), z - 0.4, z + h, "lip");
+        }
+      }
+      return h;
+    },
+    // a glazed lantern room, a cap and a finial
+    lantern(o, ob, ter, q, z, R) {
+      const s = Math.sqrt(polyArea(q)), g = inset(q, s * 0.2), h = R.uniform(8, 12);
+      o.prism(ob, g, z - 0.4, z + h, "glass");
+      o.prism(ob, inset(g, -0.5), z + h, z + h + 0.8, "lip");
+      o.prism(ob, inset(g, s * 0.22), z + h + 0.8, z + h + 3.5, "stone");
+      return h + 3.5;
+    },
+    // a planted roof
+    garden(o, ob, ter, q, z, R) { return roofTop(o, ob, ter, q, z, "garden", R, ob.coll, ob.name); },
+  };
+  const TOWER_CROWN = 22;  // the most a crown adds above the top lip (a deco roofTop with a finial)
+  // squaring the culture's dominant roof, so a podium reads as its culture
+  const sharpen = (mix) => Object.fromEntries(ROOF_KINDS.map((k) => [k, Math.pow(Math.max(0, +(mix || {})[k] || 0), 2)]));
+  // An Old Town tower on a lot: a podium (the lot, in by style.inset), then the tower form on the biggest
+  // rectangle standing on the podium's first edge (or, with style.axis, its longest edge on that axis),
+  // set back from its front so the podium keeps a roof terrace (style.roofs), then a crown. style.tower is
+  // the culture's tower ({podium, tiers, taper, plan, crown}, see cultureStyle) or a TOWER_FORMS name.
+  // H runs from the base to the top of the shaft; it's clamped so the drawn top, crown included, stays at
+  // or under cap (absolute z).
   function oldTownTower(o, ob, ter, poly, H, style, R, cap) {
     style = style || {};
+    const T = style.tower && typeof style.tower === "object" ? style.tower : { plan: style.tower, tiers: 4, taper: 0.4 };
     const zs = poly.map(([x, y]) => ter.G(Math.hypot(x, y))), zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05;
     const Hmax = Math.max(0, cap - base - 0.4 - TOWER_CROWN), capped = H > Hmax;
     H = Math.min(H, Hmax);
-    if (zmax - zmin > 0.1) o.prism(ob, poly, zmin - 0.3, base, "plinth");
-    const podium = Math.min(clamp(H * R.uniform(0.07, 0.13), 9, 26), H * 0.4), podiumTop = base + podium;
-    o.prism(ob, poly, base, podiumTop, "stone");
-    // footprint: the biggest rectangle on the first edge (a street edge for grid blocks), shrunk to a tower
-    const ccw = signedArea(poly) < 0 ? [poly[1], poly[0], ...poly.slice(2).reverse()] : poly;
-    const fr = rectOnEdge(ccw, 0), foot = (fr && fr.area > 150 ? fr.q : null) || solidRect(poly) || inset(poly, 2);
-    const [fx, fy] = centroid(foot), k = 0.72;
-    const rect = (s) => foot.map(([x, y]) => [fx + (x - fx) * k * s, fy + (y - fy) * k * s]);
-    const span = H - podium - 1;
-    if (span < 4 || foot.length !== 4) {  // too low for a shaft: the podium and a lip
-      o.prism(ob, inset(poly, -0.4), podiumTop, podiumTop + 0.4, "lip");
-      return { base, top: podiumTop + 0.4, podiumTop, tower: rect(1), crown: rect(1), height: H, capped };
+    const pod = (style.inset > 0 && insetClip(poly, style.inset)) || poly;
+    if (zmax - zmin > 0.1) o.prism(ob, pod, zmin - 0.3, base, "plinth");
+    const podium = Math.min(isRange(T.podium) ? R.randint(T.podium[0], T.podium[1]) * (style.storey || 4.3) : clamp(H * R.uniform(0.07, 0.13), 9, 26), H * 0.4), podiumTop = base + podium;
+    o.prism(ob, pod, base, podiumTop, "stone");
+    // footprint: the biggest rectangle on the front edge, shrunk to a tower
+    // (with style.axis: the biggest rectangle on the lot along the axis, brought in by the inset)
+    const ccw = signedArea(pod) < 0 ? [pod[1], pod[0], ...pod.slice(2).reverse()] : pod;
+    const ar = style.axis != null ? alignedRect(poly, style.axis) : null, fr = ar ? null : rectOnEdge(ccw, 0);
+    const shrink = (q, d) => { const lu = dist(q[0], q[1]), lv = dist(q[1], q[2]); if (!(lu > 2 * d + 2 && lv > 2 * d + 2)) return null;
+      const P = (u, v) => [q[0][0] + (q[1][0] - q[0][0]) * u + (q[3][0] - q[0][0]) * v, q[0][1] + (q[1][1] - q[0][1]) * u + (q[3][1] - q[0][1]) * v];
+      return [P(d / lu, d / lv), P(1 - d / lu, d / lv), P(1 - d / lu, 1 - d / lv), P(d / lu, 1 - d / lv)]; };
+    const foot = (ar && shrink(ar.q, (pod === poly ? 0 : style.inset) + 0.01)) || (fr && fr.area > 150 ? fr.q : null) || solidRect(pod) || inset(pod, 2);
+    const rect4 = foot.length === 4;
+    // u along the front edge, v back from it
+    const P = (u, v) => { const a = [lerp(foot[0][0], foot[1][0], u), lerp(foot[0][1], foot[1][1], u)], b = [lerp(foot[3][0], foot[2][0], u), lerp(foot[3][1], foot[2][1], u)]; return [lerp(a[0], b[0], v), lerp(a[1], b[1], v)]; };
+    const sub = (u0, u1, v0, v1) => [P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)];
+    const EU = [0.06, 0.94], EV = [0.28, 0.96], at = (u, v) => P(lerp(EU[0], EU[1], u), lerp(EV[0], EV[1], v));
+    const env = (u0, u1, v0, v1) => [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)];
+    const span = H - podium - 1, kinds = [];
+    if (span < 4 || !rect4) {  // too low for a shaft: the podium and a lip
+      o.prism(ob, inset(pod, -0.4), podiumTop, podiumTop + 0.4, "lip");
+      const t = rect4 ? env(0, 1, 0, 1) : foot;
+      return { base, top: podiumTop + 0.4, podiumTop, tower: t, crown: t, height: H, capped, plan: null, crownKind: null, podiumRoof: null, roofs: kinds };
     }
-    o.prism(ob, inset(poly, -0.4), podiumTop, podiumTop + 1, "lip");
-    const s = (TOWER_FORMS[style.tower] || TOWER_FORMS.setback)(o, ob, rect, podiumTop + 1, span), z = podiumTop + 1 + span + 0.4;
-    const crown = rect(s), extra = roofTop(o, ob, ter, crown, z, style.roof || "deco", R, ob.coll, ob.name);
-    return { base, top: z + extra, podiumTop, tower: rect(1), crown, height: H, capped };
+    o.prism(ob, inset(pod, -0.4), podiumTop, podiumTop + 1, "lip");
+    // the podium's roof terrace in front of the tower
+    const podiumRoof = pickRoof(sharpen(style.roofs), R);
+    roofTop(o, ob, ter, sub(0.04, 0.96, 0.05, EV[0] - 0.04), podiumTop + 1.55, podiumRoof, R, ob.coll, `${ob.name}_podium`);
+    kinds.push(podiumRoof);
+    const plan = TOWER_FORMS[T.plan] ? T.plan : "setback";
+    const f = TOWER_FORMS[plan](o, ob, { env, at, z0: podiumTop + 1, span, T, R, ter, roofs: style.roofs || {} });
+    kinds.push(...f.terraces);
+    const crownKind = TOWER_CROWNS[T.crown] ? T.crown : style.roof || "deco";
+    let top = -Infinity;
+    for (const c of f.crowns) {
+      const extra = TOWER_CROWNS[T.crown] ? TOWER_CROWNS[T.crown](o, ob, ter, c.q, c.z, R) : roofTop(o, ob, ter, c.q, c.z, crownKind, R, ob.coll, ob.name);
+      top = Math.max(top, c.z + extra);
+    }
+    return { base, top, podiumTop, tower: env(0, 1, 0, 1), crown: f.crowns[0].q, height: H, capped, plan, crownKind, podiumRoof, roofs: kinds };
   }
 
   // The Lantern: the city's tallest tower at the exact centre. A slightly tapered shaft with a tall glazed
@@ -2360,6 +2645,6 @@ const CityGen = (() => {
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;

@@ -783,6 +783,16 @@
       "open": 0.4,
       "garden": 0.1,
       "farm": 0.35
+     },
+     "tower": {
+      "podium": [
+       3,
+       5
+      ],
+      "tiers": 2,
+      "taper": 0.2,
+      "plan": "rect",
+      "crown": "fins"
      }
     }
    },
@@ -825,6 +835,16 @@
       "open": 0.15,
       "garden": 0.2,
       "farm": 0.05
+     },
+     "tower": {
+      "podium": [
+       4,
+       6
+      ],
+      "tiers": 4,
+      "taper": 0.35,
+      "plan": "stepped",
+      "crown": "needle"
      }
     }
    },
@@ -867,6 +887,16 @@
       "open": 0.2,
       "garden": 0.5,
       "farm": 0.2
+     },
+     "tower": {
+      "podium": [
+       2,
+       4
+      ],
+      "tiers": 3,
+      "taper": 0.25,
+      "plan": "twin",
+      "crown": "garden"
      }
     }
    },
@@ -909,6 +939,16 @@
       "open": 0.2,
       "garden": 0.3,
       "farm": 0.05
+     },
+     "tower": {
+      "podium": [
+       3,
+       6
+      ],
+      "tiers": 3,
+      "taper": 0.3,
+      "plan": "round",
+      "crown": "lantern"
      }
     }
    },
@@ -951,6 +991,16 @@
       "open": 0.25,
       "garden": 0.1,
       "farm": 0.6
+     },
+     "tower": {
+      "podium": [
+       2,
+       3
+      ],
+      "tiers": 1,
+      "taper": 0,
+      "plan": "rect",
+      "crown": "flat"
      }
     }
    },
@@ -993,6 +1043,16 @@
       "open": 0.4,
       "garden": 0.1,
       "farm": 0.05
+     },
+     "tower": {
+      "podium": [
+       4,
+       7
+      ],
+      "tiers": 5,
+      "taper": 0.45,
+      "plan": "round",
+      "crown": "needle"
      }
     }
    }

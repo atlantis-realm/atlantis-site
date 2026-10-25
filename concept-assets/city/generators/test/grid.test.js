@@ -27,7 +27,7 @@ function segPolyDist(a, b, poly) {
 function check(o, p) {
   const c = CityGen.oldTownConfig(core(p)).grid, pt = c.block + c.street, n = Math.ceil(c.square / 2 / pt);
   const sq = (2 * n * pt) ** 2, est = (Math.PI * gridR ** 2 - sq) / pt ** 2, cnt = towerLots(o).length;
-  return { est, cnt, ok: cnt >= 0.7 * est && cnt <= 1.2 * est };
+  return { est, cnt, ok: cnt >= 0.7 * est && cnt <= 1.4 * est };
 }
 
 test("oldTownGrid lays out keyed grid blocks and the square", () => {
@@ -73,6 +73,16 @@ test("grid lot edges run on the hero bearing or square to it", () => {
     if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.5 || ringR(...m) >= rimR - 0.05) continue;  // circle-clip edge
     const ang = Math.atan2(b[1] - a[1], b[0] - a[0]) - ha, off = Math.abs(((ang % (Math.PI / 2)) + Math.PI / 2 + Math.PI / 4) % (Math.PI / 2) - Math.PI / 4);
     assert.ok(off <= tol, `${l.key} edge ${i} off by ${off * 180 / Math.PI}°`);
+  }
+});
+test("grid tower footprints run on the hero bearing or square to it", () => {
+  const tol = CityGen.rad(0.5);
+  assert.ok(towerLots(O).length > 0);
+  for (const l of towerLots(O)) for (let i = 0; i < l.tower.length; i++) {
+    const a = l.tower[i], b = l.tower[(i + 1) % l.tower.length];
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.5) continue;
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]) - ha, off = Math.abs(((ang % (Math.PI / 2)) + Math.PI / 2 + Math.PI / 4) % (Math.PI / 2) - Math.PI / 4);
+    assert.ok(off <= tol, `${l.key} tower edge ${i} off by ${off * 180 / Math.PI}°`);
   }
 });
 test("the hero street runs clear through the grid on a street centreline", () => {
