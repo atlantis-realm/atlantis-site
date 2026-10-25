@@ -183,7 +183,7 @@ code { font-family: var(--font-data); font-size: .92em; }
       <div class="group" role="group" aria-label="View">
         <span class="label">View</span>
         <button class="btn" type="button" data-view="city" aria-pressed="true">Whole city</button>
-        <button class="btn" type="button" data-view="core" aria-pressed="false">Core</button>
+        <button class="btn" type="button" data-view="core" aria-pressed="false">Old Town</button>
         <button class="btn" type="button" data-view="hero" aria-pressed="false">Hero corridor</button>
       </div>
       <div class="group">
@@ -201,9 +201,9 @@ code { font-family: var(--font-data); font-size: .92em; }
       <div class="tip" id="tip" hidden></div>
     </div>
     <div class="plan-foot">
-      <div class="legend" id="legendHeight"><span>Roof height</span><span class="ramp" aria-hidden="true"></span><span id="rampMax">0–240 m</span></div>
+      <div class="legend" id="legendHeight"><span>Roof height</span><span class="ramp" aria-hidden="true"></span><span id="rampMax">0–250 m</span></div>
       <div class="keys" id="legendUse" hidden></div>
-      <div class="keys"><span class="key"><i style="background:var(--road)"></i>Road</span><span class="key"><i style="background:var(--gold)"></i>Stairs</span><span class="key"><i style="background:var(--cyan)"></i>Ramp</span><span class="key">➜ one-way ring avenue</span></div>
+      <div class="keys"><span class="key"><i style="background:var(--road)"></i>Road</span><span class="key"><i style="background:var(--gold)"></i>Stairs</span><span class="key"><i style="background:var(--cyan)"></i>Ramp</span><span class="key"><i style="background:var(--cyan);border-radius:50%;width:10px"></i>Lantern heart</span><span class="key"><i style="background:transparent;border:2px solid var(--gold)"></i>Landmark</span><span class="key">➜ one-way ring avenue</span></div>
       <div class="scalebar"><i id="scaleBar" style="width:80px"></i><span id="scaleTxt">—</span></div>
       <span>North up · drag to pan · scroll to zoom</span>
     </div>
@@ -220,7 +220,7 @@ code { font-family: var(--font-data); font-size: .92em; }
     <div class="section-head">
       <h2>Skyline section</h2>
       <label for="secSpoke">Along <select id="secSpoke"></select></label>
-      <p>Temple at left, docks at right. Ground, road and sidewalk along the chosen spoke; bands show each row's roof range; the dashed line is the hero camera's sightline to the spire tip.</p>
+      <p>Old Town and the Lantern at left, docks at right. Ground, road and sidewalk along the chosen spoke; bands show each row's roof range; the Lantern's glowing heart is cyan, and the dashed line is the hero camera's sightline to the Lantern's tip.</p>
     </div>
     <div class="section-scroll"><svg id="section" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Radial section of deck levels and building heights"></svg></div>
   </section>

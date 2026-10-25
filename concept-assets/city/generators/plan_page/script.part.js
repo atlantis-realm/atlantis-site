@@ -12,7 +12,11 @@
     "KB3D Cyberpunk", "KB3D Future Slums 2", "KB3D Gaea", "KB3D Japanese Neighborhoods", "KB3D Neo Dubai", "KB3D Neo NYC",
     "KB3D Neo San Francisco", "KB3D New Delhi", "KB3D Noir Futurism", "KB3D Oasis", "KB3D Paris",
     "KB3D Secrets of the Luminara", "KB3D Utopia"];
-  const TYPE_LABEL = { perimeter: "Perimeter blocks", campus: "Colleges & planting", towers: "Setback towers" };
+  const TYPE_LABEL = { perimeter: "Perimeter blocks", campus: "Colleges & planting", towers: "Setback towers", oldtown: "Old Town" };
+  // Old Town settings live in these district keys; citygen.js defaults any that an older plan lacks
+  const OLD_TOWN_KEYS = ["grid", "quarters", "heights", "lantern", "landmarks", "second_avenue", "quay"];
+  const TOWER_PLANS = [["rect", "Rectangular"], ["round", "Round"], ["stepped", "Stepped"], ["twin", "Twin"]];
+  const TOWER_CROWNS = [["flat", "Flat"], ["needle", "Needle"], ["fins", "Fins"], ["lantern", "Lantern"], ["garden", "Garden"]];
   const BAND_KINDS = [["grove", "Groves"], ["campus", "Colleges"], ["orchard", "Orchards"]];
   const CITY = "city";
   const USES = CityGen.USES, USE_LABEL = { residential: "Residential", commercial: "Commercial", industrial: "Industrial", hydroponics: "Hydroponics", entertainment: "Entertainment", park: "Park", college: "College", harbour: "Harbour", waterworks: "Waterworks" };
@@ -40,7 +44,13 @@
     const a = hex(css["--h-lo"]), b = hex(css["--h-hi"]);
     ramp = Array.from({ length: 48 }, (_, i) => `rgb(${a.map((c, k) => Math.round(c + (b[k] - c) * i / 47)).join(",")})`);
   }
-  const shade = (top) => ramp[Math.max(0, Math.min(47, Math.round(top / 250 * 47)))];
+  let hMax = 250;  // the height ramp's top: the tallest roof in the city bar the Lantern, set from gen
+  const shade = (top) => ramp[Math.max(0, Math.min(47, Math.round(top / hMax * 47)))];
+  function setHeightScale() {
+    const tops = gen.lots.filter((l) => l.kind !== "lantern").map((l) => l.top);
+    hMax = Math.max(50, Math.ceil((tops.length ? maxOf(tops) : 250) / 10) * 10);
+    $("rampMax").textContent = `0–${fmt(hMax)} m`;
+  }
   let S = 1, OX = 0, OY = 0, DPR = 1;
   function fit() {
     const r = cv.getBoundingClientRect();
@@ -115,19 +125,30 @@
       if (byUse) for (const u of USES) { ctx.beginPath(); let any = false; for (const c of gen.cells) if (c.use === u && u !== "park") { poly(c.poly); any = true; } if (any) { ctx.fillStyle = css[`--u-${u}`]; ctx.globalAlpha = 0.22; ctx.fill(); ctx.globalAlpha = 1; } }
       ctx.strokeStyle = css["--water-edge"]; ctx.lineWidth = Math.max(1, 2.4 * S);
       for (const r of gen.rills) { ctx.beginPath(); ctx.arc(sx(0), sy(0), r.r * S, -r.a0, -r.a1, true); ctx.stroke(); }
+      // the Lantern's square, paved, under the planted squares' tint
+      if (gen.lantern?.square) { ctx.beginPath(); poly(gen.lantern.square); ctx.fillStyle = css["--pave"]; ctx.fill(); ctx.strokeStyle = css["--land-edge"]; ctx.lineWidth = 1; ctx.stroke(); }
       ctx.beginPath(); (gen.squares || []).forEach(poly); ctx.globalAlpha = 0.35; ctx.fillStyle = css["--tree"]; ctx.fill(); ctx.globalAlpha = 1;
       // lots, batched by colour so 26k footprints draw in a few dozen fills
       const low = new Map(), high = new Map();
       const push = (m, k, pts) => { const l = m.get(k); if (l) l.push(pts); else m.set(k, [pts]); };
+      // Old Town lots carry their culture: colour by it rather than by the one Old Town neighbourhood
+      const nbCol = (l) => (l.culture ? cultureColour(l.culture) : nbColour(l.nb, nbMap));
       for (const l of gen.lots) {
-        if (l.tower && byNb && l.nb) { const c = nbColour(l.nb, nbMap); push(low, c, l.poly); push(high, c, l.tower); push(high, c, l.crown); }
+        if (l.tower && byNb && (l.nb || l.culture)) { const c = nbCol(l); push(low, c, l.poly); push(high, c, l.tower); push(high, c, l.crown); }
         else if (l.tower) { push(low, shade(l.podiumTop), l.poly); push(high, shade(l.top * 0.85), l.tower); push(high, shade(l.top), l.crown); }
-        else push(low, byNb && l.nb ? nbColour(l.nb, nbMap) : byUse && l.use ? css[`--u-${l.use}`] : shade(l.top), l.poly);
+        else push(low, byNb && (l.nb || l.culture) ? nbCol(l) : byUse && l.use ? css[`--u-${l.use}`] : shade(l.top), l.poly);
       }
       for (const m of [low, high]) for (const [col, list] of m) {
         ctx.beginPath(); list.forEach(poly); ctx.fillStyle = col; ctx.fill();
         if (S > 0.35) { ctx.strokeStyle = css["--land-edge"]; ctx.lineWidth = 0.5; ctx.stroke(); }
       }
+      // Old Town: faint quarter edges, and the landmark buildings outlined in gold
+      if ((gen.quarters || []).length) {
+        ctx.beginPath(); gen.quarters.forEach((q) => poly(q.poly));
+        ctx.strokeStyle = css["--muted"]; ctx.globalAlpha = 0.45; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      }
+      const landmarks = gen.lots.filter((l) => l.kind === "landmark");
+      if (landmarks.length) { ctx.beginPath(); landmarks.forEach((l) => poly(l.poly)); ctx.strokeStyle = css["--gold"]; ctx.lineWidth = Math.max(1.5, 2 * S); ctx.stroke(); }
       if ($("lyr-sky").checked && gen.skywalks.length) {
         ctx.strokeStyle = css["--skywalk"]; ctx.lineWidth = Math.max(1.5, (plan.skywalks?.width || 4) * S); ctx.lineCap = "butt";
         ctx.beginPath();
@@ -151,9 +172,17 @@
         ctx.fillStyle = css["--tree"]; ctx.fill();
       }
       if ($("lyr-cloud").checked) drawCloud();
-      const tp = plan.scene.temple, lift = gen.terrain.templeLift;
-      for (const [r, z] of tp.tiers) { ctx.beginPath(); ctx.arc(sx(0), sy(0), r * S, 0, TAU); ctx.fillStyle = shade(z + lift); ctx.fill(); ctx.strokeStyle = css["--land-edge"]; ctx.lineWidth = 1; ctx.stroke(); }
-      ctx.beginPath(); ctx.arc(sx(0), sy(0), Math.max(2, tp.spire_r * S), 0, TAU); ctx.fillStyle = css["--gold"]; ctx.fill();
+      // the Lantern: its base as an outline, its glowing heart as a cyan disc
+      const LT = gen.lantern;
+      if (LT) {
+        const X0 = sx(LT.x), Y0 = sy(LT.y);
+        ctx.beginPath(); ctx.arc(X0, Y0, Math.max(3, LT.r_base * S), 0, TAU); ctx.fillStyle = css["--sheet"]; ctx.fill(); ctx.strokeStyle = css["--ink"]; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.beginPath(); ctx.arc(X0, Y0, Math.max(2, LT.r_top * S), 0, TAU); ctx.fillStyle = css["--cyan"]; ctx.fill();
+      }
+      if ($("lyr-labels").checked && S > 0.8 && landmarks.length) {
+        ctx.font = `11px "Source Sans 3", system-ui, sans-serif`; ctx.textAlign = "center"; ctx.lineWidth = 3; ctx.strokeStyle = css["--sheet"]; ctx.fillStyle = css["--gold"];
+        for (const l of landmarks) { const [x, y] = centroid(l.poly); ctx.strokeText(l.label, sx(x), sy(y)); ctx.fillText(l.label, sx(x), sy(y)); }
+      }
       const d = plan.districts.find((x) => x.id === selected), ring = d && plan.scene.rings.find((r) => r.id === d.ring);
       if (ring) {
         ctx.setLineDash([10, 6]); ctx.strokeStyle = css["--gold"]; ctx.lineWidth = 2;
@@ -204,6 +233,12 @@
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(cloudImg, sx(-R), sy(R), 2 * R * S, 2 * R * S);
   }
+  const centroid = (q) => q.reduce(([a, b], [x, y]) => [a + x / q.length, b + y / q.length], [0, 0]);
+  const cultureLabel = (id) => (plan.neighbourhoods?.types || []).find((t) => t.id === id)?.label || id;
+  function cultureColour(id) {
+    const t = (plan.neighbourhoods?.types || []).find((x) => x.id === id);
+    return t && /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : css["--land-edge"];
+  }
   const nbIndex = () => new Map((gen.neighbourhoods || []).map((n, i) => [n.id, { ...n, i }]));
   function nbColour(id, map) {
     const n = map.get(id), t = (plan.neighbourhoods?.types || []).find((x) => x.id === n?.type);
@@ -248,11 +283,13 @@
   // ---------------------------------------------------------------- section along a spoke
   function drawSection() {
     const sc = plan.scene, ter = gen.terrain, W = 1000, H = 250, padL = 36, padR = 10, padT = 12, padB = 26;
-    const maxR = Math.max(...sc.rings.map((r) => r.r1)), maxZ = 260, lift = ter.templeLift;
+    // tall enough for the Lantern and the highest band of roofs
+    const LT = gen.lantern, bandHi = maxOf(Object.values(gen.bands).map((b) => b.hi));
+    const maxR = Math.max(...sc.rings.map((r) => r.r1)), maxZ = Math.max(LT ? LT.top : 0, Number.isFinite(bandHi) ? bandHi : 0, 220) + 40;
     const X = (r) => padL + (r / maxR) * (W - padL - padR), Y = (z) => padT + (1 - (z + 10) / (maxZ + 10)) * (H - padT - padB);
     const spk = gen.spokes.find((s) => s.k === secSpoke) || gen.spokes[0], prof = spk.profile;
     let s = "";
-    for (const z of [0, 50, 100, 150, 200, 250]) s += `<line x1="${padL}" x2="${W - padR}" y1="${Y(z)}" y2="${Y(z)}" stroke="var(--line)"/><text x="${padL - 6}" y="${Y(z) + 4}" font-size="10" text-anchor="end" fill="var(--muted)" font-family="var(--font-data)">${z}</text>`;
+    for (let z = 0; z <= maxZ; z += 100) s += `<line x1="${padL}" x2="${W - padR}" y1="${Y(z)}" y2="${Y(z)}" stroke="var(--line)"/><text x="${padL - 6}" y="${Y(z) + 4}" font-size="10" text-anchor="end" fill="var(--muted)" font-family="var(--font-data)">${z}</text>`;
     for (const b of Object.values(gen.bands)) s += `<rect x="${X(b.r0)}" y="${Y(b.hi)}" width="${Math.max(2, X(b.r1) - X(b.r0))}" height="${Math.max(0, Y(b.lo) - Y(b.hi))}" fill="${shade(b.hi)}" opacity="0.45"/>`;
     let ground = `M${X(0)} ${Y(-10)}`;
     for (let t = 0; t <= maxR; t += 4) ground += `L${X(t)} ${Y(ter.isWater(t) ? ter.G(t) - 6 : ter.G(t))}`;
@@ -266,13 +303,20 @@
       s += `<path d="${walk}" fill="none" stroke="var(--cyan)" stroke-width="1.6"/><path d="${road}" fill="none" stroke="var(--ink)" stroke-width="1.6"/>`;
     }
     for (const st of spk.stairs) s += `<rect x="${X(st.t)}" y="${Y(prof.road(st.t))}" width="${Math.max(3, X(st.t + st.run) - X(st.t))}" height="${Y(prof.road(st.t) - st.rise) - Y(prof.road(st.t))}" fill="var(--gold)"/><text x="${X(st.t)}" y="${Y(prof.road(st.t)) - 6}" font-size="10" text-anchor="middle" fill="var(--gold)" font-family="var(--font-data)">${st.n} steps</text>`;
-    const tp = sc.temple, base = ter.G(0);
-    s += `<path d="M${X(0)} ${Y(base)}L${X(tp.r)} ${Y(base)}L${X(tp.r)} ${Y(tp.tiers[0][1] + lift)}` + tp.tiers.slice(1).map(([r, z], k) => `L${X(tp.tiers[k][0])} ${Y(z + lift)}L${X(r)} ${Y(z + lift)}`).join("") + `L${X(0)} ${Y(tp.tiers[tp.tiers.length - 1][1] + lift)}Z" fill="${shade(100)}" stroke="var(--land-edge)"/>`;
-    const spire = tp.spire_top + lift;
-    s += `<rect x="${X(0)}" y="${Y(spire)}" width="${Math.max(2, X(tp.spire_r) - X(0))}" height="${Y(tp.tiers[tp.tiers.length - 1][1] + lift) - Y(spire)}" fill="var(--gold)"/>`;
-    const cam = sc.camera, camR = Math.hypot(cam.x - sc.center[0], cam.y - sc.center[1]);
-    s += `<line x1="${X(camR)}" y1="${Y(cam.z)}" x2="${X(0)}" y2="${Y(spire)}" stroke="var(--gold)" stroke-width="1.2" stroke-dasharray="5 4"/><circle cx="${X(camR)}" cy="${Y(cam.z)}" r="4" fill="var(--gold)"/>`;
-    s += `<text x="${X(camR)}" y="${Y(cam.z) - 8}" font-size="10" text-anchor="middle" fill="var(--gold)" font-family="var(--font-data)">camera</text><text x="${X(0) + 8}" y="${Y(spire) + 3}" font-size="10" fill="var(--gold)" font-family="var(--font-data)">spire ${fmt(spire)} m</text>`;
+    // the Lantern: tapered shaft to the crown, the glowing heart a little proud of it, crown fins and mast
+    if (LT) {
+      const crown = LT.crown ?? LT.base + 0.92 * (LT.top - LT.base), w = (r) => Math.max(1.5, X(r) - X(0));
+      const rAt = (z) => LT.r_base + (LT.r_top - LT.r_base) * Math.min(1, Math.max(0, (z - LT.base) / (crown - LT.base)));
+      s += `<path d="M${X(0)} ${Y(LT.base)}L${X(0) + w(LT.r_base)} ${Y(LT.base)}L${X(0) + w(LT.r_top)} ${Y(crown)}L${X(0)} ${Y(crown)}Z" fill="${shade(hMax * 0.6)}" stroke="var(--land-edge)"/>`;
+      s += `<rect x="${X(0)}" y="${Y(LT.heart[1])}" width="${w(rAt(LT.heart[0]) + 1.8)}" height="${Y(LT.heart[0]) - Y(LT.heart[1])}" fill="var(--cyan)"/>`;
+      const fins = crown + 0.5 * (LT.top - crown);
+      s += `<rect x="${X(0)}" y="${Y(fins)}" width="${w(LT.r_top * 1.05)}" height="${Y(crown) - Y(fins)}" fill="var(--gold)" opacity="0.8"/>`;
+      s += `<line x1="${X(0) + 0.5}" x2="${X(0) + 0.5}" y1="${Y(fins)}" y2="${Y(LT.top)}" stroke="var(--gold)" stroke-width="1.4"/>`;
+      const cam = sc.camera, camR = Math.hypot(cam.x - sc.center[0], cam.y - sc.center[1]);
+      s += `<line x1="${X(camR)}" y1="${Y(cam.z)}" x2="${X(0)}" y2="${Y(LT.top)}" stroke="var(--gold)" stroke-width="1.2" stroke-dasharray="5 4"/><circle cx="${X(camR)}" cy="${Y(cam.z)}" r="4" fill="var(--gold)"/>`;
+      s += `<text x="${X(camR)}" y="${Y(cam.z) - 8}" font-size="10" text-anchor="middle" fill="var(--gold)" font-family="var(--font-data)">camera</text><text x="${X(0) + 10}" y="${Y(LT.top) + 9}" font-size="10" fill="var(--gold)" font-family="var(--font-data)">Lantern ${fmt(LT.top - LT.base)} m · top +${fmt(LT.top)} m</text>`;
+      s += `<text x="${X(0) + w(LT.r_base) + 6}" y="${(Y(LT.heart[0]) + Y(LT.heart[1])) / 2 + 3}" font-size="10" fill="var(--cyan)" font-family="var(--font-data)">heart +${fmt(LT.heart[0])}–${fmt(LT.heart[1])} m</text>`;
+    }
     for (let r = 0; r <= maxR; r += 500) s += `<text x="${X(r)}" y="${H - 8}" font-size="10" text-anchor="middle" fill="var(--muted)" font-family="var(--font-data)">${fmt(r)} m</text>`;
     s += `<g font-size="10" font-family="var(--font-data)"><line x1="${W - 260}" x2="${W - 244}" y1="18" y2="18" stroke="var(--ink)" stroke-width="1.6"/><text x="${W - 240}" y="21" fill="var(--muted)">road</text><line x1="${W - 200}" x2="${W - 184}" y1="18" y2="18" stroke="var(--cyan)" stroke-width="1.6"/><text x="${W - 180}" y="21" fill="var(--muted)">sidewalk</text><rect x="${W - 120}" y="13" width="10" height="10" fill="var(--gold)"/><text x="${W - 106}" y="21" fill="var(--muted)">stairs · ↻↺ avenues</text></g>`;
     const svg = $("section"); svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none"); svg.innerHTML = s;
@@ -286,14 +330,27 @@
   }
   const num = (path, label, unit, o = {}) => ({ path, label, unit, ...o });
   function owner() { return selected === CITY || selected === NBTAB ? null : plan.districts.find((x) => x.id === selected); }
+  const isOldTown = (d) => d && d.type === "oldtown";
   function getPath(path) {
     const [root, rest] = path.startsWith("@") ? [plan, path.slice(1)] : [owner(), path];
-    return rest.split(".").reduce((o, k) => (o == null ? o : o[k]), root);
+    const walk = (r) => rest.split(".").reduce((o, k) => (o == null ? o : o[k]), r);
+    const v = walk(root);
+    // an Old Town setting an older plan lacks shows the value citygen.js builds with
+    return v === undefined && root !== plan && isOldTown(root) ? walk(CityGen.oldTownConfig(root)) : v;
   }
   function setPath(path, val) {
     const [root, rest] = path.startsWith("@") ? [plan, path.slice(1)] : [owner(), path];
     const ks = rest.split("."), last = ks.pop();
-    ks.reduce((o, k) => (o[k] == null ? (o[k] = {}) : o[k]), root)[last] = val;
+    // fill in an Old Town section from the defaults first, so ranges stay [lo, hi] arrays and an edit to one
+    // field never drops the others' defaults
+    if (root !== plan && isOldTown(root) && OLD_TOWN_KEYS.includes(ks[0] ?? last)) {
+      const k = ks[0] ?? last; root[k] = clone(CityGen.oldTownConfig(root)[k]);
+    }
+    const isIdx = (k) => /^\d+$/.test(k);
+    const box = ks.reduce((o, k, i) => (o[k] == null ? (o[k] = isIdx(ks[i + 1] ?? last) ? [] : {}) : o[k]), root);
+    // no holes in a list: "" for text (a culture left to the seed), else the value itself (a [v, v] range)
+    if (Array.isArray(box) && isIdx(last)) for (let i = box.length; i < +last; i++) box[i] = typeof val === "string" ? "" : val;
+    box[last] = val;
   }
   function fieldHTML(f) {
     const raw = getPath(f.path), v = raw == null ? "" : Math.round(raw * (f.scale || 1) * 1e4) / 1e4;
@@ -310,7 +367,9 @@
 
   function districtChecks(d) {
     const w = [], L = CityGen.ringLayout(plan, d), ring = L.ring;
-    if ((d.avenues || []).length !== 2) w.push("Each ring should carry exactly two ring avenues.");
+    // Old Town runs one ring avenue unless the second is switched on
+    const want = isOldTown(d) && !CityGen.oldTownConfig(d).second_avenue ? 1 : 2;
+    if (L.avenues.length !== want || (d.avenues || []).length < want) w.push(want === 1 ? "Old Town needs its ring avenue." : isOldTown(d) ? "The second ring avenue is on, so Old Town needs two ring avenues." : "Each ring should carry exactly two ring avenues.");
     L.avenues.forEach((a, i) => {
       if (a.r - a.w / 2 < ring.r0 || a.r + a.w / 2 > ring.r1) w.push(`Ring avenue ${i + 1} runs off the ${ring.label.toLowerCase()} (${fmt(ring.r0)}–${fmt(ring.r1)} m).`);
       if ((a.road || 12) > a.w - 4) w.push(`Ring avenue ${i + 1}: the road leaves no room for pavements.`);
@@ -318,7 +377,7 @@
     if (L.avenues.length === 2 && L.avenues[0].r + L.avenues[0].w / 2 >= L.avenues[1].r - L.avenues[1].w / 2) w.push("The two ring avenues overlap.");
     L.bands.forEach((b, i) => { if (b.r1 - b.r0 < 40) w.push(`Band ${i + 1} is only ${fmt(b.r1 - b.r0)} m deep; blocks need about 40 m.`); });
     const capped = gen.lots.filter((l) => l.d === d.id && l.capped).length;
-    if (capped) w.push(`${capped} tower${capped > 1 ? "s are" : " is"} capped so the spire stays tallest.`);
+    if (capped) w.push(`${capped} tower${capped > 1 ? "s are" : " is"} capped to keep the Lantern's heart in view.`);
     return w;
   }
   function statsHTML() {
@@ -346,8 +405,8 @@
     h += group("Terrain heights", [
       num("@scene.terrain.belt.0", "Green belt, outer edge", "m", { step: 0.1 }), num("@scene.terrain.belt.1", "Green belt, inner edge", "m", { step: 0.1 }),
       num("@scene.terrain.park.0", "College ring, outer edge", "m", { step: 0.1 }), num("@scene.terrain.park.1", "College ring, inner edge", "m", { step: 0.1 }),
-      num("@scene.terrain.island.0", "Island quay", "m", { step: 0.1 }), num("@scene.terrain.island.1", "Temple plateau", "m", { step: 0.1 }),
-      num("@scene.terrain.plateau_r", "Plateau radius", "m", { min: 118, max: 400 }), num("@scene.terrain.canal2_below", "Canal 2 water below belt", "m", { step: 0.1, min: 0.2 })]);
+      num("@scene.terrain.island.0", "Old Town canal edge", "m", { step: 0.1 }), num("@scene.terrain.island.1", "Old Town centre", "m", { step: 0.1 }),
+      num("@scene.terrain.plateau_r", "Plateau radius", "m", { min: 0, max: 400 }), num("@scene.terrain.canal2_below", "Canal 2 water below belt", "m", { step: 0.1, min: 0.2 })]);
     h += group("Spoke avenues", [
       num("@spokes.count", "Spokes", "", { int: true, min: 3, max: 16 }), num("@spokes.offset_deg", "Rotate spokes", "°", { min: -30, max: 30 }),
       num("@spokes.grade", "Road grade", "%", { scale: 100, step: 0.1, min: 2, max: 10 }), num("@spokes.corridor_half", "Half width, wall to wall", "m", { step: 0.5, min: 12, max: 60 }),
@@ -366,7 +425,7 @@
       [num("@cloud.amount", "Strength", "×", { step: 0.05, min: 0, max: 2 }), num("@cloud.scale", "Patch size", "m", { step: 10, min: 100, max: 5000 }),
        num("@cloud.octaves", "Detail layers", "", { int: true, min: 1, max: 8 }), num("@cloud.persistence", "Detail strength", "", { step: 0.05, min: 0.1, max: 0.9 }),
        num("@cloud.contrast", "Contrast", "", { step: 0.05, min: 0.5, max: 4 }), num("@cloud.bias", "Overall lift", "", { step: 0.05, min: -1, max: 1 }),
-       num("@cloud.seed", "Seed", "", { int: true, min: 0, max: 99999 }), num("@cloud.tower_share", "Share on core towers", "×", { step: 0.05, min: 0, max: 1 })].map(fieldHTML).join("") + `</fieldset>`;
+       num("@cloud.seed", "Seed", "", { int: true, min: 0, max: 99999 }), num("@cloud.tower_share", "Share on Old Town towers", "×", { step: 0.05, min: 0, max: 1 })].map(fieldHTML).join("") + `</fieldset>`;
     h += `<fieldset><legend>Skywalks · one connected network per ring</legend>${selectHTML("@skywalks.enabled", "Skywalks", [["true", "On"], ["false", "Off"]])}` +
       [num("@skywalks.levels.0", "Storeys up, from", "", { int: true, min: 1, max: 10 }), num("@skywalks.levels.1", "Storeys up, to", "", { int: true, min: 1, max: 10 }),
        num("@skywalks.width", "Deck width", "m", { step: 0.5, min: 2, max: 12 }), num("@skywalks.frontage.commercial", "Along commercial", "%", { scale: 100, step: 1, min: 0, max: 100 }),
@@ -413,10 +472,11 @@
     let h = `<div><div class="kind">${esc(TYPE_LABEL[d.type] || d.type)} · ${esc(plan.scene.rings.find((r) => r.id === d.ring)?.label || "")}</div><h3>${esc(d.name)}</h3></div>` + statsHTML() + warnsHTML();
     h += `<fieldset><legend>District</legend>
       <div class="f"><label for="f-${d.id}-enabled">Build in Blender</label><div class="in"><select id="f-${d.id}-enabled" data-path="enabled" data-bool="1"${dis}><option value="true"${d.enabled !== false ? " selected" : ""}>Yes</option><option value="false"${d.enabled === false ? " selected" : ""}>No, skip</option></select></div></div>
-      ${d.type !== "towers" ? selectHTML("layout", "Block layout", [["voronoi", "Voronoi cells"], ["rows", "Rows between avenues"]]) : ""}
+      ${d.type !== "towers" && !isOldTown(d) ? selectHTML("layout", "Block layout", [["voronoi", "Voronoi cells"], ["rows", "Rows between avenues"]]) : ""}
       <div class="f"><label for="f-${d.id}-dressing">Kit dressing (later)</label><div class="in"><select id="f-${d.id}-dressing" data-path="dressing" data-str="1"${dis}>${DRESSINGS.map((k) => `<option value="${esc(k)}"${(d.dressing || "") === k ? " selected" : ""}>${k ? esc(k) : "Massing only"}</option>`).join("")}</select></div></div></fieldset>`;
     // the two ring avenues, counted from the centre: the first runs clockwise, the second anticlockwise
-    [...(d.avenues || [])].map((a, k) => ({ a, k })).sort((x, y) => x.a.r - y.a.r).forEach(({ a, k }, order) => {
+    const shown = isOldTown(d) && !CityGen.oldTownConfig(d).second_avenue ? 1 : Infinity;
+    [...(d.avenues || [])].map((a, k) => ({ a, k })).sort((x, y) => x.a.r - y.a.r).slice(0, shown).forEach(({ a, k }, order) => {
       const ring = plan.scene.rings.find((r) => r.id === d.ring);
       const f = [num(`avenues.${k}.r`, "Radius", "m", { min: Math.ceil(ring.r0 + a.w / 2), max: Math.floor(ring.r1 - a.w / 2) }), num(`avenues.${k}.w`, "Width, wall to wall", "m", { min: 8, max: 80, step: 0.5 }), num(`avenues.${k}.road`, "Road width", "m", { min: 4, max: 40, step: 0.5 })];
       if (a.tree_spacing != null) f.push(num(`avenues.${k}.tree_spacing`, "Tree spacing", "m", { min: 4, max: 60, step: 0.5 }));
@@ -442,15 +502,31 @@
       h += group("Colleges", [num("campus.row_depth", "Court depth", "m", { min: 30, max: 300 }), num("campus.block", "Plot length", "m", { min: 30, max: 400 }), num("campus.street", "Walk between plots", "m", { min: 6, max: 120 }), num("campus.wing", "Court wing depth", "m", { min: 6, max: 40 }), num("storeys.0", "Storeys from", "", { int: true, min: 1, max: 20 }), num("storeys.1", "Storeys to", "", { int: true, min: 1, max: 20 })]);
       h += group("Planting", [num("orchard.spacing", "Orchard spacing", "m", { min: 4, max: 60, step: 0.5 }), num("grove.spacing", "Grove spacing", "m", { min: 4, max: 60, step: 0.5 }), num("grove.clearing", "Grove clearings", "%", { scale: 100, min: 0, max: 90, step: 1 }), num("quay_in", "Setback from inner edge", "m", { min: 0, max: 200 })]);
     }
-    if (d.type === "towers") {
-      h += group("Towers", [num("garden", "Garden ring round the temple", "m", { min: 0, max: 200 }), num("block", "Tower plot length", "m", { min: 20, max: 200 }),
-        num("street", "Radial street width", "m", { min: 4, max: 40 }), num("forecourt_deg", "Forecourt half-angle", "°", { min: 0, max: 90 }),
-        num("north_cap_deg", "Low sector behind spire", "°", { min: 0, max: 90 }), num("north_cap_factor", "Low sector height", "×", { step: 0.05, min: 0.1, max: 1 }),
-        num("flank_power", "Flank emphasis", "", { step: 0.05, min: 0.1, max: 3 }), num("jitter", "Placement jitter", "", { step: 0.01, min: 0, max: 0.4 }),
-        num("spire_clearance", "Clearance under spire", "m", { min: 0, max: 100 }), num("podium_storeys.0", "Podium storeys from", "", { int: true, min: 1, max: 20 }), num("podium_storeys.1", "Podium storeys to", "", { int: true, min: 1, max: 20 })]);
-      (d.band_heights || []).forEach((_, k) => { h += group(`Band ${k + 1} heights`, [num(`band_heights.${k}.0`, "From", "m", { min: 10, max: 400 }), num(`band_heights.${k}.1`, "To", "m", { min: 10, max: 400 })]); });
-    }
+    if (isOldTown(d)) h += oldTownGroups(d);
     h += `<fieldset><legend>Notes</legend><div class="f wide"><label for="f-${d.id}-notes">For this district</label><div class="in"><textarea id="f-${d.id}-notes" data-path="notes" data-str="1"${dis}>${esc(d.notes || "")}</textarea></div></div></fieldset>`;
+    return h;
+  }
+
+  // Old Town: the street grid round the Lantern square, the culture quarters, heights, the Lantern, landmarks
+  function oldTownGroups(d) {
+    const types = plan.neighbourhoods?.types || [], cfg = CityGen.oldTownConfig(d), n = Math.max(0, Math.round(cfg.quarters.count) || 0);
+    let h = group("Grid · round the Lantern square", [num("grid.block", "Block size", "m", { step: 0.5, min: 30, max: 80 }), num("grid.street", "Street width", "m", { step: 0.5, min: 6, max: 30 }),
+      num("grid.square", "Square size", "m", { step: 1, min: 60, max: 200 })]);
+    if (types.length) h += group("Grid tower forms · relative weights, all blank for an even mix", types.map((t) => num(`grid.forms.${t.id}`, t.label, "", { step: 0.1, min: 0, max: 20 })));
+    h += `<fieldset><legend>Quarters · between the ring avenue and the canal</legend>` + [num("quarters.count", "Quarters", "", { int: true, min: 4, max: 30 }), num("quarters.seed", "Angle seed", "", { int: true, min: 0, max: 99999 }),
+      num("quarters.block.0", "Block size from", "m", { step: 0.5, min: 20, max: 80 }), num("quarters.block.1", "Block size to", "m", { step: 0.5, min: 20, max: 80 })].map(fieldHTML).join("") +
+      Array.from({ length: n }, (_, k) => {
+        const now = (gen.quarters || []).find((q) => q.k === k);
+        return selectHTML(`quarters.cultures.${k}`, `Quarter ${k + 1}${now ? ` · now ${cultureLabel(now.culture)}` : ""}`, [["", "Seeded"], ...types.map((t) => [t.id, t.label])]);
+      }).join("") + `</fieldset>`;
+    h += group("Heights · above the ground", [num("heights.grid.0", "Grid towers from", "m", { min: 10, max: 900 }), num("heights.grid.1", "Grid towers to", "m", { min: 10, max: 900 }),
+      num("heights.band.0", "Quarter towers from", "m", { min: 10, max: 900 }), num("heights.band.1", "Quarter towers to", "m", { min: 10, max: 900 }),
+      num("heights.landmark.0", "Landmarks from", "m", { min: 5, max: 400 }), num("heights.landmark.1", "Landmarks to", "m", { min: 5, max: 400 })]);
+    h += group("Lantern", [num("lantern.height", "Height above the square", "m", { step: 5, min: 100, max: 900 }), num("lantern.base", "Base width", "m", { step: 1, min: 20, max: 120 }),
+      num("lantern.taper", "Taper, top over base", "", { step: 0.01, min: 0.7, max: 0.95 }), num("lantern.clearance", "Roofs stay below the heart's top by", "m", { step: 1, min: 0, max: 300 }),
+      num("lantern.heart.0", "Heart from", "%", { scale: 100, step: 1, min: 5, max: 95 }), num("lantern.heart.1", "Heart to", "%", { scale: 100, step: 1, min: 5, max: 95 })]);
+    h += group("Landmarks", [num("landmarks.embassies", "Embassies", "", { int: true, min: 0, max: 20 }), num("landmarks.guild_halls", "Guild halls", "", { int: true, min: 0, max: 20 })]);
+    h += `<fieldset><legend>Ring avenues</legend>${selectHTML("second_avenue", "Second ring avenue", [["false", "Off"], ["true", "On"]])}</fieldset>`;
     return h;
   }
 
@@ -471,6 +547,10 @@
          num(`@neighbourhoods.types.${k}.style.depth`, "Building depth", "m", { step: 0.5, min: 5, max: 60 }), num(`@neighbourhoods.types.${k}.style.gap.1`, "Gaps between buildings up to", "m", { step: 0.5, min: 0, max: 40 }),
          num(`@neighbourhoods.types.${k}.style.setback`, "Set back from the street", "m", { step: 0.5, min: 0, max: 20 }), num(`@neighbourhoods.types.${k}.style.height_var`, "Height variety", "", { step: 0.02, min: 0, max: 1 })].map(fieldHTML).join("") +
         [["deco", "Decorative tops"], ["open", "Open roof terraces"], ["garden", "Roof gardens"], ["farm", "Roof farms"]].map(([rk, rl]) => fieldHTML(num(`@neighbourhoods.types.${k}.style.roofs.${rk}`, `Roofs · ${rl}`, "", { step: 0.05, min: 0, max: 10 }))).join("") +
+        // how this culture builds its Old Town towers
+        [num(`@neighbourhoods.types.${k}.style.tower.podium.0`, "Old Town tower podium, storeys from", "", { int: true, min: 0, max: 20 }), num(`@neighbourhoods.types.${k}.style.tower.podium.1`, "Podium storeys to", "", { int: true, min: 0, max: 20 }),
+         num(`@neighbourhoods.types.${k}.style.tower.tiers`, "Tower tiers", "", { int: true, min: 1, max: 5 }), num(`@neighbourhoods.types.${k}.style.tower.taper`, "Tower taper", "", { step: 0.05, min: 0, max: 0.5 })].map(fieldHTML).join("") +
+        selectHTML(`@neighbourhoods.types.${k}.style.tower.plan`, "Tower plan", TOWER_PLANS) + selectHTML(`@neighbourhoods.types.${k}.style.tower.crown`, "Tower crown", TOWER_CROWNS) +
         `<div class="f wide"><label for="f-nb-names-${k}">Name patterns ({W} is the word)</label><div class="in"><input type="text" id="f-nb-names-${k}" data-path="@neighbourhoods.types.${k}.names" data-list="1" value="${esc((t.names || []).join(", "))}"${dis}></div></div>
         <table class="recipe"><thead><tr><th>Leans toward</th><th>×</th></tr></thead><tbody>${CityGen.RECIPE_USES.map((u) => `<tr><td><i style="background:var(--u-${u})"></i>${USE_LABEL[u]}</td><td><input type="number" id="f-nb-${k}-${u}" data-path="@neighbourhoods.types.${k}.bias.${u}" value="${t.bias?.[u] ?? 1}" step="0.1" min="0" max="10"${dis}></td></tr>`).join("")}</tbody></table></fieldset>`;
     });
@@ -503,7 +583,7 @@
       frame = 0;
       try { gen = CityGen.generate(plan); }
       catch (e) { setStatus("error", "This plan can't be drawn. Check the last value you changed"); console.error(e); return; }
-      readColors(); buildGrid(); drawPlan(); drawSpokeChooser(); drawSection();
+      readColors(); setHeightScale(); buildGrid(); drawPlan(); drawSpokeChooser(); drawSection();
       if (panelDirty) { drawTabs(); drawPanel(); panelDirty = false; } else refreshPanelReadouts();
     });
   }
@@ -625,9 +705,12 @@
     const [px, py] = toPlan(e), i = lotAt(px, py), l = i == null ? null : gen.lots[i];
     if (!l) { tip.hidden = true; return; }
     const d = plan.districts.find((x) => x.id === l.d);
-    const what = l.height != null ? `tower ${fmt(l.height)} m${l.capped ? " (capped)" : ""}` : `${USE_LABEL[l.use] || l.label || "lot"} · ${l.storeys} storeys`;
+    const what = l.kind === "landmark" ? `${l.label || "landmark"} · ${l.storeys} storeys`
+      : l.height != null ? `${l.kind === "plaza" ? "low block" : "tower"} ${fmt(l.height)} m${l.capped ? " (capped)" : ""}` : `${USE_LABEL[l.use] || l.label || "lot"} · ${l.storeys} storeys`;
     const nbn = l.nb ? (gen.neighbourhoods || []).find((n) => n.id === l.nb) : null;
-    tip.textContent = `${nbn ? nbn.name + " · " : ""}${d ? d.name : l.d} · ${what} · floor +${fmt(l.base, 1)} m · roof +${fmt(l.top)} m${l.plinth > 0.1 ? ` · ${fmt(l.plinth, 1)} m plinth` : ""}`;
+    // Old Town lots name their culture quarter (or a grid tower's form); landmarks their own culture
+    const cult = l.culture ? cultureLabel(l.culture) + " · " : l.form ? cultureLabel(l.form) + " form · " : "";
+    tip.textContent = `${nbn ? nbn.name + " · " : ""}${d ? d.name : l.d} · ${l.kind === "landmark" ? "" : cult}${what} · floor +${fmt(l.base, 1)} m · roof +${fmt(l.top)} m${l.plinth > 0.1 ? ` · ${fmt(l.plinth, 1)} m plinth` : ""}`;
     const r = $("planWrap").getBoundingClientRect();
     tip.hidden = false;
     tip.style.left = `${Math.max(0, Math.min(e.clientX - r.left, r.width - tip.offsetWidth - 24))}px`;

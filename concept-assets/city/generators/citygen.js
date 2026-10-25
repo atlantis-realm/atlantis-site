@@ -1651,7 +1651,7 @@ const CityGen = (() => {
     const L = oldTownConfig(d).lantern;
     return ter.G(0) + L.height * L.heart[1] - L.clearance;
   }
-  // a spoke corridor crossing the canal edge at angle a (the old island quay wall's test)
+  // a spoke corridor crossing the canal edge at angle a (the old centre quay wall's test)
   const edgeInSpoke = (plan, spokes, r1, a) => inCorridor(plan, spokes, ...polar(r1 - 2, a), 2)
     || spokes.some((sp) => angDist(sp.a, a) < Math.asin(Math.min(1, (plan.spokes.corridor_half + 2) / r1)));
   function genOldTown(plan, d, ter, spokes, o) {
@@ -2271,7 +2271,7 @@ const CityGen = (() => {
     }
     // the nominal square round it; genOldTown swaps in the grid's snapped square
     const half = s / 2, square = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([u, v]) => [u * Math.cos(ha) - v * Math.sin(ha), u * Math.sin(ha) + v * Math.cos(ha)]);
-    o.lantern = { x: 0, y: 0, base, top, r_base: rB, r_top: rT, heart: [h0, h1], square };
+    o.lantern = { x: 0, y: 0, base, top, crown: crownZ, r_base: rB, r_top: rT, heart: [h0, h1], square };
     const poly = circ(rB);
     o.lots.push({ d: d.id, kind: "lantern", key: `${d.id}|lantern`, label: "The Lantern", poly, base, top, storeys: Math.round(H / plan.storey), area: polyArea(poly) });
   }
@@ -2379,7 +2379,7 @@ const CityGen = (() => {
   //   spines  a complete loop along each of the ring's two avenues, on the side facing the ring's middle
   //           band, bridged over every spoke
   //   rungs   per sector, links between the two spines along the cell-edge streets of the middle band
-  //           (straight bridges where the band has no cells, as on the island)
+  //           (straight bridges where the band has no cells, as in Old Town)
   //   over    straight sky bridges from spine to spine high over the roofs of the middle band, each at
   //           the lowest of a few nearby lines, with a lift tower at both ends down past the spine
   //   links   ring to ring along the spokes: from one ring's outer spine to the next ring's inner spine,
