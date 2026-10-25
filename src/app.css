@@ -1,3 +1,8 @@
+:root{
+    --nav-color: hsl(45, 67%, 74%);
+    --nav-current-color: rgba(8, 107, 125, 0.666)
+}
+
 body {
     background-color: #2e4057;
     margin: 0;
