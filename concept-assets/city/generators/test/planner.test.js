@@ -58,9 +58,9 @@ test("page script parses", () => {
 
 // ---------------------------------------------------------------- smoke run against a DOM stub
 function bootPage(plan) {
-  const els = new Map(), on = new Map(), canvasText = [], saved = [];
+  const els = new Map(), on = new Map(), canvasText = [], saved = [], fills = [];
   const ctx = new Proxy({}, {
-    get(t, k) { if (k in t) return t[k]; if (k === "fillText" || k === "strokeText") return (s) => canvasText.push(String(s)); if (k === "measureText") return () => ({ width: 10 }); return () => {}; },
+    get(t, k) { if (k in t) return t[k]; if (k === "fillText" || k === "strokeText") return (s) => canvasText.push(String(s)); if (k === "fill") return () => fills.push(String(t.fillStyle)); if (k === "measureText") return () => ({ width: 10 }); return () => {}; },
     set(t, k, v) { t[k] = v; return true; },
   });
   const el = (id) => {
@@ -91,7 +91,7 @@ function bootPage(plan) {
   sandbox.window = sandbox;
   // stubs as parameters, run in this realm (a vm context is ~10x slower for the generator)
   new Function(...Object.keys(sandbox), SCRIPT)(...Object.values(sandbox));
-  return { el, on, canvasText, saved };
+  return { el, on, canvasText, saved, fills };
 }
 const visible = (html) => String(html).replace(/<(script|style)[\s\S]*?<\/\1>/g, " ")
   .replace(/<[^>]*?\b(?:title|placeholder|aria-label)="([^"]*)"[^>]*>/g, " $1 ").replace(/<[^>]*>/g, " ");
@@ -187,4 +187,99 @@ test("page edits: quarter culture weights are offered per culture, saved and hon
   const o = CityGen.generate(saved);
   assert.ok(o.quarters.length > 0);
   for (const q of o.quarters) assert.equal(q.culture, "works", `quarter ${q.k} is ${q.culture}`);
+});
+
+// ---------------------------------------------------------------- the park ring's three colleges
+const COLLEGES = [["alder", "Alder College", "#8fa6c7"], ["indigo", "Indigo College", "#7a4fb5"], ["saffron", "Saffron College", "#c9962b"]];
+const openTab = (P, id) => P.on.get("tabs:click")({ target: { closest: () => ({ dataset: { tab: id } }) } });
+const zoomIn = (P) => P.on.get("plan:wheel")({ preventDefault() {}, clientX: 400, clientY: 300, deltaY: -3000 });
+const parkId = (plan) => plan.districts.find((d) => d.type === "campus").id;
+
+test("planner: the college ring's tab shows each college's name, landmark and growth", async () => {
+  const plan = loadPlan(), P = bootPage(plan);
+  await tick();
+  openTab(P, parkId(plan));
+  const panel = P.el("panel").innerHTML;
+  assert.match(panel, /<legend>Colleges · names, landmarks and growth<\/legend>/);
+  COLLEGES.forEach(([id, name], g) => {
+    assert.ok(new RegExp(`data-path="@neighbourhoods\\.renames\\.park-${g}"[^>]*value="${name}"`).test(panel), `no name field for ${name}`);
+    for (const k of ["landmark", "grow"]) assert.ok(panel.includes(`data-path="colleges.${id}.${k}"`), `no ${k} select for ${id}`);
+  });
+  // Saffron never grows: its select is fixed at Off
+  const saffronGrow = panel.match(/<select[^>]*data-path="colleges\.saffron\.grow"[^>]*>[\s\S]*?<\/select>/)[0];
+  assert.match(saffronGrow, / disabled/);
+  assert.match(saffronGrow, /<option value="false" selected>Off/);
+  assert.deepEqual(bannedIn(visible(panel)), []);
+});
+
+test("planner: an older plan without colleges shows citygen's defaults, and one edit keeps the rest", async () => {
+  const plan = loadPlan(), park = plan.districts.find((d) => d.id === parkId(plan));
+  delete park.colleges;
+  const P = bootPage(plan);
+  await tick();
+  openTab(P, park.id);
+  const panel = P.el("panel").innerHTML;
+  assert.match(panel, /<select[^>]*data-path="colleges\.indigo\.landmark"[^>]*>[\s\S]*?<option value="true" selected>On/);
+  P.on.get("panel:input")({ target: { dataset: { path: "colleges.indigo.landmark", bool: "1" }, value: "false", min: "", max: "", setAttribute() {} } });
+  await new Promise((r) => setTimeout(r, 100));
+  const d = P.saved.at(-1).districts.find((x) => x.id === park.id);
+  assert.equal(d.colleges.indigo.landmark, false);
+  assert.equal(d.colleges.alder.grow, true);
+  assert.equal(d.colleges.saffron.color, "#c9962b");
+});
+
+test("planner: Alder's observatory is labelled when zoomed in, and goes when Alder stops growing", async () => {
+  const plan = loadPlan(), P = bootPage(plan), id = parkId(plan);
+  await tick();
+  zoomIn(P); await tick();
+  assert.ok(P.canvasText.includes("Alder Observatory"), "no Alder Observatory label when zoomed in");
+  assert.ok(P.canvasText.includes("Indigo Opera"));
+  openTab(P, id);
+  P.on.get("panel:input")({ target: { dataset: { path: "colleges.alder.grow", bool: "1" }, value: "false", min: "", max: "", setAttribute() {} } });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(P.saved.length > 0, "nothing saved");
+  const d = P.saved.at(-1).districts.find((x) => x.id === id);
+  assert.equal(d.colleges.alder.grow, false);
+  assert.equal(d.colleges.alder.landmark, true, "the edit dropped Alder's other settings");
+  P.canvasText.length = 0;
+  zoomIn(P); await tick();
+  assert.ok(P.canvasText.length > 0, "nothing redrawn");
+  assert.ok(!P.canvasText.includes("Alder Observatory"), "the observatory is still drawn");
+  assert.ok(P.canvasText.includes("Indigo Opera"), "the other landmarks went too");
+});
+
+test("planner: colour by neighbourhood paints each college its own colour, listed in the legend", async () => {
+  const plan = loadPlan(), P = bootPage(plan);
+  await tick();
+  P.fills.length = 0;
+  P.el("colorBy").value = "nb"; P.on.get("colorBy:change")(); await tick();
+  const legend = visible(P.el("legendUse").innerHTML);
+  for (const [, name, col] of COLLEGES) {
+    assert.ok(P.fills.includes(col), `no lots filled ${col} for ${name}`);
+    assert.ok(legend.includes(name), `legend lacks ${name}`);
+    assert.ok(P.el("legendUse").innerHTML.includes(col), `legend lacks the ${name} swatch`);
+  }
+  assert.deepEqual(bannedIn(legend), []);
+});
+
+test("planner: tooltips over college buildings read sensibly", async () => {
+  const plan = loadPlan(), P = bootPage(plan), o = gen(plan);
+  await tick();
+  const R = Math.max(...plan.scene.rings.map((r) => r.r1)) + 150, S = 600 / (2 * R), OX = (800 - 2 * R * S) / 2;
+  const hover = (l) => {
+    const [x, y] = l.poly.reduce(([a, b], [u, v]) => [a + u / l.poly.length, b + v / l.poly.length], [0, 0]);
+    P.on.get("plan:pointermove")({ clientX: OX + (x + R) * S, clientY: (-y + R) * S });
+    return P.el("tip").textContent;
+  };
+  const park = o.lots.filter((l) => l.d === "park");
+  const obs = park.find((l) => l.landmark === "observatory"), lab = park.find((l) => l.form === "lab_hall"), dye = park.find((l) => l.form === "dye_garden");
+  assert.ok(obs && lab && dye);
+  const tips = [hover(obs), hover(lab), hover(dye)];
+  assert.match(tips[0], /Alder College · .* · Alder Observatory · 3 storeys/, tips[0]);
+  assert.match(tips[1], /Alder College · .* · Lab hall · \d+ storeys/, tips[1]);
+  assert.match(tips[2], /Indigo College · .* · Indigo Dye Garden · floor/, tips[2]);
+  for (const t of tips) {
+    assert.ok(!/_| form · |0 storeys/.test(t), `raw id or empty storeys in tip: ${t}`);
+    assert.deepEqual(bannedIn(t), []);
+  }
 });

@@ -17,6 +17,8 @@
   const OLD_TOWN_KEYS = ["grid", "quarters", "heights", "lantern", "landmarks", "second_avenue", "quay"];
   const TOWER_PLANS = [["rect", "Rectangular"], ["round", "Round"], ["stepped", "Stepped"], ["twin", "Twin"]];
   const TOWER_CROWNS = [["flat", "Flat"], ["needle", "Needle"], ["fins", "Fins"], ["lantern", "Lantern"], ["garden", "Garden"]];
+  // the college buildings' signature forms, as the tooltip names them
+  const FORM_LABEL = { lab_hall: "Lab hall", treehouse: "Tree-house", opera: "Opera", amphitheatre: "Amphitheatre", bigtop: "Big top", print: "Print works", studio: "Studios", dye_garden: "Dye garden", arcology: "Arcology" };
   const BAND_KINDS = [["grove", "Groves"], ["campus", "Colleges"], ["orchard", "Orchards"]];
   const CITY = "city";
   const USES = CityGen.USES, USE_LABEL = { residential: "Residential", commercial: "Commercial", industrial: "Industrial", hydroponics: "Hydroponics", entertainment: "Entertainment", park: "Park", college: "College", harbour: "Harbour", waterworks: "Waterworks" };
@@ -132,7 +134,7 @@
       const low = new Map(), high = new Map();
       const push = (m, k, pts) => { const l = m.get(k); if (l) l.push(pts); else m.set(k, [pts]); };
       // Old Town lots carry their culture: colour by it rather than by the one Old Town neighbourhood
-      const nbCol = (l) => (l.culture ? cultureColour(l.culture) : nbColour(l.nb, nbMap));
+      const nbCol = (l) => (l.culture ? cultureColour(l.culture) : collegeColour(l) || nbColour(l.nb, nbMap));
       for (const l of gen.lots) {
         if (l.tower && byNb && (l.nb || l.culture)) { const c = nbCol(l); push(low, c, l.poly); push(high, c, l.tower); push(high, c, l.crown); }
         else if (l.tower) { push(low, shade(l.podiumTop), l.poly); push(high, shade(l.top * 0.85), l.tower); push(high, shade(l.top), l.crown); }
@@ -239,6 +241,11 @@
     const t = (plan.neighbourhoods?.types || []).find((x) => x.id === id);
     return t && /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : css["--land-edge"];
   }
+  // a college ring lot takes its college's colour
+  function collegeColour(l) {
+    const d = plan.districts.find((x) => x.id === l.d), c = isCampus(d) ? CityGen.collegeOf(d, l.nb) : null;
+    return c && /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : null;
+  }
   const nbIndex = () => new Map((gen.neighbourhoods || []).map((n, i) => [n.id, { ...n, i }]));
   function nbColour(id, map) {
     const n = map.get(id), t = (plan.neighbourhoods?.types || []).find((x) => x.id === n?.type);
@@ -249,7 +256,13 @@
   function drawLegend() {
     const mode = $("colorBy").value, byUse = mode !== "height";
     $("legendHeight").hidden = byUse; $("legendUse").hidden = !byUse;
-    if (mode === "nb") { $("legendUse").innerHTML = (plan?.neighbourhoods?.types || []).map((t) => `<span class="key"><i style="background:${esc(t.color)}"></i>${esc(t.label)}</span>`).join(""); return; }
+    if (mode === "nb") {
+      const park = (plan?.districts || []).find(isCampus), cols = park ? Object.values(CityGen.collegeConfig(park)) : [];
+      const name = (c) => plan.neighbourhoods?.renames?.[`park-${c.group}`] || c.name;
+      $("legendUse").innerHTML = (plan?.neighbourhoods?.types || []).map((t) => `<span class="key"><i style="background:${esc(t.color)}"></i>${esc(t.label)}</span>`).join("") +
+        cols.map((c) => `<span class="key"><i style="background:${esc(c.color)}"></i>${esc(name(c))}</span>`).join("");
+      return;
+    }
     $("legendUse").innerHTML = "";
     if (byUse && !$("legendUse").childElementCount) $("legendUse").innerHTML = USES.map((u) => `<span class="key"><i style="background:var(--u-${u})"></i>${USE_LABEL[u]}</span>`).join("") + `<span class="key"><i style="background:var(--canal)"></i>Canal</span><span class="key"><i style="background:var(--skywalk)"></i>Skywalk</span>`;
   }
@@ -331,12 +344,16 @@
   const num = (path, label, unit, o = {}) => ({ path, label, unit, ...o });
   function owner() { return selected === CITY || selected === NBTAB ? null : plan.districts.find((x) => x.id === selected); }
   const isOldTown = (d) => d && d.type === "oldtown";
+  const isCampus = (d) => d && d.type === "campus";
   function getPath(path) {
     const [root, rest] = path.startsWith("@") ? [plan, path.slice(1)] : [owner(), path];
     const walk = (r) => rest.split(".").reduce((o, k) => (o == null ? o : o[k]), r);
     const v = walk(root);
-    // an Old Town setting an older plan lacks shows the value citygen.js builds with
-    return v === undefined && root !== plan && isOldTown(root) ? walk(CityGen.oldTownConfig(root)) : v;
+    // an Old Town or college setting an older plan lacks shows the value citygen.js builds with
+    if (v !== undefined || root === plan) return v;
+    if (isOldTown(root)) return walk(CityGen.oldTownConfig(root));
+    if (isCampus(root) && rest.startsWith("colleges.")) return walk({ colleges: CityGen.collegeConfig(root) });
+    return v;
   }
   function setPath(path, val) {
     const [root, rest] = path.startsWith("@") ? [plan, path.slice(1)] : [owner(), path];
@@ -346,6 +363,8 @@
     if (root !== plan && isOldTown(root) && OLD_TOWN_KEYS.includes(ks[0] ?? last)) {
       const k = ks[0] ?? last; root[k] = clone(CityGen.oldTownConfig(root)[k]);
     }
+    // the same for the colleges: an edit to one college's setting keeps every other college default
+    if (root !== plan && isCampus(root) && ks[0] === "colleges") root.colleges = clone(CityGen.collegeConfig(root));
     const isIdx = (k) => /^\d+$/.test(k);
     const box = ks.reduce((o, k, i) => (o[k] == null ? (o[k] = isIdx(ks[i + 1] ?? last) ? [] : {}) : o[k]), root);
     // no holes in a list: "" for text (a culture left to the seed), else the value itself (a [v, v] range)
@@ -359,9 +378,9 @@
     const id = `f-${selected}-${f.path.replace(/[.@]/g, "-")}`, dis = readOnly ? " disabled" : "";
     return `<div class="f${f.wide ? " wide" : ""}"><label for="${id}">${esc(f.label)}</label><div class="in"><input type="number" id="${id}" data-path="${f.path}" value="${v}" step="${f.step ?? 1}"${f.min != null ? ` min="${f.min}"` : ""}${f.max != null ? ` max="${f.max}"` : ""}${f.int ? ' data-int="1"' : ""}${f.blank ? ' data-blank="1"' : ""}${f.scale ? ` data-scale="${f.scale}"` : ""}${dis}>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}</div></div>`;
   }
-  function selectHTML(path, label, options) {
-    // options whose values are "true"/"false" store real booleans
-    const v = String(getPath(path) ?? ""), id = `f-${selected}-${path.replace(/[.@]/g, "-")}`, dis = readOnly ? " disabled" : "";
+  function selectHTML(path, label, options, o = {}) {
+    // options whose values are "true"/"false" store real booleans; o.fixed shows a value that can't change
+    const v = String(o.fixed ?? getPath(path) ?? ""), id = `f-${selected}-${path.replace(/[.@]/g, "-")}`, dis = readOnly || o.fixed != null ? " disabled" : "";
     const kind = options.every(([k]) => k === "true" || k === "false") ? ' data-bool="1"' : ' data-str="1"';
     return `<div class="f"><label for="${id}">${esc(label)}</label><div class="in"><select id="${id}" data-path="${path}"${kind}${dis}>${options.map(([k, t]) => `<option value="${esc(k)}"${v === k ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></div></div>`;
   }
@@ -504,9 +523,22 @@
       h += group("Colleges", [num("campus.row_depth", "Court depth", "m", { min: 30, max: 300 }), num("campus.block", "Plot length", "m", { min: 30, max: 400 }), num("campus.street", "Walk between plots", "m", { min: 6, max: 120 }), num("campus.wing", "Court wing depth", "m", { min: 6, max: 40 }), num("storeys.0", "Storeys from", "", { int: true, min: 1, max: 20 }), num("storeys.1", "Storeys to", "", { int: true, min: 1, max: 20 })]);
       h += group("Planting", [num("orchard.spacing", "Orchard spacing", "m", { min: 4, max: 60, step: 0.5 }), num("grove.spacing", "Grove spacing", "m", { min: 4, max: 60, step: 0.5 }), num("grove.clearing", "Grove clearings", "%", { scale: 100, min: 0, max: 90, step: 1 }), num("quay_in", "Setback from inner edge", "m", { min: 0, max: 200 })]);
     }
+    if (isCampus(d)) h += collegeGroups(d);
     if (isOldTown(d)) h += oldTownGroups(d);
     h += `<fieldset><legend>Notes</legend><div class="f wide"><label for="f-${d.id}-notes">For this district</label><div class="in"><textarea id="f-${d.id}-notes" data-path="notes" data-str="1"${dis}>${esc(d.notes || "")}</textarea></div></div></fieldset>`;
     return h;
+  }
+
+  // the college ring's three colleges: each one's name (its neighbourhood's), its landmark and whether it grows
+  function collegeGroups(d) {
+    const cfg = CityGen.collegeConfig(d), renames = plan.neighbourhoods?.renames || {}, dis = readOnly ? " disabled" : "", onOff = [["true", "On"], ["false", "Off"]];
+    const rows = Object.entries(cfg).map(([id, c]) => {
+      const g = `park-${c.group}`, n = (gen.neighbourhoods || []).find((x) => x.id === g), auto = n ? n.auto : c.name, fid = `f-${d.id}-college-${id}-name`;
+      return `<div class="f"><label for="${fid}"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${esc(c.color)}"></i> Name</label><div class="in"><input type="text" id="${fid}" data-path="@neighbourhoods.renames.${g}" data-str="1" placeholder="${esc(auto)}" value="${esc(renames[g] || "")}" aria-label="Name for ${esc(c.name)}"${dis}></div></div>` +
+        selectHTML(`colleges.${id}.landmark`, `${renames[g] || auto} · landmark`, onOff) +
+        selectHTML(`colleges.${id}.grow`, `${renames[g] || auto} · grows into its band`, onOff, id === "saffron" ? { fixed: "false" } : {});
+    });
+    return `<fieldset><legend>Colleges · names, landmarks and growth</legend>${rows.join("")}</fieldset>`;
   }
 
   // Old Town: the street grid round the Lantern square, the culture quarters, heights, the Lantern, landmarks
@@ -711,11 +743,15 @@
     const [px, py] = toPlan(e), i = lotAt(px, py), l = i == null ? null : gen.lots[i];
     if (!l) { tip.hidden = true; return; }
     const d = plan.districts.find((x) => x.id === l.d);
-    const what = l.kind === "landmark" ? `${l.label || "landmark"} · ${l.storeys} storeys`
-      : l.height != null ? `${l.kind === "plaza" ? "low block" : "tower"} ${fmt(l.height)} m${l.capped ? " (capped)" : ""}` : `${USE_LABEL[l.use] || l.label || "lot"} · ${l.storeys} storeys`;
+    // a college building names its form; a dye garden is open ground, so it has no storeys
+    const storeys = l.storeys > 0 ? ` · ${l.storeys} storeys` : "";
+    const what = l.kind === "landmark" ? `${l.label || "landmark"}${storeys}`
+      : l.height != null ? `${l.kind === "plaza" ? "low block" : "tower"} ${fmt(l.height)} m${l.capped ? " (capped)" : ""}`
+      : l.college && l.form ? `${l.form === "dye_garden" ? l.label || FORM_LABEL.dye_garden : FORM_LABEL[l.form] || l.label || "College"}${storeys}`
+      : `${USE_LABEL[l.use] || l.label || "lot"}${storeys}`;
     const nbn = l.nb ? (gen.neighbourhoods || []).find((n) => n.id === l.nb) : null;
     // Old Town lots name their culture quarter (or a grid tower's form); landmarks their own culture
-    const cult = l.culture ? cultureLabel(l.culture) + " · " : l.form ? cultureLabel(l.form) + " form · " : "";
+    const cult = l.culture ? cultureLabel(l.culture) + " · " : l.form && !l.college ? cultureLabel(l.form) + " form · " : "";
     tip.textContent = `${nbn ? nbn.name + " · " : ""}${d ? d.name : l.d} · ${l.kind === "landmark" ? "" : cult}${what} · floor +${fmt(l.base, 1)} m · roof +${fmt(l.top)} m${l.plinth > 0.1 ? ` · ${fmt(l.plinth, 1)} m plinth` : ""}`;
     const r = $("planWrap").getBoundingClientRect();
     tip.hidden = false;
