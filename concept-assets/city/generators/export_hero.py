@@ -77,7 +77,7 @@ NEAR_DIST, FAR_DIST = 150.0, 700.0      # m from the nearest sample camera: near
 # m: join tiles per band. Near is joined per material per tile too (not kept as modelled, as the plan first
 # said): per-object near meshes would blow the 300 draw-call budget. Near keeps its full detail (no
 # back-face drop, no decimate) and the finest AO subdivision.
-NEAR_TILE, MID_TILE, FAR_TILE = 100.0, 100.0, 400.0
+NEAR_TILE, MID_TILE, FAR_TILE = 200.0, 200.0, 800.0
 FAR_DECIMATE = 0.25                     # Decimate (collapse) ratio for far meshes
 SUBDIV_NEAR, SUBDIV_MID = 4.0, 12.0     # m: split edges longer than this before the AO bake
 SUBDIV_MAX_EDGE = 200.0                 # m: faces with longer edges (sea, ground sheets) are not split

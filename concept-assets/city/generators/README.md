@@ -134,8 +134,22 @@ kept object by object: per-object near meshes would blow the 300 draw-call budge
 detail (no back-face drop, no decimate) and the finest AO subdivision. The scene objects' names are taken by the originals, so the copies are built as
 `<name>@hero` and the suffix is stripped from the glb afterwards.
 
-`hero_glb.mjs` turns `hero_raw.glb` into `static/city/hero.glb`. The tuning knobs (cull margin, bands,
-tiles, decimate ratio, subdivision, AO, lamps, blimps) are the constants at the top of `export_hero.py`.
+`hero_glb.mjs` turns `hero_raw.glb` into `static/city/hero.glb` (git-ignored until the look is approved)
+and copies `hero_props.json` beside it. It runs `dedup` (accessors, meshes, textures; not materials, which
+the page finds by name), `instance` (min 5: trees and lamps become `EXT_mesh_gpu_instancing`), `weld`,
+`prune`, `quantize` and `meshopt` (medium), and prints the size, triangles and draw-call estimate:
+
+```sh
+npm i                     # once: glTF-Transform and meshoptimizer, from public npm
+node hero_glb.mjs         # [in=build/hero/hero_raw.glb] [out=../../../static/city/hero.glb]
+node --test test/hero_glb.test.js   # budget tests; they skip when static/city/hero.glb is absent
+```
+
+The tuning knobs (cull margin, bands, tiles, decimate ratio, subdivision, AO, lamps, blimps) are the
+constants at the top of `export_hero.py`. Budget: glb + props ≤ 10 MB, ≤ 300 draw calls, ≤ 1.5 M
+triangles. Tuned values: `NEAR_TILE, MID_TILE, FAR_TILE = 200, 200, 800` (100/100/400 gave about 440 draw
+calls), `FAR_DECIMATE = 0.25`, `SUBDIV_NEAR, SUBDIV_MID = 4, 12`, trees unchanged. Result: 4.97 MB,
+562,709 triangles, about 265 draw calls.
 
 ## Tests
 

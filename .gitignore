@@ -17,3 +17,7 @@ Thumbs.db
 
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# City hero exports: committed only after the look is approved (git add -f)
+static/city/*.glb
+static/city/hero_props.json

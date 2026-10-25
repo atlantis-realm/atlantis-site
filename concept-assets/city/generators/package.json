@@ -1,5 +1,11 @@
 {
   "private": true,
   "type": "commonjs",
-  "description": "Atlantis city generators (plain node scripts, not part of the site build)"
+  "description": "Atlantis city generators (plain node scripts, not part of the site build)",
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "meshoptimizer": "^1.3.0"
+  }
 }
