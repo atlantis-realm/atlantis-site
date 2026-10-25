@@ -18,4 +18,19 @@ function assertUnderCap(o, plan) {
   for (const ob of o.objects) if (ob.coll === "core" && !ob.name.startsWith("NBHD_core_lantern"))
     for (const p of ob.prims) assert.ok(primTop(p) <= cap + 1e-6, `${ob.name} prim top ${primTop(p)} over cap ${cap}`);
 }
-module.exports = { CityGen, loadPlan, gen, core, ringR, primsOf, centre, primTop, assertUnderCap };
+// sha256 of everything outside the college ring: lots whose district isn't park, and objects and instances
+// whose collection isn't park or skywalks (skywalks read park cells). Instance names are left out, because
+// tree names are positional and would shift if park trees changed.
+function nonParkDigest(o) {
+  const skip = (c) => c === "park" || c === "skywalks";
+  const lots = o.lots.filter((l) => l.d !== "park");
+  const objects = o.objects.filter((ob) => !skip(ob.coll));
+  const instances = o.instances.filter((i) => !skip(i.coll)).map(({ name, ...rest }) => rest);
+  return require("crypto").createHash("sha256").update(JSON.stringify([lots, objects, instances])).digest("hex");
+}
+// park lots belonging to one college (by id: alder, indigo, saffron)
+function parkLots(o, collegeId) {
+  const c = CityGen.collegeConfig(loadPlan().districts.find((d) => d.id === "park"))[collegeId];
+  return o.lots.filter((l) => l.d === "park" && l.nb === `park-${c.group}`);
+}
+module.exports = { nonParkDigest, parkLots, CityGen, loadPlan, gen, core, ringR, primsOf, centre, primTop, assertUnderCap };

@@ -524,6 +524,32 @@
     "names": [
      "{W} College"
     ]
+   },
+   "colleges": {
+    "alder": {
+     "group": 0,
+     "name": "Alder College",
+     "style": "physics",
+     "grow": true,
+     "landmark": true,
+     "color": "#8fa6c7"
+    },
+    "indigo": {
+     "group": 1,
+     "name": "Indigo College",
+     "style": "arts",
+     "grow": true,
+     "landmark": true,
+     "color": "#7a4fb5"
+    },
+    "saffron": {
+     "group": 2,
+     "name": "Saffron College",
+     "style": "earth",
+     "grow": false,
+     "landmark": true,
+     "color": "#c9962b"
+    }
    }
   },
   {
@@ -742,7 +768,11 @@
   "seed": 3,
   "warp": 0.6,
   "warp_scale": 600,
-  "renames": {},
+  "renames": {
+   "park-0": "Alder College",
+   "park-1": "Indigo College",
+   "park-2": "Saffron College"
+  },
   "types": [
    {
     "id": "harbourside",

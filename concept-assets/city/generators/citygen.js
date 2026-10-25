@@ -436,6 +436,37 @@ const CityGen = (() => {
     return lots;
   }
 
+  // ---------------------------------------------------------------- college settings
+  // The park ring's three colleges. Every field has a default, because a saved plan can predate any of
+  // them. Saffron never grows (its orchard band stays empty of buildings), whatever the plan says.
+  const COLLEGE_DEFAULTS = {
+    alder: { group: 0, name: "Alder College", style: "physics", grow: true, landmark: true, color: "#8fa6c7" },
+    indigo: { group: 1, name: "Indigo College", style: "arts", grow: true, landmark: true, color: "#7a4fb5" },
+    saffron: { group: 2, name: "Saffron College", style: "earth", grow: false, landmark: true, color: "#c9962b" },
+  };
+  function collegeConfig(d) {
+    const src = d && d.colleges && typeof d.colleges === "object" ? d.colleges : {}, out = {};
+    for (const [id, def] of Object.entries(COLLEGE_DEFAULTS)) {
+      const s = src[id] && typeof src[id] === "object" ? src[id] : {}, c = {};
+      for (const k of Object.keys(def)) c[k] = s[k] === undefined || s[k] === null ? def[k] : s[k];
+      c.group = Number.isInteger(+c.group) ? +c.group : def.group;
+      c.grow = !!c.grow; c.landmark = !!c.landmark;
+      if (id === "saffron") c.grow = false;
+      out[id] = c;
+    }
+    return out;
+  }
+  // The college for a group id ("park-1") or, when neighbourhoods are off, a sector index k (group = floor(k / per)).
+  function collegeOf(d, key) {
+    if (!d || d.id !== "park") return null;
+    let g = NaN;
+    if (typeof key === "string") { const m = /^park-(\d+)$/.exec(key); if (m) g = +m[1]; }
+    else if (Number.isInteger(key) && key >= 0) g = Math.floor(key / Math.max(1, (d.neighbourhood && d.neighbourhood.per) || 2));
+    if (!Number.isFinite(g)) return null;
+    const cfg = collegeConfig(d), id = Object.keys(cfg).find((i) => cfg[i].group === g);
+    return id ? { id, ...cfg[id] } : null;
+  }
+
   // ---------------------------------------------------------------- Old Town settings
   // Every field has a default, because the planner's saved plan can predate any of them.
   const OLD_TOWN_DEFAULTS = {
@@ -2877,6 +2908,6 @@ const CityGen = (() => {
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, oldTownLandmarks, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, oldTownLandmarks, collegeConfig, collegeOf, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;
