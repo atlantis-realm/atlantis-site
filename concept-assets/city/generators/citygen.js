@@ -2492,10 +2492,12 @@ const CityGen = (() => {
     for (const d of plan.districts) {
       if (d.enabled === false) continue;
       const avs = o.avenues.filter((a) => a.d === d.id).sort((a, b) => a.r - b.r);
-      if (avs.length < 2) continue;
+      if (!avs.length) continue;
       const [A, B] = avs, ring = d.id, level = levelOf(d.id);
-      // spines on the middle-band side of each avenue
-      const spineR = [A.r + (A.w / 2 - W / 2 - 0.5), B.r - (B.w / 2 - W / 2 - 0.5)];
+      // spines on the middle-band side of each avenue; a lone avenue (Old Town's, by default) keeps one spine
+      // on its outer, band side, with no rungs, roof bridges or street walkways (those need a middle band)
+      const spineR = [...new Set(B ? [A.r + (A.w / 2 - W / 2 - 0.5), B.r - (B.w / 2 - W / 2 - 0.5)] : [A.r + (A.w / 2 - W / 2 - 0.5)])];
+      const two = spineR.length > 1;  // a middle band between two spines, for rungs, roof bridges and street walkways
       ringSpines.push({ d: d.id, spineR, level });
       spineR.forEach((rw) => {
         const z = ter.G(rw) + level * plan.storey;
@@ -2508,11 +2510,11 @@ const CityGen = (() => {
           for (let j = 0; j < n; j++) access(rw + (rw === spineR[0] ? 1 : -1) * (W / 2 + 1.6), a0 + (j + 0.5) * (a1 - a0) / n, z, accessIdx++ % 2 ? "stairs" : "lift");
         }
       });
-      const L = ringLayout(plan, d), mid = L.bands.find((b) => b.r0 >= A.r && b.r1 <= B.r);
+      const L = ringLayout(plan, d), mid = two ? L.bands.find((b) => b.r0 >= A.r && b.r1 <= B.r) : null;
       const edges = mid ? o.cellEdges.filter((e) => e.d === d.id && e.band.i === mid.i) : [];
       // rungs between the two spines, per sector
       const rungKeys = new Set(), kOf = (p) => `${Math.round(p[0] * 2)},${Math.round(p[1] * 2)}`;
-      for (let k = 0; k < nS; k++) {
+      if (two) for (let k = 0; k < nS; k++) {
         const [s0, s1] = sectorSpan(k, (A.r + B.r) / 2), nR = Math.max(1, SW.rungs_per_sector || 2);
         for (let ri = 0; ri < nR; ri++) {
           const target = s0 + (ri + 0.5) * (s1 - s0) / nR;
@@ -2554,7 +2556,7 @@ const CityGen = (() => {
       }
       // sky bridges over the roofs, spine to spine, between the rungs
       const OV = SW.over || {};
-      if (OV.per_sector > 0) for (let k = 0; k < nS; k++) {
+      if (two && OV.per_sector > 0) for (let k = 0; k < nS; k++) {
         const rm = (spineR[0] + spineR[1]) / 2, [s0, s1] = sectorSpan(k, rm), nO = OV.per_sector, zSpine = Math.max(...spineR.map((r) => ter.G(r))) + level * plan.storey;
         const rA = spineR[0] + W / 2 + 2.2, rB = spineR[1] - W / 2 - 2.2;  // lift towers just inside each spine
         for (let j = 0; j < nO; j++) {
@@ -2579,8 +2581,10 @@ const CityGen = (() => {
           }
         }
       }
-      // extras 1: galleries on the avenues' outer sides, each bridged back to its spine
-      for (const [av, side, spine] of [[A, -1, spineR[0]], [B, 1, spineR[1]]]) {
+      // extras 1: galleries on the avenues' outer sides, each bridged back to its spine; Old Town's grid
+      // faces the inner side of its first avenue, so it never gets that gallery
+      const galleries = [[A, -1, spineR[0]], B && [B, 1, spineR[spineR.length - 1]]].filter((g) => g && !(d.id === "core" && g[1] < 0));
+      for (const [av, side, spine] of galleries) {
         const rw = av.r + side * (av.w / 2 - W / 2 - 0.5), rf = av.r + side * (av.w / 2 + (plan.side_street || 10) / 2 + 5), z = ter.G(rw) + level * plan.storey;
         for (let k = 0; k < nS; k++) {
           const [a0, a1] = sectorSpan(k, rw), step = 8 / rw, runs = [];
@@ -2604,6 +2608,7 @@ const CityGen = (() => {
           }
         }
       }
+      if (!two) continue;
       // extras 2: street walkways, kept only where they join a rung, or meet a spine at the middle band's edge
       const E = SW.edges || {}, picked = [];
       for (const e of o.cellEdges.filter((x) => x.d === d.id)) {
@@ -2638,7 +2643,7 @@ const CityGen = (() => {
       ringSpines.sort((a, b) => a.spineR[0] - b.spineR[0]);
       let maxGrade = 0;
       for (let i = 0; i < ringSpines.length - 1; i++) {
-        const lo = ringSpines[i], hi = ringSpines[i + 1], t0 = lo.spineR[1], t1 = hi.spineR[0];
+        const lo = ringSpines[i], hi = ringSpines[i + 1], t0 = lo.spineR[lo.spineR.length - 1], t1 = hi.spineR[0];
         const z0 = ter.G(t0) + lo.level * plan.storey, z1 = ter.G(t1) + hi.level * plan.storey;
         for (const sp of spokes) for (const sd of sides) {
           if (sp.hero && LK.skip_hero) continue;
