@@ -107,7 +107,7 @@ test("every Saffron lot is timber under a garden roof", () => {
 });
 
 // Indigo's venues and print works (task 5) have their own materials; the rest keep the arts palette
-const SIGNATURE = ["opera", "amphitheatre", "bigtop", "print"];
+const SIGNATURE = ["opera", "amphitheatre", "bigtop", "print", "arcology", "dye_garden"];
 test("every Indigo lot is plastered, in at least 3 colours, over a brick plinth", () => {
   const lots = parkLots(O, "indigo").filter((l) => !SIGNATURE.includes(l.form));
   assert.ok(lots.length > 0);
@@ -210,7 +210,11 @@ test("Alder not growing: no observatory, and nothing Alder outside the college b
   const alderObs = o.objects.filter((ob) => ob.coll === "park" && ob.props.nb === "park-0" && !["harbour", "waterworks"].includes(ob.props.use));
   assert.ok(alderObs.length > 0);
   for (const ob of alderObs) for (const pr of ob.prims) assert.ok(pts(pr).every(inBand), `${ob.name} ${pr.m} prim outside the college band`);
-  assert.ok(!o.noPlant.some((q) => ringR(...mid(q)) < 770), "a feature footprint in the grove band");
+  // scoped to Alder's sectors, so other colleges' features in their own bands can't trip it
+  const spokes = CityGen.spokeAngles(p), n = spokes.length, step = CityGen.TAU / n, d = p.districts.find((x) => x.id === "park");
+  const start = spokes[(d.neighbourhood.start_spoke || 0) % n].a;
+  const isAlder = ([x, y]) => CityGen.collegeOf(d, Math.floor((((Math.atan2(y, x) - start) % CityGen.TAU + CityGen.TAU) % CityGen.TAU) / step) % n).id === "alder";
+  assert.ok(!o.noPlant.some((q) => isAlder(mid(q)) && ringR(...mid(q)) < 770), "a feature footprint in Alder's grove band");
 });
 
 test("with eight spokes there is still exactly one observatory", () => {
@@ -396,4 +400,113 @@ test("with a 300 m Lantern every venue stays below the heart", () => {
     assert.ok(l.top < o.lantern.heart[1], `${l.form} top ${l.top}`);
     assert.ok(lotPrims(o, l).filter((pr) => centreIn(pr, l)).every((pr) => primTop(pr) < o.lantern.heart[1]));
   }
+});
+
+// ---------------------------------------------------------------- Indigo: pine arcology and dye gardens (task 6)
+const sectorCollege = (p, x, y) => {
+  const d = p.districts.find((q) => q.id === "park"), spokes = CityGen.spokeAngles(p), n = spokes.length, step = CityGen.TAU / n;
+  const start = spokes[(d.neighbourhood.start_spoke || 0) % n].a;
+  return (CityGen.collegeOf(d, Math.floor((((Math.atan2(y, x) - start) % CityGen.TAU + CityGen.TAU) % CityGen.TAU) / step) % n) || {}).id;
+};
+const arcologies = (o) => o.lots.filter((l) => l.landmark === "arcology");
+const dyeGardens = (o) => o.lots.filter((l) => l.form === "dye_garden");
+const pines = (o) => o.instances.filter((i) => i.asset === "asset_Plant_pine");
+const inOrchard = ([x, y]) => ringR(x, y) >= 970 - 1e-6 && ringR(x, y) <= 1170 + 1e-6;
+const overlaps = (a, b) => a.some(([x, y]) => pointIn(x, y, b)) || b.some(([x, y]) => pointIn(x, y, a));
+const side = (q, i) => Math.hypot(q[(i + 1) % q.length][0] - q[i][0], q[(i + 1) % q.length][1] - q[i][1]);
+
+test("exactly one Indigo Pine Arcology, inside Indigo's orchard band and sector", () => {
+  const a = arcologies(O);
+  assert.equal(a.length, 1);
+  const l = a[0];
+  assert.equal(l.d, "park"); assert.equal(l.kind, "landmark"); assert.equal(l.college, "indigo");
+  assert.equal(l.label, "Indigo Pine Arcology"); assert.equal(l.nb, "park-1");
+  for (const f of ["base", "top", "storeys", "area"]) assert.ok(Number.isFinite(l[f]), `${f} ${l[f]}`);
+  assert.ok(l.poly.every(inOrchard), "arcology outside the orchard band");
+  assert.ok(l.poly.every(([x, y]) => sectorCollege(plan, x, y) === "indigo"), "arcology outside Indigo's sectors");
+  const spokes = CityGen.spokeAngles(plan);
+  assert.ok(l.poly.every(([x, y]) => !CityGen.inCorridor(plan, spokes, x, y, 6)), "arcology in a spoke corridor");
+  assert.ok(Math.abs(side(l.poly, 0) - 60) < 1e-6, `base side ${side(l.poly, 0)}`);
+});
+
+test("the arcology is 6 stepped tiers of ashlar and glass, 12 m each, under roof terraces", () => {
+  const l = arcologies(O)[0], prims = lotPrims(O, l);
+  const roofs = prims.filter((p) => p.t === "prism" && p.m === "roof").sort((a, b) => a.z1 - b.z1);
+  assert.equal(roofs.length, 6);
+  roofs.forEach((p, i) => {
+    assert.ok(Math.abs(side(p.poly, 0) - 60 * 0.8 ** i) < 1e-6, `tier ${i} side ${side(p.poly, 0)}`);
+    assert.ok(Math.abs(p.z1 - (l.base + 12 * (i + 1))) < 1e-6, `tier ${i} top ${p.z1 - l.base}`);
+  });
+  assert.ok(prims.some((p) => p.m === "ashlar") && prims.some((p) => p.m === "glass"), "no ashlar walls or glass bands");
+  assert.ok(Math.abs(l.top - (l.base + 72)) < 1e-6, `top ${l.top - l.base}`);
+});
+
+test("pines grow on the arcology's terraces, at least 20 of them over 10 m up", () => {
+  const ter = CityGen.makeTerrain(plan), l = arcologies(O)[0], P = pines(O);
+  const up = P.filter((i) => i.z > ter.G(ringR(i.x, i.y)) + 10);
+  assert.ok(up.length >= 20, `${up.length} raised pines`);
+  assert.ok(P.every((i) => i.coll === "park" && pointIn(i.x, i.y, l.poly)), "a pine off the arcology");
+});
+
+test("2-4 dye gardens of 40x60 m, striped with dye beds, in Indigo's orchard band", () => {
+  const g = dyeGardens(O);
+  assert.ok(g.length >= 2 && g.length <= 4, `${g.length} dye gardens`);
+  const parkObs = O.objects.filter((ob) => ob.coll === "park");
+  for (const l of g) {
+    assert.equal(l.college, "indigo"); assert.equal(l.nb, "park-1"); assert.equal(l.d, "park");
+    assert.ok(l.poly.every(inOrchard) && l.poly.every(([x, y]) => sectorCollege(plan, x, y) === "indigo"), `${l.key} out of place`);
+    assert.deepEqual([side(l.poly, 0), side(l.poly, 1)].map((v) => Math.round(v)).sort(), [40, 60]);
+    const dye = parkObs.flatMap((ob) => ob.prims).filter((p) => p.m === "dye" && pointIn(...mid(p.poly), l.poly));
+    assert.ok(dye.length > 0, `${l.key} has no dye beds`);
+    assert.ok(dye.every((p) => Math.abs(p.z1 - p.z0 - 0.3) < 1e-6));
+  }
+  for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) assert.ok(!overlaps(g[i].poly, g[j].poly), "dye gardens overlap");
+  assert.ok(g.every((l) => !overlaps(l.poly, arcologies(O)[0].poly)), "a dye garden overlaps the arcology");
+});
+
+test("no grove or orchard tree, solar farm or blimp pad stands on the arcology or a dye garden", () => {
+  const feet = [...arcologies(O), ...dyeGardens(O)].map((l) => l.poly);
+  const trees = O.instances.filter((i) => i.coll === "park" && i.asset !== "asset_Plant_pine");
+  for (const q of feet) {
+    assert.ok(!trees.some((i) => pointIn(i.x, i.y, q)), "a tree on a feature");
+    assert.ok(!O.solar.some((s) => overlaps(s, q)), "a solar farm on a feature");
+    const pad = (b) => Array.from({ length: 12 }, (_, j) => [b.x + 9 * Math.cos(j * CityGen.TAU / 12), b.y + 9 * Math.sin(j * CityGen.TAU / 12)]);
+    assert.ok(!O.blimps.some((b) => overlaps(pad(b), q)), "a blimp pad on a feature");
+  }
+  assert.equal(O.trees.length, O.instances.length, "trees and instances out of step");
+});
+
+test("Indigo not growing: no arcology, no dye garden, no pine", () => {
+  const [, o] = withPlan((q) => { q.districts.find((d) => d.id === "park").colleges.indigo.grow = false; });
+  assert.equal(arcologies(o).length, 0);
+  assert.equal(dyeGardens(o).length, 0);
+  assert.equal(pines(o).length, 0);
+  assert.ok(!o.objects.some((ob) => ob.prims.some((p) => p.m === "dye")), "dye beds without a garden");
+});
+
+test("Indigo's landmark off: no arcology or pines, but the dye gardens stay", () => {
+  const [, o] = withPlan((q) => { q.districts.find((d) => d.id === "park").colleges.indigo.landmark = false; });
+  assert.equal(arcologies(o).length, 0);
+  assert.equal(pines(o).length, 0);
+  assert.ok(dyeGardens(o).length >= 2);
+});
+
+test("with five or eight spokes nothing throws and there is at most one arcology", () => {
+  for (const count of [5, 8]) {
+    let o;
+    assert.doesNotThrow(() => { [, o] = withPlan((q) => { q.spokes.count = count; }); });
+    assert.ok(arcologies(o).length <= 1, `${count} spokes`);
+    assert.ok(dyeGardens(o).length <= 4, `${count} spokes`);
+  }
+});
+
+test("with a 300 m Lantern the arcology and its pines stay below the heart", () => {
+  const [p, o] = withPlan((q) => { core(q).lantern = { ...(core(q).lantern || {}), height: 300 }; });
+  const l = arcologies(o)[0];
+  assert.ok(l, "no arcology");
+  assert.ok(l.top < o.lantern.heart[1], `arcology top ${l.top} vs heart ${o.lantern.heart[1]}`);
+  assert.ok(lotPrims(o, l).every((pr) => primTop(pr) < o.lantern.heart[1]));
+  assert.ok(pines(o).every((i) => i.z + 10 * i.scale < o.lantern.heart[1]), "a pine pokes past the heart");
+  for (const x of o.lots.filter((x) => x.college)) assert.ok(x.top < o.lantern.heart[1], `${x.key || x.label} top ${x.top}`);
+  assert.ok(parkLots(o, "indigo", p).length > 0);
 });

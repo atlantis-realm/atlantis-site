@@ -1959,6 +1959,7 @@ const CityGen = (() => {
   const PALETTE = {
     orchard: ["asset_Plant_fruit", "asset_Plant_fruit", "asset_Plant_open", "asset_Plant_sapling"],
     grove: ["asset_Plant_civic", "asset_Plant_column", "asset_Plant_open", "asset_Plant_shrub", "asset_Plant_fruit"],
+    pine: ["asset_Plant_pine"],  // Indigo's paper pines; build_city.py makes this species procedurally
   };
 
   // Remove every tree standing inside poly. tree() is the only thing that adds to o.trees and o.instances, one
@@ -1967,6 +1968,15 @@ const CityGen = (() => {
     const keep = o.trees.map(([x, y]) => !pointInPoly(x, y, poly));
     o.trees = o.trees.filter((_, i) => keep[i]);
     o.instances = o.instances.filter((_, i) => keep[i]);
+  }
+
+  // A college's sectors, measured the way the neighbourhoods assign them (from the start spoke): their
+  // indices (mine) and a point test (inMine).
+  function collegeSectors(d, spokes, id) {
+    const n = spokes.length, step = TAU / n, start = spokes[((d.neighbourhood && d.neighbourhood.start_spoke) || 0) % n].a;
+    const mine = Array.from({ length: n }, (_, k) => k).filter((k) => (collegeOf(d, k) || {}).id === id);
+    const inMine = (x, y) => mine.includes(Math.floor((((Math.atan2(y, x) - start) % TAU + TAU) % TAU) / step) % n);
+    return { n, step, start, mine, inMine };
   }
 
   // Alder's observatory: a stone drum under a copper dome on a clear lawn, in the grove band on the inner half
@@ -1978,10 +1988,7 @@ const CityGen = (() => {
     if (!cfg.landmark || !cfg.grow || cfg.style !== "physics") return;
     const bi = kinds.indexOf("grove"), band = bi >= 0 ? L.bands[bi] : null;
     if (!band) return;
-    // Alder's sectors, measured the way the neighbourhoods assign them (from the start spoke)
-    const n = spokes.length, step = TAU / n, start = spokes[((d.neighbourhood && d.neighbourhood.start_spoke) || 0) % n].a;
-    const mine = Array.from({ length: n }, (_, k) => k).filter((k) => (collegeOf(d, k) || {}).id === "alder");
-    const inMine = (x, y) => mine.includes(Math.floor((((Math.atan2(y, x) - start) % TAU + TAU) % TAU) / step) % n);
+    const { n, step, start, mine, inMine } = collegeSectors(d, spokes, "alder");
     const disc = (cx, cy, r, m = OBS.segs) => Array.from({ length: m }, (_, j) => [cx + r * Math.cos(j * TAU / m), cy + r * Math.sin(j * TAU / m)]);
     const clear = ([x, y]) => inMine(x, y) && !inCorridor(plan, spokes, x, y, 6) && !inHeroWedge(plan, spokes, x, y, 6) && !onCanalLine(o, x, y, 2)
       && !o.noPlant.some((q) => pointInPoly(x, y, q));
@@ -2014,6 +2021,118 @@ const CityGen = (() => {
     }), "copper");
     o.lots.push({ d: d.id, kind: "landmark", landmark: "observatory", college: "alder", label: "Alder Observatory", nb, key: `${d.id}|alder|observatory`, obj: ob.name,
       poly: foot, base, top, storeys: Math.max(1, Math.round(OBS.drumH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });
+  }
+
+  // Indigo's supplies in its orchard band (it may grow there; Saffron's orchards stay whole), placed before
+  // the band's solar farms and blimps and before it is planted:
+  //   arcology  a stepped tower of 6 square tiers (12 m each, each 0.8x the one below, from 60 m), ashlar
+  //             with a glass band under a roof terrace, pines planted on every terrace; it grows the
+  //             college's paper. On a site as near the middle of the band as there is, squared to the radius.
+  //   dye       2-4 herb gardens of 40x60 m beside it, striped with dye beds and paths 4 m wide
+  // Only for an arts college that may grow; the arcology also needs its landmark on.
+  const ARC = { tiers: 6, tierH: 12, base: 60, step: 0.8, margin: 10, pine: 8 };
+  const DYE = { w: 40, l: 60, strip: 4, gap: 4 };
+  function genIndigoSupplies(plan, d, ter, spokes, o, L, kinds) {
+    const cfg = collegeConfig(d).indigo;
+    if (!cfg.grow || cfg.style !== "arts") return;
+    const bi = kinds.indexOf("orchard"), band = bi >= 0 ? L.bands[bi] : null;
+    if (!band) return;
+    const { step, start, mine, inMine } = collegeSectors(d, spokes, "indigo");
+    if (!mine.length) return;
+    const nb = `park-${cfg.group}`;
+    // a square or rectangle in the local frame at (cx, cy): u along the radius, v along the ring
+    const frame = (cx, cy) => { const a = Math.atan2(cy, cx), u = [Math.cos(a), Math.sin(a)], v = [-u[1], u[0]];
+      return (du, dv) => [cx + u[0] * du + v[0] * dv, cy + u[1] * du + v[1] * dv]; };
+    const rect = (F, u0, u1, v0, v1) => [F(u0, v0), F(u1, v0), F(u1, v1), F(u0, v1)];
+    const lerpPt = (p, q, t) => [lerp(p[0], q[0], t), lerp(p[1], q[1], t)];
+    const okPt = ([x, y]) => { const r = Math.hypot(x, y);
+      return r >= band.r0 && r <= band.r1 && inMine(x, y) && !inCorridor(plan, spokes, x, y, 6) && !inHeroWedge(plan, spokes, x, y, 6)
+        && !onCanalLine(o, x, y, 2) && !o.noPlant.some((q) => pointInPoly(x, y, q)); };
+    // a polygon is clear when points every 4 m round it and its middle are, and no no-plant zone has a corner inside it
+    const clear = (q) => {
+      const pts = [centroid(q)];
+      q.forEach((p, i) => { const p2 = q[(i + 1) % q.length], m = Math.max(1, Math.ceil(dist(p, p2) / 4));
+        for (let j = 0; j < m; j++) pts.push([lerp(p[0], p2[0], j / m), lerp(p[1], p2[1], j / m)]); });
+      return pts.every(okPt) && !o.noPlant.some((z) => z.some(([x, y]) => pointInPoly(x, y, q)));
+    };
+    // the site: radii tried outward from the band's middle, every 5 m along each Indigo sector; stop at the first ring with any
+    const H = ARC.base / 2 + ARC.margin, rm = (band.r0 + band.r1) / 2, radii = [];
+    for (let r = band.r0 + H; r <= band.r1 - H + 1e-6; r += 5) radii.push(r);
+    radii.sort((a, b) => Math.abs(a - rm) - Math.abs(b - rm) || a - b);
+    let found = [];
+    for (const r of radii) {
+      for (const k of mine) for (let a = start + k * step + H / r; a < start + (k + 1) * step - H / r; a += 5 / r) {
+        const [cx, cy] = polar(r, a), F = frame(cx, cy);
+        if (okPt([cx, cy]) && clear(rect(F, -H, H, -H, H))) found.push({ cx, cy });
+      }
+      if (found.length) break;
+    }
+    if (!found.length) { o.warnings.push(`There's no clear site in ${cfg.name}'s orchard band for its pine arcology and dye gardens.`); return; }
+    const site = rng("park|col|indigo|arcology").choice(found), F = frame(site.cx, site.cy);
+    const zone = rect(F, -H, H, -H, H);
+    o.noPlant.push(zone);
+    clearTrees(o, zone);
+    if (cfg.landmark) {
+      const ob = o.obj(`NBHD_${d.id}_indigo_arcology`, d.id, { use: "landmark", nb, college: "indigo" });
+      const sq = (h) => rect(F, -h, h, -h, h), foot = sq(ARC.base / 2), zs = foot.map(([x, y]) => ter.G(Math.hypot(x, y)));
+      const zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05;
+      o.prism(ob, foot, zmin - 0.3, base, "plinth");
+      const R = rng("park|col|indigo|arcology|pines");
+      let n = 0;
+      const pine = (du, dv, z) => { const [x, y] = F(du, dv); tree(o, ter, d.id, R.choice(PALETTE.pine), x, y, R, `NBHD_${d.id}_indigo_pine_${String(n++).padStart(4, "0")}`, 0.55, 0.85, z); };
+      for (let i = 0; i < ARC.tiers; i++) {
+        const h = ARC.base / 2 * ARC.step ** i, z0 = base + i * ARC.tierH, q = sq(h);
+        o.prism(ob, q, z0, z0 + 7.5, "ashlar");
+        o.prism(ob, q, z0 + 7.5, z0 + 11, "glass");
+        o.prism(ob, q, z0 + 11, z0 + ARC.tierH, "roof");
+        const zt = z0 + ARC.tierH;
+        if (i < ARC.tiers - 1) {
+          // a ring of pines down the middle of the terrace left round the next tier
+          const m = (h + h * ARC.step) / 2, per = Math.max(1, Math.round(2 * m / ARC.pine));
+          for (const [su, sv] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) for (let j = 0; j < per; j++) {
+            const t = -m + j * 2 * m / per;  // from one corner along the side, the next corner starts the next side
+            pine(su ? su * m : -sv * t, sv ? sv * m : su * t, zt);
+          }
+        } else {
+          // the top roof: a grid of pines 8 m apart, 2 m in from the edge
+          const cnt = Math.floor((2 * h - 4) / ARC.pine) + 1, off = (cnt - 1) * ARC.pine / 2;
+          for (let a = 0; a < cnt; a++) for (let b = 0; b < cnt; b++) pine(-off + a * ARC.pine, -off + b * ARC.pine, zt);
+        }
+      }
+      const top = base + ARC.tiers * ARC.tierH;
+      o.lots.push({ d: d.id, kind: "landmark", landmark: "arcology", form: "arcology", college: "indigo", label: "Indigo Pine Arcology", nb, key: `${d.id}|indigo|arcology`, obj: ob.name,
+        poly: foot, base, top, storeys: Math.max(1, Math.round(ARC.tiers * ARC.tierH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });
+    }
+    // dye gardens: either side of the arcology along the ring, nearest first, two deep across the radius
+    const R = rng("park|col|indigo|dye"), want = R.randint(2, 4), hu = DYE.l / 2, hv = DYE.w / 2, cands = [];
+    for (let s = 0; s < 3; s++) for (const sv of [-1, 1]) for (const su of [-1, 1]) {
+      const dv = sv * (H + DYE.gap + hv + s * (DYE.w + DYE.gap)), du = su * (hu + DYE.gap / 2);
+      cands.push(rect(F, du - hu, du + hu, dv - hv, dv + hv));
+    }
+    const gardens = [];
+    for (const q of cands) {
+      if (gardens.length >= want) break;
+      if (!clear(q)) continue;
+      o.noPlant.push(q);
+      clearTrees(o, q);
+      gardens.push(q);
+    }
+    if (gardens.length < 2) o.warnings.push(`Only ${gardens.length} dye garden${gardens.length === 1 ? "" : "s"} fit beside ${cfg.name}'s pine arcology.`);
+    if (!gardens.length) return;
+    const ob = o.obj(`NBHD_${d.id}_indigo_dye_gardens`, d.id, { use: "garden", nb, college: "indigo" });
+    gardens.forEach((q, gi) => {
+      // strips across the radius (so each sits on near-level ground): dye beds and paths in turn, 4 m wide
+      const zs = [];
+      for (let j = 0; j * DYE.strip < DYE.l - 1e-6; j++) {
+        const t0 = j * DYE.strip / DYE.l, t1 = Math.min(1, (j + 1) * DYE.strip / DYE.l);
+        const strip = [lerpPt(q[0], q[1], t0), lerpPt(q[0], q[1], t1), lerpPt(q[3], q[2], t1), lerpPt(q[3], q[2], t0)];
+        const g = ter.G(Math.hypot(...centroid(strip)));
+        zs.push(g);
+        o.prism(ob, strip, g, g + 0.3, j % 2 ? "roof" : "dye");
+      }
+      o.lots.push({ d: d.id, form: "dye_garden", college: "indigo", label: "Indigo Dye Garden", nb, key: `${d.id}|indigo|dye${gi}`, obj: ob.name,
+        poly: q, base: Math.min(...zs), top: Math.max(...zs) + 0.3, storeys: 0, plinth: 0, area: polyArea(q) });
+    });
   }
 
   // Indigo's college cells, each given a form before any is built: the cells (in band and cell order) are
@@ -2055,6 +2174,7 @@ const CityGen = (() => {
     }
     // the colleges' features in the grove and orchard bands, before those bands are planted
     genObservatory(plan, d, ter, spokes, o, L, kinds);
+    genIndigoSupplies(plan, d, ter, spokes, o, L, kinds);
     L.bands.forEach((band, bi) => {
       const kind = kinds[bi] || "campus";
       if (kind === "campus" && d.layout === "voronoi") return;  // built in the first pass above

@@ -15,10 +15,12 @@ regrade()  puts the hand-built scene on the plan: first the scale, then the terr
 build()    rebuilds the generated collections. Trees are point clouds instanced by Geometry Nodes, as
            one ~16-tri distance tree per species (KIT_PlantD_*, in excluded KIT_PLANT_DISTANCE) for
            viewport and render alike; the detailed asset_Plant_* kits stay untouched for hero trees.
+           The pine (asset_Plant_pine, Indigo's arcology) has no kit: its distance tree is procedural.
 ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
 ground_palette()  basic colours: asphalt roads, sandstone pavers, deep sea-teal water, and materials for the bare ground
            rings (orchard grass-and-dirt for the college ring, meadow for the greenbelt, pavers outside).
-college_palette()  colours for the colleges' materials (ashlar, verdigris, timber, brick, plasters, roof tile, canvas, dye).
+college_palette()  colours for the colleges' materials (ashlar, verdigris, timber, brick, plasters, roof tile, canvas, dye)
+           and the pine's needles and bark.
 hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
 hide_centre_strays()  after the build, any other visible hand-built object reaching inside the first ring
            canal (bar its water, AP_inner_water, and bank, KIT_Terrace_island) is reported and hidden the same way.
@@ -456,7 +458,9 @@ COLLEGE_COLORS = {"MAT_AP_Ashlar": (0.78, 0.76, 0.70, 1.0), "MAT_AP_Verdigris": 
                   "MAT_AP_Timber": (0.42, 0.26, 0.13, 1.0), "MAT_AP_Brick": (0.45, 0.17, 0.10, 1.0),
                   "MAT_AP_PlasterOchre": (0.80, 0.58, 0.25, 1.0), "MAT_AP_PlasterRose": (0.78, 0.42, 0.40, 1.0),
                   "MAT_AP_PlasterTeal": (0.30, 0.55, 0.55, 1.0), "MAT_AP_RoofTile": (0.55, 0.20, 0.10, 1.0),
-                  "MAT_AP_Canvas": (0.85, 0.20, 0.18, 1.0), "MAT_AP_DyeBed": (0.35, 0.15, 0.55, 1.0)}
+                  "MAT_AP_Canvas": (0.85, 0.20, 0.18, 1.0), "MAT_AP_DyeBed": (0.35, 0.15, 0.55, 1.0),
+                  # the procedural pine's needles and bark (not MAT keys: the scatter's distance tree uses them)
+                  "MAT_AP_LeafC": (0.04, 0.14, 0.06, 1.0), "MAT_AP_Bark": (0.16, 0.09, 0.05, 1.0)}
 
 
 def college_palette():
@@ -605,10 +609,66 @@ class MeshBuilder:
 DISTANCE_SIDES = 5  # crown: a 5-sided double cone (10 tris); trunk: an open triangular prism (6 tris)
 
 
+# species with no kit collection: their distance tree is made here from scratch
+PROCEDURAL_TREES = {"asset_Plant_pine"}
+PINE = {"height": 10.0, "radius": 2.2, "tiers": 3, "trunk": 0.25, "trunk_top": 3.0}
+
+
+def link_distance(ob):
+    """Put a distance tree in KIT_PLANT_DISTANCE, which is excluded from the view layer (idempotent)."""
+    ob["citygen"] = True
+    far = bpy.data.collections.get("KIT_PLANT_DISTANCE") or bpy.data.collections.new("KIT_PLANT_DISTANCE")
+    if far.name not in bpy.context.scene.collection.children:
+        bpy.context.scene.collection.children.link(far)
+    if ob.name not in far.objects:
+        far.objects.link(ob)
+    lc = bpy.context.view_layer.layer_collection.children.get(far.name)
+    if lc:
+        lc.exclude = True  # source meshes only: seen through the scatter, never at the origin
+    return ob
+
+
+def pine_distance_tree():
+    """KIT_PlantD_pine: a conifer of 3 stacked 5-sided cones (10 m tall, 2.2 m at the base) in MAT_AP_LeafC
+    over a triangular MAT_AP_Bark trunk, about 36 tris. Gets or creates the mesh and object (idempotent)."""
+    name = "KIT_PlantD_pine"
+    me = bpy.data.meshes.get(name) or bpy.data.meshes.new(name)
+    me.clear_geometry()
+    me.materials.clear()
+    n, H, R, T = DISTANCE_SIDES, PINE["height"], PINE["radius"], PINE["tiers"]
+    verts, faces, mat_idx = [], [], []
+    # tier i: a cone whose skirt sits lower and wider the nearer the ground; each tier's apex is above
+    # the next tier's skirt, so they overlap like a fir's whorls. The bottom skirt is at 2 m.
+    for i in range(T):
+        zb = 2.0 + (H - 2.0) * 0.6 * i / T
+        zt = H if i == T - 1 else zb + (H - 2.0) * 0.55
+        r = R * (1.0 - 0.3 * i)
+        b = len(verts)
+        verts += [(r * math.cos(a), r * math.sin(a), zb) for a in (2 * math.pi * k / n for k in range(n))]
+        verts += [(0.0, 0.0, zt), (0.0, 0.0, zb)]
+        faces += [(b + k, b + (k + 1) % n, b + n) for k in range(n)] + [(b + (k + 1) % n, b + k, b + n + 1) for k in range(n)]
+        mat_idx += [0] * (2 * n)
+    b, tr = len(verts), PINE["trunk"]
+    verts += [(tr * math.cos(a), tr * math.sin(a), z) for z in (0.0, PINE["trunk_top"]) for a in (2 * math.pi * k / 3 for k in range(3))]
+    faces += [(b + k, b + (k + 1) % 3, b + 3 + (k + 1) % 3, b + 3 + k) for k in range(3)]
+    mat_idx += [1] * 3
+    me.from_pydata(verts, [], faces)
+    for m in (get_mat("MAT_AP_LeafC"), get_mat("MAT_AP_Bark")):
+        me.materials.append(m)
+    me.polygons.foreach_set("material_index", mat_idx)
+    me.update()
+    ob = bpy.data.objects.get(name) or bpy.data.objects.new(name, me)
+    ob.data = me
+    return link_distance(ob)
+
+
 def distance_tree(asset):
     """One merged low-poly mesh per plant species for city-scale views: the species' trunk and crown
     sized from its detailed kit parts (bounding boxes), about 16 tris instead of 36-164 in 2-3 objects.
-    The detailed kit collection is left untouched for close-up (hero) trees later."""
+    The detailed kit collection is left untouched for close-up (hero) trees later. A species in
+    PROCEDURAL_TREES with no kit collection is made from scratch (the pine)."""
+    if asset not in bpy.data.collections:
+        return pine_distance_tree() if asset in PROCEDURAL_TREES else None
     src = bpy.data.collections[asset]
     trunk = crown = None
     for o in src.all_objects:
@@ -651,16 +711,7 @@ def distance_tree(asset):
     me.update()
     ob = bpy.data.objects.get(name) or bpy.data.objects.new(name, me)
     ob.data = me
-    ob["citygen"] = True
-    far = bpy.data.collections.get("KIT_PLANT_DISTANCE") or bpy.data.collections.new("KIT_PLANT_DISTANCE")
-    if far.name not in bpy.context.scene.collection.children:
-        bpy.context.scene.collection.children.link(far)
-    if ob.name not in far.objects:
-        far.objects.link(ob)
-    lc = bpy.context.view_layer.layer_collection.children.get(far.name)
-    if lc:
-        lc.exclude = True  # source meshes only: seen through the scatter, never at the origin
-    return ob
+    return link_distance(ob)
 
 
 def scatter_group(asset):
@@ -717,7 +768,7 @@ def build():
     for it in B["instances"]:
         groups.setdefault((it["coll"], it["asset"]), []).append(it)
     for (cname, asset), items in groups.items():
-        if asset not in bpy.data.collections:
+        if asset not in bpy.data.collections and asset not in PROCEDURAL_TREES:
             print("missing plant collection", asset)
             continue
         me = bpy.data.meshes.new(f"TREES_{cname}_{asset}")

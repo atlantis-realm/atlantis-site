@@ -39,3 +39,13 @@ test("college_palette() is defined and called in main() before MATS is built", (
   const call = main.indexOf("college_palette()"), mats = main.indexOf("MATS = [");
   assert.ok(call > 0 && call < mats, "college_palette() must run before MATS is built");
 });
+
+test("build_city.py builds a procedural pine and doesn't skip asset_Plant_pine", () => {
+  assert.match(src, /^PROCEDURAL_TREES = \{[^}]*"asset_Plant_pine"/m);
+  assert.match(src, /^def pine_distance_tree\(/m);
+  assert.ok(src.includes("MAT_AP_LeafC") && src.includes("MAT_AP_Bark"), "pine materials missing");
+  const build = src.slice(src.indexOf("def build():"), src.indexOf("def cut_canals"));
+  assert.match(build, /asset not in bpy\.data\.collections and asset not in PROCEDURAL_TREES/);
+  // the pine's materials get their colours in code, before MATS is built
+  assert.match(src, /"MAT_AP_LeafC": \(/); assert.match(src, /"MAT_AP_Bark": \(/);
+});
