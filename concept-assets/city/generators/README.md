@@ -1,6 +1,6 @@
 # City generators
 
-Greybox generators for `../Atlantian_plaza_blockout-v04.blend` (v01–v03 are earlier versions): a Cambridge-scale (≈6 km across) ring
+Greybox generators for `../Atlantian_plaza_blockout-v05.blend`, the file to open (v01–v04 are earlier versions): a Cambridge-scale (≈6 km across) ring
 city of sloped tiers rising to Old Town at the centre, six inclined spoke avenues, and one-way ring
 avenues in every ring.
 
@@ -21,6 +21,28 @@ The centre, inside the first ring canal (r < 460), is **Old Town**, generated en
 - Spokes, the hero avenue and skywalks stop at the first ring avenue; nothing radial runs inside it.
   `core.second_avenue` (off by default) brings back the 350 m ring avenue.
 - Every new setting has a default, so an older plan without these keys still builds.
+
+## The colleges (v05)
+
+The college ring of the park district (r 530–1180, collection `22_NBHD_PARK`) holds three colleges, one
+per 120° sector, each with its own look. Every building in a college's sector takes that college's
+palette and roof kind; signature forms sit on college-use cells only. Settings live in the park
+district's `colleges` block of `plan.json`.
+
+- **Alder College** (physics, sectors −90°…30°): pale ashlar (`MAT_AP_Ashlar`) lab halls with glass
+  clerestories, and the copper-domed **Alder Observatory** (`MAT_AP_Verdigris`) in its grove band
+  (`NBHD_park_alder_observatory`).
+- **Indigo College** (creative arts, 30°…150°): gabled studios in coloured plaster (`MAT_AP_PlasterOchre`,
+  `PlasterRose`, `PlasterTeal`) under terracotta roofs (`MAT_AP_RoofTile`); the **Indigo Opera**, the
+  **Indigo Amphitheatre** and the canvas **Indigo Big Top** (`MAT_AP_Canvas`); sawtooth brick print works
+  with chimneys (`MAT_AP_Brick`); and in its orchard band the stepped **Indigo Pine Arcology**
+  (`NBHD_park_indigo_arcology`, terrace pines from `KIT_PlantD_pine` via `TREES_park_asset_Plant_pine`)
+  beside striped dye gardens (`NBHD_park_indigo_dye_gardens`, `MAT_AP_DyeBed`).
+- **Saffron College** (earth sciences, 150°…270°): timber tree-houses (`MAT_AP_Timber`) on trunk columns
+  with tiered decks and green roofs, joined by canopy walkways (`*_walkways` objects). Its orchards are
+  left as they were.
+
+All college colours are set in code (`COLLEGE_COLORS` in `build_city.py`), so a rebuild restores them.
 
 The hand-built temple is not deleted: `build_city.py` excludes the `05_TEMPLE` collection from the view
 layer and hides its planting (`KIT_PlantI_temple_*`). Re-enable the collection to get it back.
