@@ -14,6 +14,8 @@
     const ARM_PIVOT_INSET = 20; // how far up from the bottom of the arm it pivots
     const ARM_LIFT = 140;
     const JUMP_HEIGHT = { eyes: 36, body: 24 };
+    const LINE_STAGGER_MS = 25; // jump delay added per step away from the middle
+    const ARM_RAISE_MS = 170; // the raise is the first 10% of the 1.7s arm-wave
 
     const lastIndex = bodyLines.length + armLines.length - 1;
 
@@ -43,6 +45,9 @@
     const viewWidth = Math.max(armEnd, eyesEnd);
     const viewHeight = bodyTop + LINE_HEIGHT;
 
+    // start the arm early enough that it's fully raised when its first line begins to jump
+    const armDelayMs = Math.max(0, Math.min(...arm.map((l) => l.d)) * LINE_STAGGER_MS - ARM_RAISE_MS);
+
     // the arm pivots about its horizontal middle, a little above the bottom
     const armPivot = { x: (bodyEnd + armEnd) / 2, y: viewHeight - ARM_PIVOT_INSET };
 
@@ -58,7 +63,7 @@
     class="barcode"
     class:jumping
     viewBox="0 0 {viewWidth} {viewHeight}"
-    style="max-width: {viewWidth}px; --jump-eyes: -{JUMP_HEIGHT.eyes}px; --jump-body: -{JUMP_HEIGHT.body}px; --arm-lift: -{ARM_LIFT}px"
+    style="max-width: {viewWidth}px; --jump-eyes: -{JUMP_HEIGHT.eyes}px; --jump-body: -{JUMP_HEIGHT.body}px; --arm-lift: -{ARM_LIFT}px; --stagger: {LINE_STAGGER_MS}ms; --arm-delay: {armDelayMs}ms"
     onmouseenter={() => (jumping = true)}
     {onanimationend}
     role="img"
@@ -110,13 +115,13 @@
 
 /* each line hops on its own, delayed by distance from the middle to make a wave */
 .jumping .body-line{
-    animation: jump 0.45s ease-out calc(var(--d) * 25ms) backwards;
+    animation: jump 0.45s ease-out calc(var(--d) * var(--stagger)) backwards;
     --jump-height: var(--jump-body);
 }
 
-/* starts about halfway through the wave: raises, holds for 0.5s, then waves side to side 10 times */
+/* raised by the time its first line jumps (see --arm-delay), holds for 0.5s, then waves side to side 10 times */
 .jumping .barcode__arm{
-    animation: arm-wave 1.7s ease-in-out 0.4s backwards;
+    animation: arm-wave 1.7s ease-in-out var(--arm-delay) backwards;
 }
 
 @keyframes arm-wave{
