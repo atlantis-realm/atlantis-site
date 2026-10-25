@@ -89,8 +89,8 @@ test("every Alder lot is built in ashlar", () => {
   assert.ok(lots.length > 0);
   for (const l of lots) {
     assert.equal(l.college, "alder"); assert.equal(l.wall, "ashlar");
-    // a lab hall's clerestory band is glass on the same footprint
-    const walls = onFoot(l).filter((p) => p.m !== "plinth" && !(l.form === "lab_hall" && p.m === "glass"));
+    // a lab hall's clerestory band is lit glass on the same footprint
+    const walls = onFoot(l).filter((p) => p.m !== "plinth" && !(l.form === "lab_hall" && p.m === "clerestory"));
     assert.ok(walls.length > 0, `no wall prims for ${l.key}`);
     assert.ok(walls.every((p) => p.m === "ashlar"), `${l.key} walls ${walls.map((p) => p.m)}`);
   }
@@ -150,13 +150,13 @@ const mid = (poly) => [poly.reduce((t, p) => t + p[0], 0) / poly.length, poly.re
 const observatories = (o) => o.lots.filter((l) => l.landmark === "observatory");
 const withPlan = (edit) => { const p = loadPlan(); edit(p); return [p, gen(p)]; };
 
-test("every Alder college lot is a lab hall with a glass clerestory", () => {
+test("every Alder college lot is a lab hall with a lit clerestory", () => {
   const labs = parkLots(O, "alder").filter((l) => l.use === "college");
   assert.ok(labs.length > 0);
   for (const l of labs) {
     assert.equal(l.form, "lab_hall", `${l.key} form ${l.form}`);
     assert.ok(l.storeys >= 2 && l.storeys <= 4, `${l.key} storeys ${l.storeys}`);
-    assert.ok(onFoot(l).some((p) => p.m === "glass"), `${l.key} has no glass band`);
+    assert.ok(onFoot(l).some((p) => p.m === "clerestory" && p.z1 - p.z0 >= 3 - 1e-6), `${l.key} has no 3 m clerestory band`);
     assert.ok(onFoot(l).some((p) => p.m === "ashlar"), `${l.key} has no ashlar body`);
   }
   // 1-3 halls per cell, each a long bar
@@ -283,7 +283,7 @@ test("every canopy walkway lies inside one Saffron college cell", () => {
   const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims);
   assert.ok(walks.length > 0, "no walkways");
   for (const w of walks) {
-    assert.equal(w.m, "timber");
+    assert.equal(w.m, "boardwalk");
     // the four corners and points along each side, all in the same cell
     const pts = w.poly.flatMap((p, i) => { const q = w.poly[(i + 1) % w.poly.length]; return [0, 0.25, 0.5, 0.75].map((f) => [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f]); });
     assert.ok(cells.some((c) => pts.every(([x, y]) => pointIn(x, y, c.poly))), `walkway ${JSON.stringify(w.poly)} leaves its cell`);
@@ -515,4 +515,41 @@ test("with a 300 m Lantern the arcology and its pines stay below the heart", () 
   assert.ok(pines(o).every((i) => i.z + 10 * i.scale < o.lantern.heart[1]), "a pine pokes past the heart");
   for (const x of o.lots.filter((x) => x.college)) assert.ok(x.top < o.lantern.heart[1], `${x.key || x.label} top ${x.top}`);
   assert.ok(parkLots(o, "indigo", p).length > 0);
+});
+
+// ---------------------------------------------------------------- fix round 1: reading from the air
+test("every Alder lab hall is roofed in copper and every other Alder building capped in copper", () => {
+  const prims = parkPrims(O);
+  for (const l of parkLots(O, "alder").filter((l) => l.kind !== "landmark")) {
+    const [cx, cy] = mid(l.poly);
+    const cap = prims.filter((p) => p.t === "prism" && p.m === "copper" && Math.abs(p.z1 - (l.form === "lab_hall" ? l.top : l.roofTop ?? l.top)) < 1e-6
+      && pointIn(cx, cy, p.poly));
+    assert.ok(cap.length > 0, `${l.key} (${l.form || l.roof}) has no copper cap at its roof`);
+  }
+});
+
+test("the observatory dome is a skyline mark: drum r >= 25, dome >= 30 m tall", () => {
+  const prims = primsOf(O, "NBHD_park_alder_observatory"), dome = prims.find((p) => p.t === "loft" && p.m === "copper");
+  const zs = dome.rings.flat().map((p) => p[2]), [cx, cy] = mid(observatories(O)[0].poly);
+  assert.ok(Math.max(...zs) - Math.min(...zs) >= 30, `dome ${Math.max(...zs) - Math.min(...zs)} m tall`);
+  assert.ok(Math.max(...dome.rings[0].map(([x, y]) => Math.hypot(x - cx, y - cy))) >= 25, "dome too narrow");
+});
+
+test("every tree-house deck is roofed in turf laid on top of its lip, so it shows from the air", () => {
+  const obs = saffronObs(O);
+  for (const l of treehouses(O)) {
+    const turf = obs.flatMap((ob) => ob.prims).filter((p) => p.m === "turf" && p.t === "prism" && pointIn(...mid(p.poly), l.poly));
+    assert.ok(turf.length >= 1, `${l.key} has no turf roof`);
+    const lips = obs.flatMap((ob) => ob.prims).filter((p) => p.m === "timber" && p.t === "prism" && Math.abs(p.z1 - p.z0 - 0.9) < 1e-6 && pointIn(...mid(p.poly), l.poly));
+    for (const t of turf) assert.ok(!lips.some((lp) => lp.z1 > t.z1 + 1e-6 && lp.z0 < t.z1 && pointIn(...mid(t.poly), lp.poly)), `${l.key} turf buried under a lip`);
+  }
+});
+
+test("canopy walkways are 4.5 m pale boardwalks", () => {
+  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims);
+  assert.ok(walks.length > 0);
+  for (const w of walks) {
+    assert.equal(w.m, "boardwalk");
+    const [a, b] = w.poly; assert.ok(Math.abs(Math.hypot(a[0] - b[0], a[1] - b[1]) - 4.5) < 1e-6, "walkway width");
+  }
 });

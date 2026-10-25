@@ -29,8 +29,9 @@ per 120° sector, each with its own look. Every building in a college's sector t
 palette and roof kind; signature forms sit on college-use cells only. Settings live in the park
 district's `colleges` block of `plan.json`.
 
-- **Alder College** (physics, sectors −90°…30°): pale ashlar (`MAT_AP_Ashlar`) lab halls with glass
-  clerestories, and the copper-domed **Alder Observatory** (`MAT_AP_Verdigris`) in its grove band
+- **Alder College** (physics, sectors −90°…30°): warm Bath-stone ashlar (`MAT_AP_Ashlar`) capped in
+  verdigris copper (`MAT_AP_Verdigris`); lab halls with a lit blue clerestory band (`MAT_AP_Clerestory`)
+  under copper roofs; and the copper-domed **Alder Observatory** in its grove band
   (`NBHD_park_alder_observatory`).
 - **Indigo College** (creative arts, 30°…150°): gabled studios in coloured plaster (`MAT_AP_PlasterOchre`,
   `PlasterRose`, `PlasterTeal`) under terracotta roofs (`MAT_AP_RoofTile`); the **Indigo Opera**, the
@@ -39,10 +40,11 @@ district's `colleges` block of `plan.json`.
   (`NBHD_park_indigo_arcology`, terrace pines from `KIT_PlantD_pine` via `TREES_park_asset_Plant_pine`)
   beside striped dye gardens (`NBHD_park_indigo_dye_gardens`, `MAT_AP_DyeBed`).
 - **Saffron College** (earth sciences, 150°…270°): timber tree-houses (`MAT_AP_Timber`) on trunk columns
-  with tiered decks and green roofs, joined by canopy walkways (`*_walkways` objects). Its orchards are
-  left as they were.
+  with tiered decks and bright turf roofs (`MAT_AP_Turf`), joined by pale boardwalk canopy walkways
+  (`MAT_AP_Boardwalk`, `*_walkways` objects). Its orchards are left as they were.
 
-All college colours are set in code (`COLLEGE_COLORS` in `build_city.py`), so a rebuild restores them.
+All college colours, roughness and glow are set in code (`COLLEGE_COLORS`, `COLLEGE_ROUGHNESS`,
+`COLLEGE_EMISSION` in `build_city.py`), so a rebuild restores them.
 
 The hand-built temple is not deleted: `build_city.py` excludes the `05_TEMPLE` collection from the view
 layer and hides its planting (`KIT_PlantI_temple_*`). Re-enable the collection to get it back.

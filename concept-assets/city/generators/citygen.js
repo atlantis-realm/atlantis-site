@@ -289,7 +289,7 @@ const CityGen = (() => {
     return ROOF_KINDS[ROOF_KINDS.length - 1];
   }
   function roofTop(o, ob, ter, q, z, kind, R, treeColl, name, pal) {
-    const WALL = (pal && pal.wall) || "stone", LIP = (pal && pal.lip) || "lip";
+    const WALL = (pal && pal.wall) || "stone", LIP = (pal && pal.lip) || "lip", TILE = (pal && pal.tile) || "tile";
     const area = Math.abs(signedArea(q));
     if (area < 50) return 0;
     const rect = q.length === 4;
@@ -310,13 +310,13 @@ const CityGen = (() => {
         const tw = Math.min(3.5, Math.min(lu, lv) * 0.12), th = R.uniform(2.5, 5);
         for (const [u0, v0] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
           const fu = m(lu, tw), fv = m(lv, tw), uu = u0 ? 1 - fu : 0, vv = v0 ? 1 - fv : 0;
-          o.prism(ob, sub(uu, uu + fu, vv, vv + fv), deck, z + th, "tile");
+          o.prism(ob, sub(uu, uu + fu, vv, vv + fv), deck, z + th, TILE);
         }
         extra = Math.max(extra, th);
       } else if (v < 0.75) {  // a stepped finial on the crown
         const s1 = inset(crown, Math.sqrt(Math.abs(signedArea(crown))) * 0.22), s2 = inset(crown, Math.sqrt(Math.abs(signedArea(crown))) * 0.38), f = R.uniform(2, 5);
         o.prism(ob, s1, z + hgt + 0.7, z + hgt + 0.7 + f, WALL);
-        o.prism(ob, s2, z + hgt + 0.7 + f, z + hgt + 0.7 + f * 1.8, "tile");
+        o.prism(ob, s2, z + hgt + 0.7 + f, z + hgt + 0.7 + f * 1.8, TILE);
         extra = hgt + 0.7 + f * 1.8;
       }
       return extra;
@@ -337,11 +337,14 @@ const CityGen = (() => {
       return 3.4;
     }
     if (kind === "garden") {
-      o.prism(ob, inset(q, 0.6), deck, deck + 0.45, "roof");
+      // a palette turf (Saffron) is laid on top of the lip slab, so the garden shows from the air
+      const turf = pal && pal.turf, bed = turf ? z + 0.4 : deck + 0.45;
+      if (turf) o.prism(ob, inset(q, 0.2), z, bed, turf);
+      else o.prism(ob, inset(q, 0.6), deck, bed, "roof");
       const n = clamp(Math.round(area / 90), 1, 6);
       for (let i = 0; i < n; i++) {
         const c = rect ? P(R.uniform(0.15, 0.85), R.uniform(0.2, 0.8)) : centroid(q);
-        tree(o, ter, treeColl, R.choice(["asset_Plant_shrub", "asset_Plant_sapling", "asset_Plant_open", "asset_Plant_fruit"]), c[0], c[1], R, `${name}_rooftree_${i}`, 0.45, 0.75, deck + 0.45);
+        tree(o, ter, treeColl, R.choice(["asset_Plant_shrub", "asset_Plant_sapling", "asset_Plant_open", "asset_Plant_fruit"]), c[0], c[1], R, `${name}_rooftree_${i}`, 0.45, 0.75, bed);
       }
       return 5;
     }
@@ -475,8 +478,8 @@ const CityGen = (() => {
   // roofs and ground (lot size and depth stay with the type). arts picks one plaster per building; its
   // roofs mix is the fallback for footprints that aren't 4-gons (4-gons are gabled in gableMat).
   const COLLEGE_STYLES = {
-    physics: { wall: "ashlar", lip: "lip", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver", form: "lab_hall" },
-    earth: { wall: "timber", lip: "timber", plinth: "plinth", roofs: { garden: 1 }, ground: "roof", form: "treehouse" },
+    physics: { wall: "ashlar", lip: "copper", tile: "copper", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver", form: "lab_hall" },
+    earth: { wall: "timber", lip: "timber", turf: "turf", plinth: "plinth", roofs: { garden: 1 }, ground: "roof", form: "treehouse" },
     arts: { walls: ["plaster_a", "plaster_b", "plaster_c"], lip: "lip", plinth: "brick", roof: "gable", gableMat: "rooftile", roofs: { deco: 0.4, open: 0.6 }, ground: "paver" },
   };
   // The college style for a park cell (by group id, or sector index when neighbourhoods are off), or null:
@@ -1076,7 +1079,7 @@ const CityGen = (() => {
     for (const [li, [q, st0, sh, roofM, form]] of parts.entries()) {
       const LR = rng(`${key}|${li}`), [qx, qy] = centroid(q);
       if (form === "treehouse") {
-        const th = treeHouse(plan, ter, o, ob, q, poly, `${key}|${li}`, thLevel, opts.band, { wall: CS.wall, lip: CS.lip }, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`);
+        const th = treeHouse(plan, ter, o, ob, q, poly, `${key}|${li}`, thLevel, opts.band, { wall: CS.wall, lip: CS.lip, turf: CS.turf }, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`);
         houses.push(th);
         o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, obj: ob.name, poly: th.decks[0], base: th.base, top: th.top, storeys: th.storeys, plinth: 0, area: polyArea(th.decks[0]),
           label: "Tree-house", college: CS.college, wall: CS.wall, roof: "garden", form, decks: th.decks.length });
@@ -1084,12 +1087,12 @@ const CityGen = (() => {
         summary.base = Math.min(summary.base, th.base); summary.top = Math.min(summary.top, th.top);
         continue;
       }
-      if (form === "lab_hall") {  // an ashlar body, a continuous glass clerestory in its top 2 m, a flat lip roof
+      if (form === "lab_hall") {  // an ashlar body, a continuous lit clerestory in its top 3 m, a copper roof slab
         const mats = { wall: CS.wall, lip: CS.lip, plinth: CS.plinth };
-        const bld = building(o, ob, ter, q, st0 * sh - 2, use, { roof: false, lip: false, mats });
-        o.prism(ob, q, bld.top, bld.top + 2, "glass");
-        o.prism(ob, inset(q, -0.35), bld.top + 2, bld.top + 2.9, CS.lip);
-        const top = bld.top + 2.9;
+        const bld = building(o, ob, ter, q, st0 * sh - 3, use, { roof: false, lip: false, mats });
+        o.prism(ob, q, bld.top, bld.top + 3, "clerestory");
+        o.prism(ob, inset(q, -0.6), bld.top + 3, bld.top + 4.2, "copper");
+        const top = bld.top + 4.2;
         o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top, storeys: st0, plinth: bld.plinth, area: polyArea(q), label: "Lab hall", college: CS.college, wall: mats.wall, form });
         o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, top);
         summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, top);
@@ -1314,7 +1317,7 @@ const CityGen = (() => {
       o.prism(ob, hq, zd + TREE.deck, wallTop, pal.wall);
       o.prism(ob, inset(hq, -0.35), wallTop, wallTop + 0.9, pal.lip);
       const extra = roofTop(o, ob, ter, hq, wallTop + 0.9, "garden", R, treeColl, `${name}_deck${i}`, pal);
-      if (!extra) o.prism(ob, inset(hq, 0.6), wallTop + 0.35, wallTop + 0.8, "roof");  // too small for planting: a turf lid
+      if (!extra) o.prism(ob, inset(hq, pal.turf ? 0.2 : 0.6), pal.turf ? wallTop + 0.9 : wallTop + 0.35, pal.turf ? wallTop + 1.3 : wallTop + 0.8, pal.turf || "roof");  // too small for planting: a turf lid
       storeys += st; top = wallTop + 0.9 + extra;
       zd = wallTop + 0.9 + TREE.clear;
     }
@@ -1329,9 +1332,10 @@ const CityGen = (() => {
     }
     return { decks, base, top, storeys, z: z0, c: centroid(q) };
   }
-  // Canopy walkways: 3 m timber bridges at the lower-deck level joining a cell's tree-houses (a spanning tree,
+  // Canopy walkways: 4.5 m pale boardwalks at the lower-deck level joining a cell's tree-houses (a spanning tree,
   // shortest links first). A link is only built when its whole footprint lies inside the cell, so it never
   // crosses an avenue, canal or spoke corridor.
+  const WALK = { half: 2.25, deep: 1.5 };  // 4.5 m wide, 1.5 m deep pale boardwalks, so they read from the air
   function canopyWalks(o, ob, cellPoly, houses, coll) {
     const inCell = (q) => q.every((p, i) => { const r = q[(i + 1) % q.length]; return [0, 0.25, 0.5, 0.75].every((f) => pointInPoly(lerp(p[0], r[0], f), lerp(p[1], r[1], f), cellPoly)); });
     const links = [];
@@ -1341,12 +1345,12 @@ const CityGen = (() => {
     let wob = null;
     for (const [L, a, b] of links) {
       if (root(a) === root(b) || L < 1) continue;
-      const A = houses[a].c, B = houses[b].c, nx = -(B[1] - A[1]) / L * 1.5, ny = (B[0] - A[0]) / L * 1.5;
+      const A = houses[a].c, B = houses[b].c, nx = -(B[1] - A[1]) / L * WALK.half, ny = (B[0] - A[0]) / L * WALK.half;
       const q = [[A[0] + nx, A[1] + ny], [A[0] - nx, A[1] - ny], [B[0] - nx, B[1] - ny], [B[0] + nx, B[1] + ny]];
       if (!inCell(q)) continue;
       up[root(a)] = root(b);
       wob = wob || o.obj(`${ob.name}_walkways`, coll, { ...ob.props, walkway: true });
-      o.prism(wob, q, houses[a].z, houses[a].z + TREE.deck, "timber");
+      o.prism(wob, q, houses[a].z, houses[a].z + WALK.deep, "boardwalk");
     }
   }
 
@@ -1982,7 +1986,7 @@ const CityGen = (() => {
   // Alder's observatory: a stone drum under a copper dome on a clear lawn, in the grove band on the inner half
   // (toward Old Town), clear of the spoke corridors, the hero wedge and the canals. Only when Alder is a physics
   // college that may grow and has its landmark on.
-  const OBS = { drum: 22, drumH: 14, dome: 22, lawn: 45, lats: 8, segs: 32 };
+  const OBS = { drum: 26, drumH: 14, dome: 26, domeH: 36, lawn: 45, lats: 8, segs: 32 };  // the dome is raised (domeH > dome) to mark the skyline
   function genObservatory(plan, d, ter, spokes, o, L, kinds) {
     const cfg = collegeConfig(d).alder;
     if (!cfg.landmark || !cfg.grow || cfg.style !== "physics") return;
@@ -2009,7 +2013,7 @@ const CityGen = (() => {
     clearTrees(o, lawn);
     // drum on a plinth that takes up the slope, then the dome: rings at 8 latitudes, the apex ring all pole
     const foot = disc(cx, cy, OBS.drum), zs = foot.map(([x, y]) => ter.G(Math.hypot(x, y)));
-    const zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05, eave = base + OBS.drumH, top = eave + OBS.dome;
+    const zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05, eave = base + OBS.drumH, top = eave + OBS.domeH;
     const ring = (r, z) => disc(cx, cy, r).map(([x, y]) => [x, y, z]);
     o.loft(ob, [ring(OBS.drum, zmin - 0.3), ring(OBS.drum, base)], "plinth");
     o.loft(ob, [ring(OBS.drum, base), ring(OBS.drum, eave)], "ashlar");
@@ -2017,7 +2021,7 @@ const CityGen = (() => {
     o.loft(ob, Array.from({ length: OBS.lats }, (_, i) => {
       if (i === OBS.lats - 1) return foot.map(() => [cx, cy, top]);
       const f = (i / (OBS.lats - 1)) * Math.PI / 2;
-      return ring(OBS.dome * Math.cos(f), eave + OBS.dome * Math.sin(f));
+      return ring(OBS.dome * Math.cos(f), eave + OBS.domeH * Math.sin(f));
     }), "copper");
     o.lots.push({ d: d.id, kind: "landmark", landmark: "observatory", college: "alder", label: "Alder Observatory", nb, key: `${d.id}|alder|observatory`, obj: ob.name,
       poly: foot, base, top, storeys: Math.max(1, Math.round(OBS.drumH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });

@@ -23,7 +23,7 @@ test("every generated prim material is a MAT key and every object coll a COLL ke
 });
 
 const OLD_MAT = ["stone", "plinth", "lip", "roof", "paver", "water", "road", "stair", "glass", "tile", "panel", "fabric", "glow", "gold"];
-const COLLEGE_MAT = ["ashlar", "copper", "timber", "brick", "plaster_a", "plaster_b", "plaster_c", "rooftile", "canvas", "dye"];
+const COLLEGE_MAT = ["ashlar", "copper", "timber", "brick", "plaster_a", "plaster_b", "plaster_c", "rooftile", "canvas", "dye", "clerestory", "turf", "boardwalk"];
 
 test("the first 14 MAT keys keep their old order", () => {
   assert.deepEqual(keysOf("MAT").slice(0, 14), OLD_MAT);
@@ -57,4 +57,18 @@ test("college_palette() only colours the new college materials, never the shared
     assert.ok(!names.includes(shared), `college_palette() recolours ${shared}`);
   const fn = src.slice(src.indexOf("def college_palette():"), src.indexOf("def ground_material"));
   assert.ok(!/LeafC|Bark/.test(fn), "college_palette() touches the kit tree materials");
+});
+
+test("college materials are matte, warm and saturated enough to read from the air", () => {
+  const m = src.match(/^COLLEGE_COLORS = \{([\s\S]*?)\}/m);
+  const col = Object.fromEntries([...m[1].matchAll(/"(MAT_[^"]+)"\s*:\s*\(([^)]*)\)/g)].map((k) => [k[1], k[2].split(",").map(Number)]));
+  for (const n of ["MAT_AP_Clerestory", "MAT_AP_Turf", "MAT_AP_Boardwalk"]) assert.ok(col[n], `${n} has no colour`);
+  // Alder's ashlar is warm stone: red well above blue, unlike the city's neutral grey
+  const [ar, , ab] = col.MAT_AP_Ashlar; assert.ok(ar - ab >= 0.25, `ashlar ${col.MAT_AP_Ashlar}`);
+  // verdigris and turf are saturated: the dominant channel is at least 2.5x the weakest
+  for (const n of ["MAT_AP_Verdigris", "MAT_AP_Turf", "MAT_AP_Timber"]) { const c = col[n].slice(0, 3); assert.ok(Math.max(...c) >= 2.5 * Math.min(...c), `${n} ${c}`); }
+  assert.match(src, /^COLLEGE_ROUGHNESS = 0\.8\d*$/m);
+  const fn = src.slice(src.indexOf("def college_palette():"), src.indexOf("def ground_material"));
+  assert.match(fn, /\["Roughness"\]\.default_value = COLLEGE_ROUGH\.get\(name, COLLEGE_ROUGHNESS\)/);
+  assert.match(fn, /Emission Strength/);
 });
