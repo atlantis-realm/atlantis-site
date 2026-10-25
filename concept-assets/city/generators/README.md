@@ -81,6 +81,51 @@ Pass `"DO_REGRADE": False` to rebuild only the generated city, or `"DO_BUILD": F
 hand-built scene. Rerunning is safe: every object it moves keeps its original transform (object
 property `rg_orig_loc`, mesh attribute `rg_orig_co`, curve property `rg_orig_pts`) and starts from it.
 
+## Hero export
+
+`export_hero.py` writes the `/city` page's hero view from v05: only what the hero camera (`Camera.001`,
+frames 1–250) can see, culled, joined, decimated by distance and AO-baked. The cull geometry is in
+`hero_geom.py`. It **never saves the .blend** and leaves the scene as it found it: everything it builds lives
+in a scratch scene `HERO_EXPORT_SCENE` (collection `HERO_EXPORT`), every ID it makes carries the custom
+property `hero_export`, and all of them are deleted at the end, even on error.
+
+```sh
+cd concept-assets/city/generators
+# Blender can't run node, so write the plan's blimps first (for the blimp length/radius):
+node -e 'const fs=require("fs"),C=require("./citygen.js");fs.mkdirSync("build/hero",{recursive:true});fs.writeFileSync("build/hero/plan_blimps.json",JSON.stringify(C.generate(require("./plan.json")).blimps))'
+```
+
+Then in Blender, with v05 open:
+
+```python
+G = "/path/to/concept-assets/city/generators/"
+exec(open(G + "export_hero.py").read(), {"__name__": "eh", "__file__": G + "export_hero.py", "OUT_DIR": G + "build/hero/"})
+```
+
+or headless, which is safer than the live session and takes a few minutes (`--factory-startup` keeps add-ons out):
+
+```sh
+flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v05.blend \
+  --python-expr 'G="'$PWD'/"; exec(open(G+"export_hero.py").read(), {"__name__":"eh","__file__":G+"export_hero.py","OUT_DIR":G+"build/hero/"})'
+```
+
+Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-ignored `build/hero/`:
+
+| File | What it is |
+|---|---|
+| `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>`, the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`). Materials are simple PBR, `HERO_<source>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
+| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials (glTF space: Y up). |
+| `export_report.json` | Kept/dropped counts per collection, band and mesh counts, triangles, glb size, timings. |
+
+Two runs give a byte-identical `hero_raw.glb` and leave the scene's object, material and mesh counts and
+the `Camera.001` keys unchanged. v05's Lantern is `NBHD_core_lantern` (the `KIT_Temple_lantern*` objects are
+in the excluded temple), so it is the node carrying `NIGHT_MAT_AP_Cyan`; the well ring lights use
+`NIGHT_WellRing`. The scene objects' names are taken by the originals, so the copies are built as
+`<name>@hero` and the suffix is stripped from the glb afterwards.
+
+`hero_glb.mjs` turns `hero_raw.glb` into `static/city/hero.glb`. The tuning knobs (cull margin, bands,
+tiles, decimate ratio, subdivision, AO, lamps, blimps) are the constants at the top of `export_hero.py`.
+
 ## Tests
 
 ```sh
