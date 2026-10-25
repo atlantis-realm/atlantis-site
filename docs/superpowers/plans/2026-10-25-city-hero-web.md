@@ -74,6 +74,17 @@ Pure logic lives in small modules with unit tests:
   - generator tests `cd gen && node --test "test/*.test.js"` (162 today; must stay green);
   - Python tests `cd gen && python3 -m unittest discover -s test -p "test_*.py"`.
 
+- **Red, green, refactor:** every code task runs failing test → minimal code → **refactor** before its commit
+  step. The refactor step looks for:
+  - logic duplicated between modules (the safe-frame rule exists in `hero_geom.py` and `heroCamera.ts` by
+    design; keep both formulas identical and cross-reference them in comments);
+  - magic numbers that belong in a constants block at the top of the file (cull margin, band distances, AO
+    settings, lamp spacing, night colours, people counts);
+  - patterns to bring in line with `DicePreviewScene` and `build_city.py`;
+  - names.
+
+  Re-run that task's tests after refactoring.
+
 ## Review Focus
 
 1. **Portrait phone at scroll 0:** "Welcome to Atlantis" is fully visible, because the safe frame widens the vertical FOV. Pinned by a `safeFrameFov` test in Task 1 and a portrait screenshot in Task 6.
@@ -199,6 +210,10 @@ Pure logic lives in small modules with unit tests:
     - **Near** < 150 m: kept as modelled.
     - **Mid** 150–700 m: joined per material within 100 m grid tiles.
     - **Far** > 700 m: joined per material per tile, then a Decimate modifier (ratio 0.25, collapse).
+    - **Exception:** objects named `KIT_Temple_lantern*` are never joined or decimated, whatever their distance.
+      They stay named objects so Step 4 can find them and the Task 4 test can check them by name.
+  - **Mid back faces:** after joining, delete the faces of mid meshes whose normal points away from every
+    sampled camera position (dot(normal, cam − face centre) < 0 for all samples).
   - `Text`: convert to a mesh and replace its `Procedural Ceramic` material with a simple pale PBR. Keep its node name `Text`.
 - [ ] **Step 3: AO bake.**
   - Near and mid meshes: subdivide faces longer than 4 m (near) or 12 m (far and mid) on any side with a grid split, so vertex AO has vertices to land on.
@@ -234,6 +249,9 @@ Pure logic lives in small modules with unit tests:
   - Record `len(bpy.data.objects)`, `len(bpy.data.materials)`, the `Camera.001` key values and `bpy.data.is_dirty` before the run.
   - Run the export **twice**. After each run, assert the counts and keys match the before-values.
   - Assert that `hero_raw.glb` exists and that both runs produce the same `export_report.json` counts.
+  - Assert that the two runs' `hero_raw.glb` files have the same sha256. If they can't (for example the
+    exporter writes a timestamp), find the varying bytes, record why in the README, and compare the glb
+    with those bytes masked instead.
   - Print the report.
 - [ ] **Step 9:** Commit `gen/export_hero.py gen/README.md`: "City hero: Blender export".
 
@@ -287,7 +305,8 @@ Pure logic lives in small modules with unit tests:
     - a gradient from zenith to horizon;
     - a sun glow from `props.sun.dir`;
     - an fbm cloud layer that scrolls along a wind vector by `uTime`;
-    - a night mix uniform (stars from a hash, a moon disc and a darker gradient). Wired here; driven in Task 7.
+    - a night mix uniform (stars from a hash, a moon disc, a darker gradient, and cloud undersides lit with a
+      faint warm city glow that is strongest near the horizon toward the city). Wired here; driven in Task 7.
 - Create: `src/lib/city/CityHeroScene.ts`
 - Create: `src/lib/city/props.ts`
   - The `HeroProps` type, matching the Task 3 schema.
@@ -425,13 +444,20 @@ Pure logic lives in small modules with unit tests:
   - `makeWaterMaterial(base: THREE.MeshStandardMaterial): THREE.MeshStandardMaterial`
     - Uses `onBeforeCompile` to perturb the normal with two scrolling sine/noise layers driven by `uTime`.
     - Keeps the base colour.
-    - Adds a soft fresnel tint and night reflections via the env map.
+    - Adds a soft fresnel tint and sky reflections via the env map.
+    - **Night lights in the water:** at night it adds reflected glints of the city lights. A uniform array
+      holds up to 32 light positions and colours, taken at load from the night-marked meshes nearest the well
+      and the lamp posts. Each light adds a specular streak from its mirrored position, scaled by the night mix.
+    - **Reduced motion:** `uTime` stops advancing, so the surface stays still.
   - `applyWater(root: THREE.Object3D, nodeName: string): THREE.Material | null`
     - Finds `props.well_water` by name and swaps in the water material.
 - Test: `src/lib/city/water.test.ts`
   - `applyWater` replaces the material on the named mesh, returns it, and returns null when the name is missing (built on a tiny THREE scene).
-- Modify: `CityHeroScene.ts`: apply the water at load and advance `uTime`.
-- [ ] Steps: failing test → implement → PASS → the browser at progress 0 shows the water moving behind the text, day and night → commit "City hero: well water".
+  - `nearestLights(points, origin, n)` (exported helper) returns the n nearest points sorted by distance and never
+    more than 32.
+- Modify: `CityHeroScene.ts`: apply the water at load, advance `uTime` (frozen with `reducedMotion`) and pass the
+  night mix to the water.
+- [ ] Steps: failing test → implement → PASS → the browser at progress 0 shows the water moving behind the text by day, and at night with light glints → commit "City hero: well water".
 
 ### Task 10: People
 
@@ -464,7 +490,11 @@ Pure logic lives in small modules with unit tests:
 - [ ] **Step 2: Full browser sweep** at 1280×720 and 390×844, day and night: 10 scroll positions each.
   - Save the screenshots, plus a short GIF of the scroll, to the scratchpad.
   - Log `stats()`.
-  - Check `prefers-reduced-motion` emulation: there is no easing and nothing moves.
+  - **Frame rate:** log the average fps over a 5 s scroll at 1280×720 (target ≥ 60), and at 390×844 with Chrome
+    CPU throttling at 4× and pixel ratio forced to 1.5 (target ≥ 30, a rough stand-in for a mid-range phone).
+    If either misses, report it with the numbers; don't tune silently.
+  - Check `prefers-reduced-motion` emulation: there is no easing and nothing moves (clouds, blimps, people,
+    water).
 - [ ] **Step 3:**
   - Update `gen/README.md` with the final budget numbers.
   - **Stop and show the user the screenshots and the GIF.** Only after they approve the look, run `git add -f static/city/hero.glb static/city/hero_props.json` and commit "City hero: reviewed export".
