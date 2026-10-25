@@ -29,7 +29,7 @@ test("saffron never grows, whatever the plan says", () => {
 
 test("plan.json carries the three colours", () => {
   const c = CityGen.collegeConfig(park);
-  assert.equal(c.alder.color, "#8fa6c7"); assert.equal(c.indigo.color, "#7a4fb5"); assert.equal(c.saffron.color, "#c9962b");
+  assert.equal(c.alder.color, "#4f9a7f"); assert.equal(c.indigo.color, "#7a4fb5"); assert.equal(c.saffron.color, "#c9962b");
 });
 
 test("collegeOf resolves by group id and by sector index", () => {
@@ -552,4 +552,40 @@ test("canopy walkways are 4.5 m pale boardwalks", () => {
     assert.equal(w.m, "boardwalk");
     const [a, b] = w.poly; assert.ok(Math.abs(Math.hypot(a[0] - b[0], a[1] - b[1]) - 4.5) < 1e-6, "walkway width");
   }
+});
+
+// ---------------------------------------------------------------- final review fixes
+test("a blank college rename falls back to the college's own name, and its landmarks follow a rename", () => {
+  const [, o] = withPlan((q) => { q.neighbourhoods.renames["park-1"] = ""; q.neighbourhoods.renames["park-0"] = "Rowan College"; });
+  const n = Object.fromEntries(o.neighbourhoods.map((s) => [s.id, s]));
+  assert.equal(n["park-1"].name, "Indigo College");
+  assert.equal(n["park-1"].auto, "Indigo College");
+  assert.equal(n["park-0"].name, "Rowan College");
+  assert.equal(observatories(o)[0].label, "Rowan Observatory");
+  assert.equal(o.lots.find((l) => l.landmark === "arcology").label, "Indigo Pine Arcology");
+  assert.ok(o.lots.some((l) => l.label === "Indigo Opera"));
+});
+
+test("with neighbourhoods off and start spoke 1, each college's features and buildings share its sectors", () => {
+  const [p, o] = withPlan((q) => { q.neighbourhoods.enabled = false; q.districts.find((d) => d.id === "park").neighbourhood.start_spoke = 1; });
+  const col = o.lots.filter((l) => l.d === "park" && l.college);
+  for (const id of ["alder", "indigo", "saffron"]) assert.ok(col.some((l) => l.college === id), `no ${id} lots`);
+  assert.ok(col.some((l) => l.landmark === "observatory") && col.some((l) => l.landmark === "arcology"));
+  for (const l of col) assert.equal(sectorCollege(p, ...mid(l.poly)), l.college, `${l.label} ${l.key} sits in another college's sector`);
+});
+
+test("every lab hall lot names its object", () => {
+  const labs = O.lots.filter((l) => l.form === "lab_hall");
+  assert.ok(labs.length > 0);
+  const names = new Set(O.objects.map((ob) => ob.name));
+  for (const l of labs) assert.ok(l.obj && names.has(l.obj), `${l.key} obj ${l.obj}`);
+});
+
+test("an Indigo venue or print works with no room warns, in plain words", () => {
+  assert.ok(!O.warnings.some((w) => /doesn't fit|don't fit/.test(w)), "the default plan should fit every venue");
+  const [, o] = withPlan((q) => { const c = q.districts.find((d) => d.id === "park").campus; c.block = 30; c.row_depth = 20; });
+  const ws = o.warnings.filter((w) => /fit/.test(w));
+  for (const v of ["Opera", "Amphitheatre", "Big Top"]) assert.ok(ws.includes(`The Indigo ${v} doesn't fit its plot, so a studio stands there instead.`), `no warning for the ${v}: ${ws.join(" | ")}`);
+  assert.ok(ws.some((w) => /^\d+ of Indigo College's print works don't fit their plots/.test(w)), ws.join(" | "));
+  for (const w of ws) assert.ok(!/\b(island|temple|spire|circular manhattan|sable heights)\b/i.test(w), w);
 });

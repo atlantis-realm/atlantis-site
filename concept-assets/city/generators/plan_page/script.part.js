@@ -529,16 +529,26 @@
     return h;
   }
 
-  // the college ring's three colleges: each one's name (its neighbourhood's), its landmark and whether it grows
+  // the college ring's three colleges: each one's name (its neighbourhood's), style, landmark and whether it grows.
+  // A landmark stands in the college's grow band, so it is shown Off (and can't be set) while the college
+  // doesn't grow or isn't its own style; Saffron has no landmark and never grows.
+  const COLLEGE_STYLE_OPTS = [["physics", "Physics"], ["arts", "Arts"], ["earth", "Earth"], ["plain", "Plain"]];
+  const LANDMARK_STYLE = { alder: ["physics", "a physics"], indigo: ["arts", "an arts"] };
   function collegeGroups(d) {
     const cfg = CityGen.collegeConfig(d), renames = plan.neighbourhoods?.renames || {}, dis = readOnly ? " disabled" : "", onOff = [["true", "On"], ["false", "Off"]];
     const rows = Object.entries(cfg).map(([id, c]) => {
-      const g = `park-${c.group}`, n = (gen.neighbourhoods || []).find((x) => x.id === g), auto = n ? n.auto : c.name, fid = `f-${d.id}-college-${id}-name`;
+      const g = `park-${c.group}`, n = (gen.neighbourhoods || []).find((x) => x.id === g), auto = n ? n.auto : c.name, fid = `f-${d.id}-college-${id}-name`, nm = renames[g] || auto;
+      // a style citygen doesn't know builds plain, so it reads as Plain until it is changed
+      const styles = COLLEGE_STYLE_OPTS.some(([k]) => k === String(c.style)) ? COLLEGE_STYLE_OPTS : [...COLLEGE_STYLE_OPTS, [String(c.style), "Plain (not a known style)"]], ls = LANDMARK_STYLE[id];
+      const landmark = !ls ? selectHTML(`colleges.${id}.landmark`, `${nm} · landmark`, [["none", "None"]], { fixed: "none" })
+        : !c.grow ? selectHTML(`colleges.${id}.landmark`, `${nm} · landmark (off: it doesn't grow)`, onOff, { fixed: "false" })
+        : c.style !== ls[0] ? selectHTML(`colleges.${id}.landmark`, `${nm} · landmark (off: not ${ls[1]} college)`, onOff, { fixed: "false" })
+        : selectHTML(`colleges.${id}.landmark`, `${nm} · landmark`, onOff);
       return `<div class="f"><label for="${fid}"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${esc(c.color)}"></i> Name</label><div class="in"><input type="text" id="${fid}" data-path="@neighbourhoods.renames.${g}" data-str="1" placeholder="${esc(auto)}" value="${esc(renames[g] || "")}" aria-label="Name for ${esc(c.name)}"${dis}></div></div>` +
-        selectHTML(`colleges.${id}.landmark`, `${renames[g] || auto} · landmark`, onOff) +
-        selectHTML(`colleges.${id}.grow`, `${renames[g] || auto} · grows into its band`, onOff, id === "saffron" ? { fixed: "false" } : {});
+        selectHTML(`colleges.${id}.style`, `${nm} · style`, styles) + landmark +
+        selectHTML(`colleges.${id}.grow`, `${nm} · grows into its band`, onOff, id === "saffron" ? { fixed: "false" } : {});
     });
-    return `<fieldset><legend>Colleges · names, landmarks and growth</legend>${rows.join("")}</fieldset>`;
+    return `<fieldset><legend>Colleges · names, styles, landmarks and growth</legend>${rows.join("")}</fieldset>`;
   }
 
   // Old Town: the street grid round the Lantern square, the culture quarters, heights, the Lantern, landmarks

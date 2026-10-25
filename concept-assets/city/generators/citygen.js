@@ -447,7 +447,7 @@ const CityGen = (() => {
   // The park ring's three colleges. Every field has a default, because a saved plan can predate any of
   // them. Saffron never grows (its orchard band stays empty of buildings), whatever the plan says.
   const COLLEGE_DEFAULTS = {
-    alder: { group: 0, name: "Alder College", style: "physics", grow: true, landmark: true, color: "#8fa6c7" },
+    alder: { group: 0, name: "Alder College", style: "physics", grow: true, landmark: true, color: "#4f9a7f" },
     indigo: { group: 1, name: "Indigo College", style: "arts", grow: true, landmark: true, color: "#7a4fb5" },
     saffron: { group: 2, name: "Saffron College", style: "earth", grow: false, landmark: true, color: "#c9962b" },
   };
@@ -463,7 +463,8 @@ const CityGen = (() => {
     }
     return out;
   }
-  // The college for a group id ("park-1") or, when neighbourhoods are off, a sector index k (group = floor(k / per)).
+  // The college for a group id ("park-1") or, when neighbourhoods are off, a sector index k counted from the
+  // start spoke (group = floor(k / per)); sectorFromStart turns a cell's own sector index into that count.
   function collegeOf(d, key) {
     if (!d || d.id !== "park") return null;
     let g = NaN;
@@ -473,6 +474,19 @@ const CityGen = (() => {
     const cfg = collegeConfig(d), id = Object.keys(cfg).find((i) => cfg[i].group === g);
     return id ? { id, ...cfg[id] } : null;
   }
+  // A cell's sector k (the one after spoke k) counted from the district's start spoke, the way the
+  // neighbourhoods and collegeSectors count.
+  function sectorFromStart(plan, d, k) {
+    const n = Math.max(1, plan.spokes.count), s = (d && d.neighbourhood && d.neighbourhood.start_spoke) || 0;
+    return (((k - s) % n) + n) % n;
+  }
+  // A college's name as the plan shows it (its neighbourhood's, which falls back to the college's own
+  // name), and that name without " College", for its landmarks' labels.
+  function collegeName(o, d, id) {
+    const cfg = collegeConfig(d)[id], s = o.nb && o.nb.seeds.find((x) => x.id === `${d.id}-${cfg.group}`);
+    return (s && s.name) || cfg.name;
+  }
+  const collegeWord = (o, d, id) => collegeName(o, d, id).replace(/\s+College$/i, "").trim() || collegeConfig(d)[id].name;
 
   // Each college style's palette, roofs and ground. It overrides the neighbourhood type's style for walls,
   // roofs and ground (lot size and depth stay with the type). arts picks one plaster per building; its
@@ -893,6 +907,9 @@ const CityGen = (() => {
       const w = words[i % words.length] + (i >= words.length ? ` ${Math.floor(i / words.length) + 1}` : "");
       const pat = pats[Math.floor(NR.random() * pats.length)];
       s.auto = pat.replace("{W}", w).replace("{w}", w.toLowerCase());
+      // a college keeps its configured name unless renamed (a blank rename too), never a seeded word
+      const fd = s.per != null ? fixedD.find((dd) => dd.id === s.d) : null, col = fd ? collegeOf(fd, s.id) : null;
+      if (col) s.auto = col.name;
       s.name = (N.renames || {})[s.id] || s.auto;
     });
     const byRing = new Map(), span = N.span_rings !== false;
@@ -1010,7 +1027,7 @@ const CityGen = (() => {
     const style = { gap: PL.gap, setback: PL.setback, height_var: PL.height_var, roof: PL.roof, ...nbS };
     style.gap = pair(style.gap, [0, 0]); if (style.lot) style.lot = pair(style.lot, T.lot || plan.skyline.lot);
     // a college sector: the college's palette, roofs and ground win over the neighbourhood type's
-    const CS = collegeStyle(d, opts.nb != null ? opts.nb : cell.k);
+    const CS = collegeStyle(d, opts.nb != null ? opts.nb : sectorFromStart(plan, d, cell.k));
     if (CS) { style.roof = CS.roof; style.roofs = CS.roofs; }
     const pave = CS ? CS.ground : "paver";
     // an Indigo college cell's form (opera, amphitheatre, bigtop, print or studio), chosen by genCampus
@@ -1053,7 +1070,12 @@ const CityGen = (() => {
       const K = plan.skyline, lo = (d.storeys || [2, 6])[0], hi = (d.storeys || [2, 6])[1];
       if (byBldg) ground(poly, pave);
       // an Indigo venue or print works fills the cell with one building (a studio if it can't fit)
-      if (cellForm && cellForm !== "studio") { const s = indigoBuilding(plan, d, ter, o, ob, use, cell, key, opts, cellForm); if (s) return s; cellForm = "studio"; }
+      if (cellForm && cellForm !== "studio") {
+        const s = indigoBuilding(plan, d, ter, o, ob, use, cell, key, opts, cellForm);
+        if (s) return s;
+        (opts.misses || []).push(cellForm);  // genCampus warns about these once the bands are built
+        cellForm = "studio";
+      }
       const foot = byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R);
       // a physics college: the footprints merge into 1-3 lab halls, long bars of 2-4 tall (6 m) storeys
       if (CS && CS.form === "lab_hall") for (const [i, q] of labHalls(poly, foot).entries()) parts.push([q, rng(`park|col|lab|${key}|${i}`).randint(2, 4), 6, "lip", "lab_hall"]);
@@ -1093,7 +1115,7 @@ const CityGen = (() => {
         o.prism(ob, q, bld.top, bld.top + 3, "clerestory");
         o.prism(ob, inset(q, -0.6), bld.top + 3, bld.top + 4.2, "copper");
         const top = bld.top + 4.2;
-        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top, storeys: st0, plinth: bld.plinth, area: polyArea(q), label: "Lab hall", college: CS.college, wall: mats.wall, form });
+        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top, storeys: st0, plinth: bld.plinth, area: polyArea(q), label: "Lab hall", college: CS.college, wall: mats.wall, form, obj: ob.name });
         o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, top);
         summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, top);
         continue;
@@ -1142,7 +1164,8 @@ const CityGen = (() => {
   //   bigtop        a canvas cone over a 6 m canvas wall, peaking 18-24 m up, with 4 masts through the top
   //   print         a brick shed under rooftile saw teeth (glazed in each steep face), with 1-2 brick chimneys 18-25 m
   // Returns the cell summary, or null when the cell has no room (it is then a studio).
-  const VENUE_LABELS = { opera: "Indigo Opera", amphitheatre: "Indigo Amphitheatre", bigtop: "Indigo Big Top" };
+  const VENUE_LABELS = { opera: "Opera", amphitheatre: "Amphitheatre", bigtop: "Big Top" };
+  const venueLabel = (o, d, form) => `${collegeWord(o, d, "indigo")} ${VENUE_LABELS[form]}`;
   // the point inside a polygon farthest from its edges (a grid search), and that distance
   function innerDisc(poly) {
     const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -1202,7 +1225,7 @@ const CityGen = (() => {
         o.prism(ob, [a, b, out(b, 4), out(a, 4)], bld.base + colH, bld.base + colH + 1, "lip");
         const pod = [a, b, out(b, 4.6), out(a, 4.6)];
         o.prism(ob, pod, levels(pod).zmin - 0.3, bld.base, "brick");  // the podium under the colonnade, down to the ground
-        return finish({ poly: q, base: bld.base, top, storeys: st, plinth: bld.plinth, kind: "landmark", landmark: form, label: VENUE_LABELS[form], wall: "plaster_a" }, bld.top);
+        return finish({ poly: q, base: bld.base, top, storeys: st, plinth: bld.plinth, kind: "landmark", landmark: form, label: venueLabel(o, d, form), wall: "plaster_a" }, bld.top);
       }
       // print works: brick walls two storeys high, saw teeth across the long side, glass in each steep face
       const st = 2, bld = building(o, ob, ter, q, st * plan.storey, use, { roof: false, lip: false, mats: { wall: "brick", lip: "lip", plinth: "brick" } });
@@ -1248,7 +1271,7 @@ const CityGen = (() => {
       o.prism(ob, wall, zmin - 0.3, wallTop, "plaster_b");
       o.prism(ob, inset(wall, -0.3), wallTop, wallTop + 0.6, "lip");
       const top = Math.max(tz, wallTop + 0.6);
-      return finish({ poly: foot, base, top, storeys: Math.max(1, Math.round((top - base) / plan.storey)), plinth, kind: "landmark", landmark: form, label: VENUE_LABELS[form], wall: "ashlar" }, tz);
+      return finish({ poly: foot, base, top, storeys: Math.max(1, Math.round((top - base) / plan.storey)), plinth, kind: "landmark", landmark: form, label: venueLabel(o, d, form), wall: "ashlar" }, tz);
     }
     // the big top
     const Rb = clamp(Math.min(0.35 * Math.sqrt(area), rin - 3), 0, 26);
@@ -1267,7 +1290,7 @@ const CityGen = (() => {
       const a = a0 + i * TAU / 4, mx = cx + mr * Math.cos(a), my = cy + mr * Math.sin(a);
       o.prism(ob, [[mx - mh, my - mh], [mx + mh, my - mh], [mx + mh, my + mh], [mx - mh, my + mh]], base, mastTop, "lip");
     }
-    return finish({ poly: foot, base, top: mastTop, storeys: 1, plinth, kind: "landmark", landmark: form, label: VENUE_LABELS[form], wall: "canvas" }, eave);
+    return finish({ poly: foot, base, top: mastTop, storeys: 1, plinth, kind: "landmark", landmark: form, label: venueLabel(o, d, form), wall: "canvas" }, eave);
   }
 
   // ---------------------------------------------------------------- Saffron's tree-houses
@@ -1480,7 +1503,7 @@ const CityGen = (() => {
       summaries[ci] = buildUse(plan, d, ter, o, ob, use, cell, key, {
         wing: cfg.wing, row: `v${band.i}`, band, waterSide: side, gap: cfg.street / 2,
         ringEdge: side < 0 ? ring.r0 : ring.r1, waterLevel: wr ? ter.water[wr.id] : 0, nbHeight: nbType ? (nbType.height ?? 1) : 1, nbStyle: nbType ? nbType.style : null, nb: nb ? nb.id : null,
-        form: cfg.forms ? cfg.forms.get(key) : undefined });
+        form: cfg.forms ? cfg.forms.get(key) : undefined, misses: cfg.misses });
       summaries[ci] && (summaries[ci].sky = nbType ? (nbType.skywalk ?? 1) : 1);
     }
     for (const e of adj) {
@@ -2023,7 +2046,7 @@ const CityGen = (() => {
       const f = (i / (OBS.lats - 1)) * Math.PI / 2;
       return ring(OBS.dome * Math.cos(f), eave + OBS.domeH * Math.sin(f));
     }), "copper");
-    o.lots.push({ d: d.id, kind: "landmark", landmark: "observatory", college: "alder", label: "Alder Observatory", nb, key: `${d.id}|alder|observatory`, obj: ob.name,
+    o.lots.push({ d: d.id, kind: "landmark", landmark: "observatory", college: "alder", label: `${collegeWord(o, d, "alder")} Observatory`, nb, key: `${d.id}|alder|observatory`, obj: ob.name,
       poly: foot, base, top, storeys: Math.max(1, Math.round(OBS.drumH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });
   }
 
@@ -2105,7 +2128,7 @@ const CityGen = (() => {
         }
       }
       const top = base + ARC.tiers * ARC.tierH;
-      o.lots.push({ d: d.id, kind: "landmark", landmark: "arcology", form: "arcology", college: "indigo", label: "Indigo Pine Arcology", nb, key: `${d.id}|indigo|arcology`, obj: ob.name,
+      o.lots.push({ d: d.id, kind: "landmark", landmark: "arcology", form: "arcology", college: "indigo", label: `${collegeWord(o, d, "indigo")} Pine Arcology`, nb, key: `${d.id}|indigo|arcology`, obj: ob.name,
         poly: foot, base, top, storeys: Math.max(1, Math.round(ARC.tiers * ARC.tierH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });
     }
     // dye gardens: either side of the arcology along the ring, nearest first, two deep across the radius
@@ -2135,7 +2158,7 @@ const CityGen = (() => {
         zs.push(g);
         o.prism(ob, strip, g, g + 0.3, j % 2 ? "roof" : "dye");
       }
-      o.lots.push({ d: d.id, form: "dye_garden", college: "indigo", label: "Indigo Dye Garden", nb, key: `${d.id}|indigo|dye${gi}`, obj: ob.name,
+      o.lots.push({ d: d.id, form: "dye_garden", college: "indigo", label: `${collegeWord(o, d, "indigo")} Dye Garden`, nb, key: `${d.id}|indigo|dye${gi}`, obj: ob.name,
         poly: q, base: Math.min(...zs), top: Math.max(...zs) + 0.3, storeys: 0, plinth: 0, area: polyArea(q) });
     });
   }
@@ -2145,13 +2168,13 @@ const CityGen = (() => {
   // (rounded up) print works, and the others studios. Returns a Map from cell key to form; empty unless
   // Indigo is an arts college.
   const VENUE_FORMS = ["opera", "amphitheatre", "bigtop"];
-  function indigoForms(d, bands) {
+  function indigoForms(plan, d, bands) {
     const out = new Map(), cfg = collegeConfig(d).indigo;
     if (cfg.style !== "arts") return out;
     const keys = [];
     for (const B of bands) B.cells.forEach((cell, ci) => {
       const c = B.lay[ci];
-      if (c && c.use === "college" && (collegeOf(d, c.nb ? c.nb.id : cell.k) || {}).id === "indigo") keys.push(c.key);
+      if (c && c.use === "college" && (collegeOf(d, c.nb ? c.nb.id : sectorFromStart(plan, d, cell.k)) || {}).id === "indigo") keys.push(c.key);
     });
     const R = rng("park|col|indigo|venues");
     for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(R.random() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
@@ -2173,8 +2196,13 @@ const CityGen = (() => {
         const cfg = { key: `${d.id}campus`, spacing: [c.row_depth + c.street, c.block + c.street], street: c.street, wing: c.wing, canalEnds: new Map() };
         return { band, cfg, laid: layVoronoiBand(plan, d, ter, spokes, o, band, cfg) };
       }).filter(Boolean);
-      const forms = indigoForms(d, laid.map((b) => b.laid));
-      for (const b of laid) genVoronoiBand(plan, d, ter, spokes, o, b.band, { ...b.cfg, forms }, b.laid);
+      const forms = indigoForms(plan, d, laid.map((b) => b.laid)), misses = [];
+      for (const b of laid) genVoronoiBand(plan, d, ter, spokes, o, b.band, { ...b.cfg, forms, misses }, b.laid);
+      // an Indigo venue or print works with no room in its plot is built as a studio: say so, venue by venue
+      for (const f of VENUE_FORMS) if (misses.includes(f)) o.warnings.push(`The ${venueLabel(o, d, f)} doesn't fit its plot, so a studio stands there instead.`);
+      const np = misses.filter((f) => f === "print").length;
+      if (np) o.warnings.push(np === 1 ? `1 of ${collegeName(o, d, "indigo")}'s print works doesn't fit its plot, so a studio stands there instead.`
+        : `${np} of ${collegeName(o, d, "indigo")}'s print works don't fit their plots, so studios stand there instead.`);
       buildCanals(plan, d, ter, o, L);
     }
     // the colleges' features in the grove and orchard bands, before those bands are planted

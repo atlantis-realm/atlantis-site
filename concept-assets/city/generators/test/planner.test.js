@@ -2,7 +2,7 @@
 // A static check of the built HTML, plus a smoke run of its script against a minimal DOM stub.
 const test = require("node:test"), assert = require("node:assert/strict");
 const fs = require("fs"), os = require("os"), path = require("path"), { execFileSync } = require("child_process");
-const { CityGen, loadPlan, gen, core } = require("./helpers.js");
+const { CityGen, loadPlan, gen, core, parkLots } = require("./helpers.js");
 
 const ROOT = path.join(__dirname, "..");
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "planner-test-"));
@@ -190,23 +190,38 @@ test("page edits: quarter culture weights are offered per culture, saved and hon
 });
 
 // ---------------------------------------------------------------- the park ring's three colleges
-const COLLEGES = [["alder", "Alder College", "#8fa6c7"], ["indigo", "Indigo College", "#7a4fb5"], ["saffron", "Saffron College", "#c9962b"]];
+const COLLEGES = [["alder", "Alder College", "#4f9a7f"], ["indigo", "Indigo College", "#7a4fb5"], ["saffron", "Saffron College", "#c9962b"]];
 const openTab = (P, id) => P.on.get("tabs:click")({ target: { closest: () => ({ dataset: { tab: id } }) } });
 const zoomIn = (P) => P.on.get("plan:wheel")({ preventDefault() {}, clientX: 400, clientY: 300, deltaY: -3000 });
 const parkId = (plan) => plan.districts.find((d) => d.type === "campus").id;
+const selectOf = (panel, p) => (panel.match(new RegExp(`<select[^>]*data-path="${p.replace(/\./g, "\\.")}"[^>]*>[\\s\\S]*?<\\/select>`)) || [""])[0];
+const pick = (P, p, value, ds) => { const target = { tagName: "SELECT", dataset: { path: p, ...ds }, value, min: "", max: "", setAttribute() {} }; P.on.get("panel:input")({ target }); P.on.get("panel:change")({ target }); };
 
-test("planner: the college ring's tab shows each college's name, landmark and growth", async () => {
+test("planner: the college ring's tab shows each college's name, style, landmark and growth", async () => {
   const plan = loadPlan(), P = bootPage(plan);
   await tick();
   openTab(P, parkId(plan));
   const panel = P.el("panel").innerHTML;
-  assert.match(panel, /<legend>Colleges · names, landmarks and growth<\/legend>/);
+  assert.match(panel, /<legend>Colleges · names, styles, landmarks and growth<\/legend>/);
   COLLEGES.forEach(([id, name], g) => {
     assert.ok(new RegExp(`data-path="@neighbourhoods\\.renames\\.park-${g}"[^>]*value="${name}"`).test(panel), `no name field for ${name}`);
-    for (const k of ["landmark", "grow"]) assert.ok(panel.includes(`data-path="colleges.${id}.${k}"`), `no ${k} select for ${id}`);
+    for (const k of ["style", "landmark", "grow"]) assert.ok(panel.includes(`data-path="colleges.${id}.${k}"`), `no ${k} select for ${id}`);
   });
+  // each college's style select offers the three styles and Plain, with its own selected
+  for (const [id, style] of [["alder", "physics"], ["indigo", "arts"], ["saffron", "earth"]]) {
+    const sel = selectOf(panel, `colleges.${id}.style`);
+    for (const v of ["physics", "arts", "earth", "plain"]) assert.ok(sel.includes(`<option value="${v}"`), `${id} style lacks ${v}`);
+    assert.match(sel, new RegExp(`<option value="${style}" selected>`));
+    assert.doesNotMatch(sel, / disabled/);
+  }
+  // Saffron has no landmark: its landmark select is fixed at None, not a live On/Off
+  const saffronLm = selectOf(panel, "colleges.saffron.landmark");
+  assert.match(saffronLm, / disabled/);
+  assert.match(saffronLm, /<option value="none" selected>None/);
+  assert.doesNotMatch(saffronLm, /value="true"/);
+  assert.doesNotMatch(selectOf(panel, "colleges.alder.landmark"), / disabled/);
   // Saffron never grows: its select is fixed at Off
-  const saffronGrow = panel.match(/<select[^>]*data-path="colleges\.saffron\.grow"[^>]*>[\s\S]*?<\/select>/)[0];
+  const saffronGrow = selectOf(panel, "colleges.saffron.grow");
   assert.match(saffronGrow, / disabled/);
   assert.match(saffronGrow, /<option value="false" selected>Off/);
   assert.deepEqual(bannedIn(visible(panel)), []);
@@ -282,4 +297,39 @@ test("planner: tooltips over college buildings read sensibly", async () => {
     assert.ok(!/_| form · |0 storeys/.test(t), `raw id or empty storeys in tip: ${t}`);
     assert.deepEqual(bannedIn(t), []);
   }
+});
+
+test("planner: a college's style is saved, and Plain gives Indigo today's look", async () => {
+  const plan = loadPlan(), P = bootPage(plan), id = parkId(plan), before = parkLots(gen(plan), "indigo");
+  assert.ok(before.some((l) => /^plaster_/.test(l.wall)), "Indigo should start with the arts palette");
+  await tick();
+  openTab(P, id);
+  pick(P, "colleges.indigo.style", "plain", { str: "1" });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(P.saved.length > 0, "nothing saved");
+  const saved = P.saved.at(-1), d = saved.districts.find((x) => x.id === id);
+  assert.equal(d.colleges.indigo.style, "plain");
+  assert.equal(d.colleges.alder.style, "physics", "the edit dropped another college's style");
+  assert.match(selectOf(P.el("panel").innerHTML, "colleges.indigo.style"), /<option value="plain" selected>Plain/);
+  const after = parkLots(CityGen.generate(saved), "indigo", saved);
+  assert.ok(after.length > 0);
+  assert.ok(!after.some((l) => /^plaster_/.test(l.wall) || l.college === "indigo"), "Indigo lots kept the arts palette");
+  assert.ok(!after.some((l) => ["opera", "amphitheatre", "bigtop", "arcology"].includes(l.landmark)), "Indigo still has its venues");
+});
+
+test("planner: a college that doesn't grow shows its landmark Off and fixed", async () => {
+  const plan = loadPlan(), P = bootPage(plan), id = parkId(plan);
+  await tick();
+  openTab(P, id);
+  pick(P, "colleges.alder.grow", "false", { bool: "1" });
+  await new Promise((r) => setTimeout(r, 100));
+  const lm = selectOf(P.el("panel").innerHTML, "colleges.alder.landmark");
+  assert.match(lm, / disabled/);
+  assert.match(lm, /<option value="false" selected>Off/);
+  assert.match(P.el("panel").innerHTML, /Alder College · landmark \(off: it doesn't grow\)/);
+  // the stored setting is kept, so growing again brings the observatory back
+  assert.equal(P.saved.at(-1).districts.find((x) => x.id === id).colleges.alder.landmark, true);
+  pick(P, "colleges.alder.grow", "true", { bool: "1" });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.doesNotMatch(selectOf(P.el("panel").innerHTML, "colleges.alder.landmark"), / disabled/);
 });
