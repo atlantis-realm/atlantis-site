@@ -51,7 +51,7 @@
    },
    {
     "id": "inner_water",
-    "label": "Inner water",
+    "label": "First ring canal",
     "kind": "water",
     "r0": 460,
     "r1": 530,
@@ -59,7 +59,7 @@
    },
    {
     "id": "island",
-    "label": "Island",
+    "label": "Old Town",
     "kind": "land",
     "r0": 0,
     "r1": 460,
@@ -241,7 +241,7 @@
   "ramp_share": 0.4,
   "step_threshold": 0.6,
   "tree_spacing": 10,
-  "r_inner": 140,
+  "r_inner": 222,
   "r_outer": 3000,
   "hero_kit_ranges": [
    [
@@ -528,24 +528,18 @@
   },
   {
    "id": "core",
-   "name": "Circular Manhattan",
+   "name": "Old Town",
    "ring": "island",
-   "type": "towers",
+   "type": "oldtown",
    "enabled": true,
    "dressing": "",
    "street": 12,
    "jitter": 0.18,
-   "forecourt_deg": 38,
-   "north_cap_deg": 30,
-   "north_cap_factor": 0.8,
-   "flank_power": 0.75,
    "podium_storeys": [
     8,
     7
    ],
-   "spire_clearance": 30,
-   "notes": "Tallest on the east/west flanks to frame the spire. Open forecourt on the hero avenue; low sector behind the spire.",
-   "garden": 23,
+   "notes": "A street grid aligned to the hero avenue, cultural quarters either side of the ring avenue, and the Lantern rising from the central square.",
    "quay_out": 8,
    "block": 46,
    "avenues": [
@@ -560,27 +554,59 @@
      "road": 11
     }
    ],
-   "band_heights": [
-    [
-     120,
-     196
-    ],
-    [
-     90,
-     170
-    ],
-    [
-     60,
-     130
-    ]
-   ],
    "neighbourhood": {
     "mode": "whole",
     "type": "market",
     "names": [
-     "{W} Heights"
+     "Old Town"
     ]
-   }
+   },
+   "grid": {
+    "block": 46,
+    "street": 12,
+    "square": 100,
+    "forms": {}
+   },
+   "quarters": {
+    "count": 15,
+    "block": [
+     30,
+     46
+    ],
+    "seed": 1,
+    "cultures": [],
+    "weights": {}
+   },
+   "heights": {
+    "grid": [
+     120,
+     220
+    ],
+    "band": [
+     200,
+     300
+    ],
+    "landmark": [
+     25,
+     80
+    ]
+   },
+   "lantern": {
+    "height": 500,
+    "base": 60,
+    "taper": 0.82,
+    "heart": [
+     0.4,
+     0.8
+    ],
+    "clearance": 60
+   },
+   "landmarks": {
+    "embassies": 6,
+    "guild_halls": 6
+   },
+   "second_avenue": false,
+   "quay": 12
   }
  ],
  "voronoi": {

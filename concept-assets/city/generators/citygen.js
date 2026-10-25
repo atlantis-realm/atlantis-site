@@ -436,14 +436,40 @@ const CityGen = (() => {
     return lots;
   }
 
+  // ---------------------------------------------------------------- Old Town settings
+  // Every field has a default, because the planner's saved plan can predate any of them.
+  const OLD_TOWN_DEFAULTS = {
+    grid: { block: 46, street: 12, square: 100, forms: {} },
+    quarters: { count: 15, block: [30, 46], seed: 1, cultures: [], weights: {} },
+    heights: { grid: [120, 220], band: [200, 300], landmark: [25, 80] },
+    lantern: { height: 500, base: 60, taper: 0.82, heart: [0.4, 0.8], clearance: 60 },
+    landmarks: { embassies: 6, guild_halls: 6 },
+    second_avenue: false,
+    quay: 12,
+  };
+  function oldTownConfig(d) {
+    const merge = (def, src) => {
+      if (Array.isArray(def)) return Array.isArray(src) ? src.slice() : def.slice();
+      if (def && typeof def === "object") {
+        const s = src && typeof src === "object" && !Array.isArray(src) ? src : {}, out = {};
+        for (const k of new Set([...Object.keys(def), ...Object.keys(s)])) out[k] = k in def ? (k in s ? merge(def[k], s[k]) : merge(def[k], undefined)) : s[k];
+        return out;
+      }
+      return src === undefined || src === null ? def : src;
+    };
+    return merge(OLD_TOWN_DEFAULTS, d || {});
+  }
+
   // ---------------------------------------------------------------- ring layout
   // Every ring carries two ring avenues; counted from the centre, the inner one runs clockwise and
   // the outer one anticlockwise. They split the ring into three bands that the districts fill.
   function ringLayout(plan, d) {
-    const ring = plan.scene.rings.find((r) => r.id === d.ring);
-    const inner = ring.r0 === 0 ? plan.scene.temple.r + (d.garden || 18) : ring.r0 + (d.quay_in ?? 12);
-    const outer = ring.r1 - (d.quay_out ?? 12);
-    const avenues = [...(d.avenues || [])].sort((a, b) => a.r - b.r).map((a, i) => ({ ...a, dir: i % 2 === 0 ? "cw" : "ccw", idx: i }));
+    const ring = plan.scene.rings.find((r) => r.id === d.ring), old = d.type === "oldtown", cfg = old ? oldTownConfig(d) : null;
+    const inner = ring.r0 === 0 ? (old ? 0 : plan.scene.temple.r + (d.garden || 18)) : ring.r0 + (d.quay_in ?? 12);
+    const outer = ring.r1 - (old ? cfg.quay : d.quay_out ?? 12);
+    let avs = [...(d.avenues || [])].sort((a, b) => a.r - b.r);
+    if (old && !cfg.second_avenue) avs = avs.slice(0, 1);
+    const avenues = avs.map((a, i) => ({ ...a, dir: i % 2 === 0 ? "cw" : "ccw", idx: i }));
     const edges = [inner, ...avenues.flatMap((a) => [a.r - a.w / 2, a.r + a.w / 2]), outer].map((e) => clamp(e, inner, outer));
     const bands = [];
     for (let i = 0; i < edges.length; i += 2) if (edges[i + 1] - edges[i] > 6) bands.push({ r0: edges[i], r1: edges[i + 1], i: i / 2 });
@@ -1574,6 +1600,9 @@ const CityGen = (() => {
     });
   }
 
+  // Old Town (the core district): filled in by the following tasks
+  function genOldTown(plan, d, ter, spokes, o) {}
+
   function genTowers(plan, d, ter, spokes, o) {
     const sc = plan.scene, temple = sc.temple, island = sc.rings.find((r) => r.id === d.ring);
     const spireTop = temple.spire_top + ter.templeLift, hero = spokes.find((s) => s.hero), K = plan.skyline;
@@ -2123,6 +2152,7 @@ const CityGen = (() => {
       if (d.type === "perimeter") genPerimeter(plan, d, ter, spokes, o);
       else if (d.type === "campus") genCampus(plan, d, ter, spokes, o);
       else if (d.type === "towers") genTowers(plan, d, ter, spokes, o);
+      else if (d.type === "oldtown") genOldTown(plan, d, ter, spokes, o);
     }
     if (o.nb) for (const l of o.lots) if (!l.nb && o.nb.fixedRing.has(plan.districts.find((d) => d.id === l.d)?.ring)) {
       const [cx, cy] = centroid(l.poly), s = o.nb.assign(cx, cy, plan.districts.find((d) => d.id === l.d).ring);
@@ -2146,6 +2176,6 @@ const CityGen = (() => {
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;
