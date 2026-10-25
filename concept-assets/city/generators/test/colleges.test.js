@@ -251,13 +251,14 @@ const saffronObs = (o) => o.objects.filter((ob) => ob.coll === "park" && ob.prop
 const treehouses = (o, p = plan) => parkLots(o, "saffron", p).filter((l) => l.use === "college");
 const ptsOf = (pr) => (pr.t === "prism" ? pr.poly : pr.t === "solid" ? pr.top : pr.rings.flat());
 
-test("every Saffron college lot is a tree-house with at least 2 decks", () => {
+test("every Saffron college lot is a tree-house with 1-2 decks", () => {
   const lots = treehouses(O);
   assert.ok(lots.length > 0);
   for (const l of lots) {
     assert.equal(l.form, "treehouse", `${l.key} form ${l.form}`);
-    assert.ok(Number.isInteger(l.decks) && l.decks >= 2 && l.decks <= 4, `${l.key} decks ${l.decks}`);
+    assert.ok(Number.isInteger(l.decks) && l.decks >= 1 && l.decks <= 2, `${l.key} decks ${l.decks}`);
   }
+  assert.ok(lots.some((l) => l.decks === 2) && lots.some((l) => l.decks === 1), "decks never vary");
   assert.ok(O.lots.filter((l) => l.form === "treehouse").every((l) => l.college === "saffron" && l.use === "college"));
 });
 
@@ -268,12 +269,12 @@ test("each tree-house stands on 3-6 timber trunk columns rising from the ground"
     assert.ok(ob, `no object for ${l.key}`);
     // a trunk: a timber prism 3-4 m square under the lot's lower deck, taller than the deck is high
     const area = (q) => Math.abs(q.reduce((t, p, i) => { const r = q[(i + 1) % q.length]; return t + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2;
-    const cols = ob.prims.filter((p) => p.t === "prism" && p.m === "timber" && area(p.poly) >= 9 - 1e-6 && area(p.poly) <= 16 + 1e-6 && p.z1 - p.z0 >= 8 && pointIn(...mid(p.poly), l.poly));
+    const cols = ob.prims.filter((p) => p.t === "prism" && p.m === "timber" && area(p.poly) >= 9 - 1e-6 && area(p.poly) <= 16 + 1e-6 && p.z1 - p.z0 >= 4 && pointIn(...mid(p.poly), l.poly));
     assert.ok(cols.length >= 3 && cols.length <= 6, `${l.key} has ${cols.length} columns`);
     for (const c of cols) {
       const [x, y] = mid(c.poly), g = ter.G(Math.hypot(x, y));
       assert.ok(Math.abs(c.z0 - g) <= 1, `${l.key} column foot ${c.z0} vs ground ${g}`);
-      assert.ok(c.z1 >= l.base + 8, `${l.key} column stops at ${c.z1}`);
+      assert.ok(c.z1 >= l.base + 4, `${l.key} column stops at ${c.z1}`);
     }
   }
 });
@@ -294,8 +295,41 @@ test("no Saffron prim reaches past r 948 (decks stop short of the ring avenue)",
   const obs = saffronObs(O);
   assert.ok(obs.length > 0);
   for (const ob of obs) for (const pr of ob.prims) for (const [x, y] of ptsOf(pr)) assert.ok(ringR(x, y) <= 948 + 1e-6, `${ob.name} ${pr.m} vertex at r ${ringR(x, y)}`);
-  // some decks do overhang their cell toward the orchard
-  assert.ok(obs.some((ob) => ob.prims.some((pr) => pr.t === "prism" && pr.poly.some(([x, y]) => ringR(x, y) > 940))), "no deck overhangs toward the orchard");
+});
+
+test("no Saffron building is taller than 3 storeys", () => {
+  const lots = parkLots(O, "saffron");
+  assert.ok(lots.length > 0);
+  for (const l of lots) assert.ok(l.storeys >= 1 && l.storeys <= 3, `${l.key} ${l.use} has ${l.storeys} storeys`);
+  // a tree-house counts its raised undercroft as a storey: decks, halls and the garden roof's planting stay within 24 m
+  for (const l of treehouses(O)) assert.ok(l.top - l.base <= 24, `${l.key} rises ${(l.top - l.base).toFixed(1)} m`);
+  for (const l of lots.filter((x) => x.use !== "college")) assert.ok(l.top - l.base <= 3 * 7.5 + 8, `${l.key} rises ${(l.top - l.base).toFixed(1)} m`);
+});
+
+test("Saffron's open ground round its buildings is forested, clear of every building and walkway", () => {
+  const forest = O.instances.filter((i) => i.name.startsWith("NBHD_park_forest_"));
+  const cells = O.cells.filter((c) => c.nb === "park-2" && ["college", "commercial", "residential"].includes(c.use));
+  assert.ok(cells.length > 0);
+  for (const c of cells) assert.ok(forest.some((t) => pointIn(t.x, t.y, c.poly)), `a ${c.use} cell at ${c.poly[0].map(Math.round)} has no forest`);
+  assert.ok(forest.every((t) => cells.some((c) => pointIn(t.x, t.y, c.poly))), "a forest tree outside Saffron's cells");
+  const foot = parkLots(O, "saffron").map((l) => l.poly);
+  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims.map((p) => p.poly));
+  for (const t of forest) assert.ok(![...foot, ...walks].some((q) => pointIn(t.x, t.y, q)), `${t.name} stands in a building or walkway`);
+  // the yards are filled, not dotted: about one tree per 120 m² of open ground at least
+  const open = cells.reduce((s, c) => s + polyArea(c.poly), 0) - foot.reduce((s, q) => s + polyArea(q), 0);
+  assert.ok(forest.length >= open / 120, `${forest.length} trees for ${Math.round(open)} m² of open ground`);
+});
+
+test("Saffron's grove is forest: only in its sector, and at least twice as dense as the other colleges' groves", () => {
+  const d = park, spokes = CityGen.spokeAngles(plan), n = spokes.length, step = CityGen.TAU / n, start = spokes[(d.neighbourhood.start_spoke || 0) % n].a;
+  const sector = (x, y) => Math.floor((((Math.atan2(y, x) - start) % CityGen.TAU + CityGen.TAU) % CityGen.TAU) / step) % n;
+  const forest = O.instances.filter((i) => /^NBHD_park_forest\d/.test(i.name));
+  assert.ok(forest.length > 0, "no grove forest");
+  assert.ok(forest.every((i) => CityGen.collegeOf(d, sector(i.x, i.y)).id === "saffron"), "forest outside Saffron");
+  const groves = O.instances.filter((i) => /^NBHD_park_grove\d/.test(i.name));
+  assert.ok(groves.every((i) => CityGen.collegeOf(d, sector(i.x, i.y)).id !== "saffron"), "sparse grove left in Saffron");
+  const perCollege = (id) => groves.filter((i) => CityGen.collegeOf(d, sector(i.x, i.y)).id === id).length;
+  assert.ok(forest.length >= 2 * Math.max(perCollege("alder"), perCollege("indigo")), `forest ${forest.length} vs groves ${perCollege("alder")}/${perCollege("indigo")}`);
 });
 
 test("Saffron's orchard keeps every tree it had at Task 1", () => {
@@ -313,6 +347,7 @@ test("with a 300 m Lantern every tree-house stays below the heart", () => {
   for (const l of lots) assert.ok(l.top < o.lantern.heart[1], `${l.key} top ${l.top} vs heart ${o.lantern.heart[1]}`);
 });
 
+function polyArea(q) { return Math.abs(q.reduce((t, p, i) => { const r = q[(i + 1) % q.length]; return t + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2; }
 function pointIn(x, y, q) {
   let ins = false;
   for (let a = 0, c = q.length - 1; a < q.length; c = a++) if ((q[a][1] > y) !== (q[c][1] > y) && x < (q[c][0] - q[a][0]) * (y - q[a][1]) / (q[c][1] - q[a][1]) + q[a][0]) ins = !ins;

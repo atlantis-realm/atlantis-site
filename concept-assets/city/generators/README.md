@@ -39,9 +39,11 @@ district's `colleges` block of `plan.json`.
   with chimneys (`MAT_AP_Brick`); and in its orchard band the stepped **Indigo Pine Arcology**
   (`NBHD_park_indigo_arcology`, terrace pines from `KIT_PlantD_pine` via `TREES_park_asset_Plant_pine`)
   beside striped dye gardens (`NBHD_park_indigo_dye_gardens`, `MAT_AP_DyeBed`).
-- **Saffron College** (earth sciences, 150°…270°): timber tree-houses (`MAT_AP_Timber`) on trunk columns
-  with tiered decks and bright turf roofs (`MAT_AP_Turf`), joined by pale boardwalk canopy walkways
-  (`MAT_AP_Boardwalk`, `*_walkways` objects). Its orchards are left as they were.
+- **Saffron College** (earth sciences, 150°…270°): low timber tree-houses (`MAT_AP_Timber`), one storey up
+  on trunk columns with one or two decks and bright turf roofs (`MAT_AP_Turf`), joined by pale boardwalk
+  walkways (`MAT_AP_Boardwalk`, `*_walkways` objects). Every building in the sector is 2-3 storeys. The open
+  ground between them is forest (`NBHD_park_forest_*` trees), and so is its grove band (`NBHD_park_forest<N>_*`).
+  Its orchards are left as they were.
 
 All college colours, roughness and glow are set in code (`COLLEGE_COLORS`, `COLLEGE_ROUGHNESS`,
 `COLLEGE_EMISSION` in `build_city.py`), so a rebuild restores them.

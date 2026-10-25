@@ -46,6 +46,11 @@ from my suggestions (a dye plant, keeping the botanical naming).
   - green roofs and timber;
   - terraces stepping up through the orchard canopy;
   - canopy walkways linking neighbouring buildings.
+- **Low-rise and forest** (user feedback after the first build: the tall tree-houses and timber towers read as
+  "wooden skyscrapers"): every Saffron building is at most 3 storeys, a tree-house's raised undercroft
+  counting as one. All of Saffron's land apart from the orchard is buildings or forest: trees fill the open
+  ground in its cells, and its grove band is planted as dense forest. This replaces the tiered decks rising
+  through the canopy above.
 - **Orchards:** Saffron keeps its orchards whole. They are its farmland and part of its identity. It
   does not grow into the bands.
 
