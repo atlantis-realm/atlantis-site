@@ -184,6 +184,61 @@
 		font-family: 'Ubuntu Sans Mono', monospace;
 	}
 
+	/* Square dots on a grid with a slowly pulsing glow, layered over the gradient.
+	   ::before draws the dots, ::after draws a blurred copy as the glow. */
+	#community-section {
+		--dot-size: 2px;
+		--dot-color: hsl(45, 67%, 74%);
+		--dot-glow-color: hsl(45, 67%, 74%);
+		--dot-spacing: 100px;
+	}
+
+	#community-section::before,
+	#community-section::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background-image: conic-gradient(
+			from 270deg at var(--dot-size) var(--dot-size),
+			var(--dot-layer-color) 25%,
+			transparent 0
+		);
+		background-size: var(--dot-spacing) var(--dot-spacing);
+		background-position: calc((var(--dot-spacing) - var(--dot-size)) / 2)
+			calc((var(--dot-spacing) - var(--dot-size)) / 2);
+	}
+
+	#community-section::before {
+		--dot-layer-color: var(--dot-color);
+		z-index: -1;
+	}
+
+	#community-section::after {
+		--dot-layer-color: var(--dot-glow-color);
+		z-index: -2;
+		filter: blur(4px);
+		animation: dotGlow 8s ease-in-out infinite;
+	}
+
+	@keyframes dotGlow {
+		0%,
+		100% {
+			opacity: 0.1;
+		}
+
+		50% {
+			opacity: 1;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		#community-section::after {
+			animation: none;
+			opacity: 0.5;
+		}
+	}
+
 	.content-wrapper {
 		max-width: 800px;
 		width: 100%;
@@ -300,14 +355,14 @@
 		display: block;
 		padding: 0.75rem;
 		border-radius: 8px;
-		background: rgba(0, 0, 0, 0.18);
+		background: #243448;
 		color: inherit;
 		text-decoration: none;
 		transition: background 0.2s ease;
 	}
 
 	.news-card:hover {
-		background: rgba(0, 0, 0, 0.3);
+		background: #1d2b3c;
 	}
 
 	.news-card img,
@@ -322,7 +377,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(8, 107, 125, 0.35);
+		background: #1d4a5d;
 		color: rgba(238, 239, 183, 0.7);
 	}
 
@@ -367,7 +422,7 @@
 	.project-card {
 		padding: 1rem;
 		border-radius: 8px;
-		background: rgba(0, 0, 0, 0.18);
+		background: #243448;
 	}
 
 	#community-section .project-card p {
@@ -432,7 +487,7 @@
 		font-size: 0.95em;
 		padding: 0.1rem 0.35rem;
 		border-radius: 4px;
-		background: rgba(0, 0, 0, 0.22);
+		background: #223245;
 	}
 
 	@media (max-width: 768px) {
