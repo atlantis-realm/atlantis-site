@@ -105,15 +105,17 @@
 
 <section id="community-section">
 	<div class="content-wrapper">
-		<h2>Think MMORPG vibes, but tech.</h2>
-		<p class="intro">
-			Atlantis is a community of high effort builders, bringing together nerds from around the world
-			in tech, design, arts, and more.
-		</p>
-		<p class="intro">We approach our crafts and each other with XXX.</p>
-		<p class="added">
-			<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
-		</p>
+		<div class="subsection-container">
+			<h2>Think MMORPG vibes, but tech.</h2>
+			<p class="intro__text">
+				Atlantis is a community of high effort builders, bringing together nerds from around the world
+				in tech, design, arts, and more.
+			</p>
+			<p class="intro__text">We approach our crafts and each other with XXX.</p>
+			<p class="added">
+				<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
+			</p>
+		</div>
 
 		<div class="divider"></div>
 
@@ -149,23 +151,25 @@
 
 		<div class="divider"></div>
 
-		<h2>Events</h2>
-		<ul class="event-list">
-			{#each upcomingEvents as event (event.name)}
-				<li><strong>{event.name}:</strong> {event.description}</li>
-			{/each}
-			<li class="added">
-				<strong>Streams:</strong>
-				{upcomingStreams.join(' and ')}, 6:30am–9:30am GMT+1 —
-				<a
-					href="https://www.twitch.tv/ladyofcode"
-					target="_blank"
-					rel="noopener noreferrer"
-					class="text-link">Watch on Twitch</a
-				>
-			</li>
-		</ul>
-		<p class="added"><a href="/events" class="text-link">All events and streams</a></p>
+		<div class="subsection-container">
+			<h2>Events</h2>
+			<ul class="event-list">
+				{#each upcomingEvents as event (event.name)}
+					<li><strong>{event.name}:</strong> {event.description}</li>
+				{/each}
+				<li class="added">
+					<strong>Streams:</strong>
+					{upcomingStreams.join(' and ')}, 6:30am–9:30am GMT+1 —
+					<a
+						href="https://www.twitch.tv/ladyofcode"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="text-link">Watch on Twitch</a
+					>
+				</li>
+			</ul>
+			<p class="added"><a href="/events" class="text-link">All events and streams</a></p>
+		</div>
 
 		<div class="divider"></div>
 
@@ -189,37 +193,39 @@
 				</p>
 			</div>
 		</div>
-
+		
 		<div class="divider"></div>
 
-		<h2>Join Atlantis</h2>
-		<h3 class="added">Who you'll be joining</h3>
-		<ul class="member-grid" aria-label="Members">
-			{#each memberSlots as slot (slot)}
-				<li class="member-icon"></li>
-			{/each}
-		</ul>
-		<p class="added member-note">
-			Member icons go here. Members without an icon get a generated default Atlantis symbol.
-		</p>
-
-		<h3>What are we like?</h3>
-		<p>
-			Everyone approaches their craft with love and a huge amount of effort. Guildies are from
-			around the world, so expect a bunch of different cultures and personalities. The vibe is
-			generally easygoing, littered with puns and terrible jokes.
-		</p>
-		<p class="reassurance">Atlantis is chaos only a portion of the time, we promise &lt;3</p>
-		<p class="age-note">18+ only</p>
-
-		<a
-			href="https://discord.com/invite/4gQAndh"
-			target="_blank"
-			rel="noopener noreferrer"
-			class="discord-button"
-		>
-			Join us on Discord
-		</a>
+		<div class="subsection-container">
+			<h2>Join Atlantis</h2>
+			<h3 class="added">Who you'll be joining</h3>
+			<ul class="member-grid" aria-label="Members">
+				{#each memberSlots as slot (slot)}
+					<li class="member-icon"></li>
+				{/each}
+			</ul>
+			<p class="added member-note">
+				Member icons go here. Members without an icon get a generated default Atlantis symbol.
+			</p>
+	
+			<h3>What are we like?</h3>
+			<p>
+				Everyone approaches their craft with love and a huge amount of effort. Guildies are from
+				around the world, so expect a bunch of different cultures and personalities. The vibe is
+				generally easygoing, littered with puns and terrible jokes.
+			</p>
+			<p class="reassurance">Atlantis is chaos only a portion of the time, we promise &lt;3</p>
+			<p class="age-note">18+ only</p>
+	
+			<a
+				href="https://discord.com/invite/4gQAndh"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="discord-button"
+			>
+				Join us on Discord
+			</a>
+		</div>
 	</div>
 </section>
 
@@ -329,7 +335,14 @@
 		text-align: center;
 	}
 
-	.intro {
+	.subsection-container{
+		min-height: 80vh;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	}
+
+	.intro__text {
 		font-size: 1.5rem;
 		line-height: 1.8;
 		margin-bottom: 1rem;
@@ -590,7 +603,7 @@
 			grid-template-columns: 1fr;
 		}
 
-		.intro {
+		.intro__text {
 			font-size: 1.2rem;
 		}
 
