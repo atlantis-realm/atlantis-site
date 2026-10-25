@@ -279,18 +279,6 @@ test("each tree-house stands on 3-6 timber trunk columns rising from the ground"
   }
 });
 
-test("every canopy walkway lies inside one Saffron college cell", () => {
-  const cells = O.cells.filter((c) => c.nb === "park-2" && c.use === "college");
-  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims);
-  assert.ok(walks.length > 0, "no walkways");
-  for (const w of walks) {
-    assert.equal(w.m, "boardwalk");
-    // the four corners and points along each side, all in the same cell
-    const pts = w.poly.flatMap((p, i) => { const q = w.poly[(i + 1) % w.poly.length]; return [0, 0.25, 0.5, 0.75].map((f) => [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f]); });
-    assert.ok(cells.some((c) => pts.every(([x, y]) => pointIn(x, y, c.poly))), `walkway ${JSON.stringify(w.poly)} leaves its cell`);
-  }
-});
-
 test("no Saffron prim reaches past r 948 (decks stop short of the ring avenue)", () => {
   const obs = saffronObs(O);
   assert.ok(obs.length > 0);
@@ -306,30 +294,59 @@ test("no Saffron building is taller than 3 storeys", () => {
   for (const l of lots.filter((x) => x.use !== "college")) assert.ok(l.top - l.base <= 3 * 7.5 + 8, `${l.key} rises ${(l.top - l.base).toFixed(1)} m`);
 });
 
-test("Saffron's open ground round its buildings is forested, clear of every building and walkway", () => {
-  const forest = O.instances.filter((i) => i.name.startsWith("NBHD_park_forest_"));
-  const cells = O.cells.filter((c) => c.nb === "park-2" && ["college", "commercial", "residential"].includes(c.use));
-  assert.ok(cells.length > 0);
-  for (const c of cells) assert.ok(forest.some((t) => pointIn(t.x, t.y, c.poly)), `a ${c.use} cell at ${c.poly[0].map(Math.round)} has no forest`);
-  assert.ok(forest.every((t) => cells.some((c) => pointIn(t.x, t.y, c.poly))), "a forest tree outside Saffron's cells");
-  const foot = parkLots(O, "saffron").map((l) => l.poly);
-  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims.map((p) => p.poly));
-  for (const t of forest) assert.ok(![...foot, ...walks].some((q) => pointIn(t.x, t.y, q)), `${t.name} stands in a building or walkway`);
-  // the yards are filled, not dotted: about one tree per 120 m² of open ground at least
-  const open = cells.reduce((s, c) => s + polyArea(c.poly), 0) - foot.reduce((s, q) => s + polyArea(q), 0);
-  assert.ok(forest.length >= open / 120, `${forest.length} trees for ${Math.round(open)} m² of open ground`);
+// Saffron's wood: no plots, buildings scattered through one forest over its grove and college bands
+const saffronSector = () => {
+  const d = park, spokes = CityGen.spokeAngles(plan), n = spokes.length, step = CityGen.TAU / n, start = spokes[(d.neighbourhood.start_spoke || 0) % n].a;
+  return (x, y) => CityGen.collegeOf(d, Math.floor((((Math.atan2(y, x) - start) % CityGen.TAU + CityGen.TAU) % CityGen.TAU) / step) % n).id === "saffron";
+};
+const WOOD_BANDS = [[540, 750], [770, 950]];  // grove, college band
+const inWoodBand = (x, y, m = 0) => WOOD_BANDS.some(([r0, r1]) => ringR(x, y) >= r0 + m && ringR(x, y) <= r1 - m);
+
+test("Saffron has no plots: none of its cells or squares are built", () => {
+  const inS = saffronSector();
+  assert.ok(!O.cells.some((c) => c.nb === "park-2"), "a Saffron cell was built");
+  assert.ok(!O.cells.some((c) => c.d === "park" && inS(...centroidOf(c.poly))), "a built cell in Saffron's sector");
+  assert.ok(!O.squares.some((q) => inS(...centroidOf(q)) && inWoodBand(...centroidOf(q))), "a square in Saffron's wood");
 });
 
-test("Saffron's grove is forest: only in its sector, and at least twice as dense as the other colleges' groves", () => {
-  const d = park, spokes = CityGen.spokeAngles(plan), n = spokes.length, step = CityGen.TAU / n, start = spokes[(d.neighbourhood.start_spoke || 0) % n].a;
-  const sector = (x, y) => Math.floor((((Math.atan2(y, x) - start) % CityGen.TAU + CityGen.TAU) % CityGen.TAU) / step) % n;
-  const forest = O.instances.filter((i) => /^NBHD_park_forest\d/.test(i.name));
-  assert.ok(forest.length > 0, "no grove forest");
-  assert.ok(forest.every((i) => CityGen.collegeOf(d, sector(i.x, i.y)).id === "saffron"), "forest outside Saffron");
-  const groves = O.instances.filter((i) => /^NBHD_park_grove\d/.test(i.name));
-  assert.ok(groves.every((i) => CityGen.collegeOf(d, sector(i.x, i.y)).id !== "saffron"), "sparse grove left in Saffron");
-  const perCollege = (id) => groves.filter((i) => CityGen.collegeOf(d, sector(i.x, i.y)).id === id).length;
-  assert.ok(forest.length >= 2 * Math.max(perCollege("alder"), perCollege("indigo")), `forest ${forest.length} vs groves ${perCollege("alder")}/${perCollege("indigo")}`);
+test("Saffron's buildings are scattered over both its grove and college bands, inside its sector", () => {
+  const inS = saffronSector(), lots = parkLots(O, "saffron");
+  for (const l of lots) for (const [x, y] of l.poly) assert.ok(inS(x, y) && inWoodBand(x, y, 8), `${l.key} corner at r ${ringR(x, y).toFixed(0)}`);
+  const grove = lots.filter((l) => ringR(...centroidOf(l.poly)) < 760), college = lots.filter((l) => ringR(...centroidOf(l.poly)) > 760);
+  assert.ok(grove.length >= 15 && college.length >= 60, `grove ${grove.length}, college band ${college.length}`);
+  assert.ok(grove.every((l) => l.form === "treehouse"), "only tree-houses in the grove");
+  for (const u of ["residential", "commercial"]) assert.ok(college.some((l) => l.use === u), `no ${u} in the college band`);
+  // every building, tree-house or not, shows a turf roof from the air
+  const turf = saffronObs(O).flatMap((ob) => ob.prims).filter((p) => p.m === "turf" && p.t === "prism");
+  for (const l of lots) assert.ok(turf.some((t) => pointIn(...centroidOf(t.poly), l.poly)), `${l.key} ${l.use} has no turf roof`);
+  // footprints never touch: 6 m apart, give or take the overlap test's tolerance
+  for (let i = 0; i < lots.length; i++) for (let j = i + 1; j < lots.length; j++) assert.ok(!lots[i].poly.some(([x, y]) => pointIn(x, y, lots[j].poly)), `${lots[i].key} overlaps ${lots[j].key}`);
+});
+
+test("Saffron's trails are 3 m ground-level boardwalks that stay in its wood", () => {
+  const inS = saffronSector(), ter = CityGen.makeTerrain(plan);
+  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims);
+  assert.ok(walks.length > 0, "no trails");
+  for (const w of walks) {
+    assert.equal(w.m, "boardwalk"); assert.equal(w.t, "solid");
+    const [a, b] = w.top; assert.ok(Math.abs(Math.hypot(a[0] - b[0], a[1] - b[1]) - 3) < 1e-6, "trail width");
+    for (const [x, y, z] of w.top) {
+      assert.ok(inS(x, y) && inWoodBand(x, y), `trail vertex at r ${ringR(x, y).toFixed(0)}`);
+      assert.ok(Math.abs(z - ter.G(Math.hypot(x, y)) - 0.2) < 1e-6, "trail off the ground");
+    }
+  }
+});
+
+test("Saffron's wood is dense forest clear of every building and trail, and no sparse grove is left in it", () => {
+  const inS = saffronSector();
+  const forest = O.instances.filter((i) => i.name.startsWith("NBHD_park_forest_"));
+  assert.ok(forest.every((t) => inS(t.x, t.y) && inWoodBand(t.x, t.y)), "a forest tree outside the wood");
+  assert.ok(!O.instances.some((i) => /^NBHD_park_grove\d/.test(i.name) && inS(i.x, i.y)), "sparse grove left in Saffron");
+  const keep = [...parkLots(O, "saffron").map((l) => l.poly), ...saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims.map((p) => p.top.map(([x, y]) => [x, y])))];
+  for (const t of forest) assert.ok(!keep.some((q) => pointIn(t.x, t.y, q)), `${t.name} stands in a building or on a trail`);
+  // about one tree per 100 m² of the wood's two bands (a third of the ring each), corridors and buildings included
+  const area = WOOD_BANDS.reduce((s2, [r0, r1]) => s2 + Math.PI * (r1 * r1 - r0 * r0) / 3, 0);
+  assert.ok(forest.length >= area / 100, `${forest.length} trees for ${Math.round(area)} m²`);
 });
 
 test("Saffron's orchard keeps every tree it had at Task 1", () => {
@@ -348,6 +365,7 @@ test("with a 300 m Lantern every tree-house stays below the heart", () => {
 });
 
 function polyArea(q) { return Math.abs(q.reduce((t, p, i) => { const r = q[(i + 1) % q.length]; return t + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2; }
+function centroidOf(q) { return [q.reduce((t, p) => t + p[0], 0) / q.length, q.reduce((t, p) => t + p[1], 0) / q.length]; }
 function pointIn(x, y, q) {
   let ins = false;
   for (let a = 0, c = q.length - 1; a < q.length; c = a++) if ((q[a][1] > y) !== (q[c][1] > y) && x < (q[c][0] - q[a][0]) * (y - q[a][1]) / (q[c][1] - q[a][1]) + q[a][0]) ins = !ins;
@@ -577,15 +595,6 @@ test("every tree-house deck is roofed in turf laid on top of its lip, so it show
     assert.ok(turf.length >= 1, `${l.key} has no turf roof`);
     const lips = obs.flatMap((ob) => ob.prims).filter((p) => p.m === "timber" && p.t === "prism" && Math.abs(p.z1 - p.z0 - 0.9) < 1e-6 && pointIn(...mid(p.poly), l.poly));
     for (const t of turf) assert.ok(!lips.some((lp) => lp.z1 > t.z1 + 1e-6 && lp.z0 < t.z1 && pointIn(...mid(t.poly), lp.poly)), `${l.key} turf buried under a lip`);
-  }
-});
-
-test("canopy walkways are 4.5 m pale boardwalks", () => {
-  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims);
-  assert.ok(walks.length > 0);
-  for (const w of walks) {
-    assert.equal(w.m, "boardwalk");
-    const [a, b] = w.poly; assert.ok(Math.abs(Math.hypot(a[0] - b[0], a[1] - b[1]) - 4.5) < 1e-6, "walkway width");
   }
 });
 

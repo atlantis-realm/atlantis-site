@@ -48,9 +48,10 @@ from my suggestions (a dye plant, keeping the botanical naming).
   - canopy walkways linking neighbouring buildings.
 - **Low-rise and forest** (user feedback after the first build: the tall tree-houses and timber towers read as
   "wooden skyscrapers"): every Saffron building is at most 3 storeys, a tree-house's raised undercroft
-  counting as one. All of Saffron's land apart from the orchard is buildings or forest: trees fill the open
-  ground in its cells, and its grove band is planted as dense forest. This replaces the tiered decks rising
-  through the canopy above.
+  counting as one. All of Saffron's land apart from the orchard is buildings or forest, with no plots (user:
+  "the buildings should be sprinkled over the forest and building ring without plots"): its grove and college
+  bands are one wood, its Voronoi cells aren't built, and buildings stand scattered through the trees, joined
+  by ground-level boardwalk trails. This replaces the tiered decks and canopy walkways above.
 - **Orchards:** Saffron keeps its orchards whole. They are its farmland and part of its identity. It
   does not grow into the bands.
 

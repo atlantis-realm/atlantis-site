@@ -719,11 +719,11 @@ const CityGen = (() => {
 
   // Each college style's palette, roofs and ground. It overrides the neighbourhood type's style for walls,
   // roofs and ground (lot size and depth stay with the type). arts picks one plaster per building; its
-  // roofs mix is the fallback for footprints that aren't 4-gons (4-gons are gabled in gableMat). earth keeps
-  // every building to 3 storeys and plants its open ground as forest (trees about every 7 m).
+  // roofs mix is the fallback for footprints that aren't 4-gons (4-gons are gabled in gableMat). earth has no
+  // plots at all: its grove and college bands are one wood with buildings scattered through it (saffronWoods).
   const COLLEGE_STYLES = {
     physics: { wall: "ashlar", lip: "copper", tile: "copper", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver", form: "lab_hall" },
-    earth: { wall: "timber", lip: "timber", turf: "turf", plinth: "plinth", roofs: { garden: 1 }, ground: "roof", form: "treehouse", maxStoreys: 3, forest: 7 },
+    earth: { wall: "timber", lip: "timber", turf: "turf", plinth: "plinth", roofs: { garden: 1 }, ground: "roof", woods: true },
     arts: { walls: ["plaster_a", "plaster_b", "plaster_c"], lip: "lip", plinth: "brick", roof: "gable", gableMat: "rooftile", roofs: { deco: 0.4, open: 0.6 }, ground: "paver" },
   };
   // The college style for a park cell (by group id, or sector index when neighbourhoods are off), or null:
@@ -1314,8 +1314,6 @@ const CityGen = (() => {
       const foot = byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R);
       // a physics college: the footprints merge into 1-3 lab halls, long bars of 2-4 tall (6 m) storeys
       if (CS && CS.form === "lab_hall") for (const [i, q] of labHalls(poly, foot).entries()) parts.push([q, rng(`park|col|lab|${key}|${i}`).randint(2, 4), 6, "lip", "lab_hall"]);
-      // an earth college: every plot becomes a tree-house (trunks, tiered decks, garden-roofed timber halls)
-      else if (CS && CS.form === "treehouse") for (const q of foot) parts.push([q, null, plan.storey, "roof", "treehouse"]);
       else for (const q of foot) parts.push([q, clamp(Math.round(R.uniform(lo, hi) * Math.exp(K.chaos * 0.6 * R.normal())), 1, hi + 3), plan.storey, "roof"]);
     } else {
       // residential and commercial: lots round a courtyard (commercial: bigger lots, deeper wings, taller)
@@ -1331,19 +1329,8 @@ const CityGen = (() => {
     const cellSt = storeysAt(plan, cx, cy, rng(`${key}|roof`), (d.height_scale || 1) * (T.height || 1) * (opts.nbHeight || 1));
     const cellFixed = parts.length ? parts[0][1] : null;
     const summary = { use, base: Infinity, top: Infinity };
-    // tree-houses share one lower-deck level per cell when the ground allows it, so walkways meet them flush
-    const houses = [], thLevel = parts.some((p) => p[4] === "treehouse") ? treeLevel(ter, parts.map((p) => p[0]), `park|col|tree|${key}|level`) : null;
     for (const [li, [q, st0, sh, roofM, form]] of parts.entries()) {
       const LR = rng(`${key}|${li}`), [qx, qy] = centroid(q);
-      if (form === "treehouse") {
-        const th = treeHouse(plan, ter, o, ob, q, `${key}|${li}`, thLevel, { wall: CS.wall, lip: CS.lip, turf: CS.turf }, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`);
-        houses.push(th);
-        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, obj: ob.name, poly: th.decks[0], base: th.base, top: th.top, storeys: th.storeys, plinth: 0, area: polyArea(th.decks[0]),
-          label: "Tree-house", college: CS.college, wall: CS.wall, roof: "garden", form, decks: th.decks.length });
-        o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, th.base, th.top);
-        summary.base = Math.min(summary.base, th.base); summary.top = Math.min(summary.top, th.top);
-        continue;
-      }
       if (form === "lab_hall") {  // an ashlar body, a continuous lit clerestory in its top 3 m, a copper roof slab
         const mats = { wall: CS.wall, lip: CS.lip, plinth: CS.plinth };
         const bld = building(o, ob, ter, q, st0 * sh - 3, use, { roof: false, lip: false, mats });
@@ -1356,10 +1343,9 @@ const CityGen = (() => {
         continue;
       }
       const hv = style.height_var ?? 0.22, own = byBldg ? Math.exp(hv * LR.normal()) : 1;
-      const st0c = st0 == null
+      const st = st0 == null
         ? clamp(Math.round(byBldg ? cellSt * own : perCell ? cellSt : storeysAt(plan, qx, qy, LR, (d.height_scale || 1) * (T.height || 1) * (opts.nbHeight || 1))), plan.skyline.min, Math.round(plan.skyline.max * (T.height || 1)))
         : clamp(Math.round((perCell && cellFixed != null ? cellFixed : st0) * cloudM * (opts.nbHeight || 1)), 1, 60);
-      const st = CS && CS.maxStoreys ? Math.min(st0c, LR.randint(CS.maxStoreys - 1, CS.maxStoreys)) : st0c;  // low-rise: 2-3 storeys
       // a college building's palette: arts picks its plaster per building, by seed
       const mats = CS ? { wall: CS.walls ? rng(`${key}|${li}|col|wall`).choice(CS.walls) : CS.wall, lip: CS.lip, plinth: CS.plinth } : undefined;
       const gabled = CS ? CS.roof === "gable" && q.length === 4 : !byBldg && q.canal || (byBldg && style.roof === "gable" && q.length === 4);
@@ -1387,8 +1373,6 @@ const CityGen = (() => {
       o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, bld.top);
       summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, bld.top);
     }
-    const walks = houses.length > 1 && thLevel != null ? canopyWalks(o, ob, poly, houses, d.id) : [];
-    if (CS && CS.forest) forestYards(o, ter, d, cell, key, [...parts.map((p) => p[0]), ...houses.map((h) => h.decks[0]), ...walks], CS.forest);
     return summary;
   }
 
@@ -1534,15 +1518,9 @@ const CityGen = (() => {
   // A low plot raised among the trees, never more than 3 storeys: 3-6 trunk columns from the ground to the top
   // deck, the lowest deck one storey up (4-5 m, its undercroft counts as the first storey), and on it a
   // 1-2 storey timber hall. A 1-storey hall may carry a second, smaller deck and hall on its turf roof. The top
-  // hall wears a garden roof. Decks stay on their plot, so the orchard and the forest round them stay open.
+  // hall wears a garden roof. Decks stay over their footprint, so the forest round them stays open.
   const TREE = { rise: [4, 5], shrink: [0.65, 0.8], col: [3, 4], hall: 1.2, deck: 1, maxStoreys: 3 };
   const groundTop = (ter, q) => Math.max(...q.map(([x, y]) => ter.G(Math.hypot(x, y)))) + 0.05;
-  // the lower-deck level the cell's tree-houses share, 4-5 m above every one of them, or null when the
-  // ground falls too far across the cell for one level (each house then picks its own)
-  function treeLevel(ter, qs, key) {
-    const bs = qs.map((q) => groundTop(ter, q)), lo = Math.max(...bs) + TREE.rise[0], hi = Math.min(...bs) + TREE.rise[1];
-    return lo <= hi ? rng(key).uniform(lo, hi) : null;
-  }
   function treeHouse(plan, ter, o, ob, q, key, level, pal, treeColl, name) {
     const R = rng(`park|col|tree|${key}`), base = groundTop(ter, q);
     const z0 = level ?? base + R.uniform(...TREE.rise);
@@ -1578,45 +1556,110 @@ const CityGen = (() => {
     }
     return { decks, base, top, storeys, z: z0, c: centroid(q) };
   }
-  // Canopy walkways: 4.5 m pale boardwalks at the lower-deck level joining a cell's tree-houses (a spanning tree,
-  // shortest links first). A link is only built when its whole footprint lies inside the cell, so it never
-  // crosses an avenue, canal or spoke corridor. Returns the walkway footprints.
-  const WALK = { half: 2.25, deep: 1.5 };  // 4.5 m wide, 1.5 m deep pale boardwalks, so they read from the air
-  function canopyWalks(o, ob, cellPoly, houses, coll) {
-    const inCell = (q) => q.every((p, i) => { const r = q[(i + 1) % q.length]; return [0, 0.25, 0.5, 0.75].every((f) => pointInPoly(lerp(p[0], r[0], f), lerp(p[1], r[1], f), cellPoly)); });
-    const links = [];
-    for (let a = 0; a < houses.length; a++) for (let b = a + 1; b < houses.length; b++) links.push([dist(houses[a].c, houses[b].c), a, b]);
-    links.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
-    const up = houses.map((_, i) => i), root = (i) => (up[i] === i ? i : (up[i] = root(up[i])));
-    let wob = null;
-    const quads = [];
-    for (const [L, a, b] of links) {
-      if (root(a) === root(b) || L < 1) continue;
-      const A = houses[a].c, B = houses[b].c, nx = -(B[1] - A[1]) / L * WALK.half, ny = (B[0] - A[0]) / L * WALK.half;
-      const q = [[A[0] + nx, A[1] + ny], [A[0] - nx, A[1] - ny], [B[0] - nx, B[1] - ny], [B[0] + nx, B[1] + ny]];
-      if (!inCell(q)) continue;
-      up[root(a)] = root(b);
-      wob = wob || o.obj(`${ob.name}_walkways`, coll, { ...ob.props, walkway: true });
-      o.prism(wob, q, houses[a].z, houses[a].z + WALK.deep, "boardwalk");
-      quads.push(q);
+  // ---------------------------------------------------------------- Saffron's wood
+  // An earth college has no plots: the grove and college bands of its sector are one wood, with buildings
+  // scattered through it. One spot per grid square (40 m in the college band, 55 m in the grove), jittered, kept
+  // by chance (80% / 45%); each is a footprint at a random bearing that must sit wholly in the band, clear of
+  // the spoke corridors, canals, rills and the other buildings (6 m apart). Tree-houses everywhere, and in the
+  // college band some 2-3 storey timber homes and shops under garden roofs. Ground-level boardwalk trails join
+  // neighbours (a spanning tree, links under 80 m that stay in the wood), and trees fill the rest about every
+  // 7 m, 1.5 m clear of every building and trail.
+  const WOODS = { grid: { campus: 40, grove: 55 }, keep: { campus: 0.8, grove: 0.45 }, gap: 6, edge: 8, trail: 3, link: 80, spacing: 7, scale: [1, 1.6] };
+  function saffronWoods(plan, d, ter, spokes, o, L, kinds) {
+    const cfgs = collegeConfig(d), id = Object.keys(cfgs).find((k) => (COLLEGE_STYLES[cfgs[k].style] || {}).woods);
+    if (!id) return;
+    const CS = { college: id, ...COLLEGE_STYLES[cfgs[id].style] }, col = cfgs[id];
+    const seed = o.nb ? o.nb.seeds.find((x) => x.id === `${d.id}-${col.group}`) : null;
+    const inWoods = (x, y) => (collegeStyleAt(plan, spokes, d, x, y) || {}).woods;
+    const bands = L.bands.map((band, bi) => ({ band, bi, kind: kinds[bi] || "campus" })).filter((b) => b.kind === "campus" || b.kind === "grove");
+    const bandAt = (x, y, m) => { const r = Math.hypot(x, y); return bands.find((b) => r >= b.band.r0 + m && r <= b.band.r1 - m); };
+    const rills = o.rills.filter((rl) => bands.some((b) => rl.r > b.band.r0 && rl.r < b.band.r1));
+    const open = (x, y, m) => inWoods(x, y) && bandAt(x, y, m) && !inCorridor(plan, spokes, x, y, m)
+      && !onCanalLine(o, x, y, m) && !o.noPlant.some((q) => pointInPoly(x, y, q));
+    const props = { use: "college", ...(seed ? { nb: seed.id, nb_name: seed.name, nb_type: seed.type } : {}) };
+    const obs = new Map(), obFor = (b, x, y) => {
+      const k = `${b.bi}|${Math.floor((((Math.atan2(y, x) - spokes[0].a) % TAU + TAU) % TAU) / (TAU / spokes.length))}`;
+      if (!obs.has(k)) obs.set(k, o.obj(`NBHD_${d.id}_woods_b${k.replace("|", "_s")}`, d.id, props));
+      return obs.get(k);
+    };
+    const pal = { wall: CS.wall, lip: CS.lip, turf: CS.turf, plinth: CS.plinth };
+    // the buildings
+    const placed = [], grow = (q, m) => { const c = centroid(q); return q.map(([x, y]) => { const dx = x - c[0], dy = y - c[1], l = Math.hypot(dx, dy) || 1; return [x + dx / l * m, y + dy / l * m]; }); };
+    for (const b of bands) {
+      const g = WOODS.grid[b.kind], r0 = b.band.r0, r1 = b.band.r1;
+      for (let x = -r1; x < r1; x += g) for (let y = -r1; y < r1; y += g) {
+        const R = rng(`${d.id}|woods|${b.bi}|${Math.round(x)}|${Math.round(y)}`);
+        const px = x + g * R.uniform(0.2, 0.8), py = y + g * R.uniform(0.2, 0.8), r = Math.hypot(px, py);
+        if (r < r0 || r > r1 || !inWoods(px, py) || R.random() >= WOODS.keep[b.kind]) continue;
+        const house = b.kind === "grove" || R.random() < 0.55;
+        const use = house ? "college" : R.random() < 0.55 ? "residential" : "commercial";
+        const [w, h] = house ? [R.uniform(16, 26), R.uniform(12, 18)] : [R.uniform(14, 22), R.uniform(10, 14)];
+        const t = R.uniform(0, TAU), ux = Math.cos(t), uy = Math.sin(t);
+        const q = [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]].map(([u, v]) => [px + u * ux - v * uy, py + u * uy + v * ux]);
+        if (![...q, [px, py]].every(([qx, qy]) => open(qx, qy, WOODS.edge))) continue;
+        const rs = q.map(([qx, qy]) => Math.hypot(qx, qy)), lo = Math.min(...rs), hi = Math.max(...rs);
+        if (rills.some((rl) => lo < rl.r + 4 && hi > rl.r - 4)) continue;
+        const wide = grow(q, WOODS.gap);
+        if (placed.some((p) => quadsOverlap(wide, p.q))) continue;
+        const ob = obFor(b, px, py), key = `${d.id}|woods|${b.bi}|${placed.length}`, name = `NBHD_${d.id}_woods_${b.bi}_${placed.length}`;
+        let lot;
+        if (house) {
+          const th = treeHouse(plan, ter, o, ob, q, key, null, pal, d.id, name);
+          lot = { base: th.base, top: th.top, storeys: th.storeys, plinth: 0, label: "Tree-house", roof: "garden", form: "treehouse", decks: th.decks.length };
+        } else {
+          const st = R.randint(2, 3), mats = { wall: CS.wall, lip: CS.lip, plinth: CS.plinth, turf: CS.turf };
+          const bld = building(o, ob, ter, q, st * plan.storey, use, { roof: false, mats });
+          const extra = roofTop(o, ob, ter, q, bld.top, "garden", R, d.id, name, mats);
+          lot = { base: bld.base, top: bld.top + extra, roofTop: bld.top, storeys: st, plinth: bld.plinth, label: (((plan.landuse || {}).types || {})[use] || {}).label || use, roof: "garden" };
+        }
+        o.lots.push({ d: d.id, use, nb: seed ? seed.id : null, row: `woods${b.bi}`, key, obj: ob.name, poly: q, area: polyArea(q), college: id, wall: CS.wall, ...lot });
+        o.band(`${d.id}|woods${b.bi}`, b.band.r0, b.band.r1, lot.base, lot.top);
+        if (seed) { seed.cells++; seed.sx += px; seed.sy += py; (seed.rings || (seed.rings = new Set())).add(d.ring); }
+        placed.push({ q, c: [px, py], ob });
+      }
     }
-    return quads;
-  }
-
-  // An earth college's open ground as forest: grove trees on a jittered grid about every `spacing` m, 1.5 m
-  // inside the cell and 1.5 m clear of every building, deck and walkway.
-  const FOREST_SCALE = [1, 1.6];  // forest trees are full-grown, bigger than the groves' and orchards'
-  function forestYards(o, ter, d, cell, key, keepOut, spacing) {
-    const poly = cell.poly, ring = [...poly, poly[0]], R = rng(`${key}|forest`), Cn = d.canals || {};
-    const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]), tag = key.replace(/\|/g, "_");
-    const near = (x, y, q) => pointInPoly(x, y, q) || distToPath(x, y, [...q, q[0]]) < 1.5;
+    // the trails: ground-hugging boardwalk pieces about 8 m long, so they follow the slope
+    const links = [], trails = [];
+    for (let a = 0; a < placed.length; a++) for (let b = a + 1; b < placed.length; b++) {
+      const L2 = dist(placed[a].c, placed[b].c);
+      if (L2 < WOODS.link) links.push([L2, a, b]);
+    }
+    links.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
+    const up = placed.map((_, i) => i), root = (i) => (up[i] === i ? i : (up[i] = root(up[i])));
+    let tob = null;
+    for (const [L2, a, b] of links) {
+      if (root(a) === root(b)) continue;
+      const A = placed[a].c, B = placed[b].c, n = Math.max(1, Math.ceil(L2 / 8));
+      const pts = Array.from({ length: n + 1 }, (_, i) => [lerp(A[0], B[0], i / n), lerp(A[1], B[1], i / n)]);
+      // a trail stays in the wood: off the corridors and canals, and clear of other buildings
+      if (!pts.every(([x, y]) => open(x, y, 2) || placed[a].q && pointInPoly(x, y, placed[a].q) || pointInPoly(x, y, placed[b].q))) continue;
+      if (pts.some(([x, y]) => placed.some((p, i) => i !== a && i !== b && pointInPoly(x, y, p.q)))) continue;
+      up[root(a)] = root(b);
+      tob = tob || o.obj(`NBHD_${d.id}_woods_walkways`, d.id, { ...props, walkway: true });
+      const hw = WOODS.trail / 2, nx = -(B[1] - A[1]) / L2 * hw, ny = (B[0] - A[0]) / L2 * hw;
+      for (let i = 0; i < n; i++) {
+        const [p0, p1] = [pts[i], pts[i + 1]], q = [[p0[0] + nx, p0[1] + ny], [p0[0] - nx, p0[1] - ny], [p1[0] - nx, p1[1] - ny], [p1[0] + nx, p1[1] + ny]];
+        const top = q.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.2]);
+        o.solid(tob, top, top.map((t) => t[2] - 0.5), "boardwalk");
+        trails.push(q);
+      }
+    }
+    // the trees
+    const keepOut = [...placed.map((p) => p.q), ...trails].map((q) => {
+      const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
+      return { q, x0: Math.min(...xs) - 1.5, x1: Math.max(...xs) + 1.5, y0: Math.min(...ys) - 1.5, y1: Math.max(...ys) + 1.5 };
+    });
+    const near = (x, y) => keepOut.some((k) => x >= k.x0 && x <= k.x1 && y >= k.y0 && y <= k.y1 && (pointInPoly(x, y, k.q) || distToPath(x, y, [...k.q, k.q[0]]) < 1.5));
     let n = 0;
-    for (let x = Math.min(...xs) + spacing / 2; x < Math.max(...xs); x += spacing) for (let y = Math.min(...ys) + spacing / 2; y < Math.max(...ys); y += spacing) {
-      const tx = x + R.uniform(-0.35, 0.35) * spacing, ty = y + R.uniform(-0.35, 0.35) * spacing;
-      if (!pointInPoly(tx, ty, poly) || distToPath(tx, ty, ring) < 1.5 || keepOut.some((q) => near(tx, ty, q))) continue;
-      if (onCanalLine(o, tx, ty, 1.5) || (cell.canalPaths || []).some((pth) => distToPath(tx, ty, pth) < (Cn.width || 0) / 2 + (Cn.quay || 0) + 1.5)) continue;
-      if (o.noPlant.some((q) => pointInPoly(tx, ty, q))) continue;
-      tree(o, ter, d.id, R.choice(PALETTE.grove), tx, ty, R, `NBHD_${d.id}_forest_${tag}_${String(n++).padStart(4, "0")}`, ...FOREST_SCALE);
+    for (const b of bands) {
+      const sp = WOODS.spacing, r0 = b.band.r0, r1 = b.band.r1;
+      for (let x = -r1; x < r1; x += sp) for (let y = -r1; y < r1; y += sp) {
+        const R = rng(`${d.id}|woods|tree|${b.bi}|${Math.round(x)}|${Math.round(y)}`);
+        const tx = x + sp * R.uniform(0.15, 0.85), ty = y + sp * R.uniform(0.15, 0.85), r = Math.hypot(tx, ty);
+        if (r < r0 + 4 || r > r1 - 4 || !inWoods(tx, ty) || inCorridor(plan, spokes, tx, ty, 2) || onCanalLine(o, tx, ty, 1.5)) continue;
+        if (o.noPlant.some((q) => pointInPoly(tx, ty, q)) || near(tx, ty)) continue;
+        tree(o, ter, d.id, R.choice(PALETTE.grove), tx, ty, R, `NBHD_${d.id}_forest_${b.bi}_${String(n++).padStart(5, "0")}`, ...WOODS.scale);
+      }
     }
   }
 
@@ -1736,6 +1779,8 @@ const CityGen = (() => {
     const summaries = [];
     for (const cn of canals) o.canals.push({ d: d.id, band: band.i, k: cn.k, c: cn.c, path: cn.path, width: d.canals.width });
     for (const [ci, cell] of cells.entries()) {
+      // an earth college's cells aren't built: its land is one wood (saffronWoods)
+      if (cfg.woods && cfg.woods(cell)) continue;
       if (cell.plaza) { o.squares.push(cell.poly); continue; }
       const { cx, cy, nb, nbType, use, side, key } = lay[ci];
       if (nb) { nb.cells++; nb.sx += cx; nb.sy += cy; (nb.rings || (nb.rings = new Set())).add(ring.id); }
@@ -2441,7 +2486,8 @@ const CityGen = (() => {
         return { band, cfg, laid: layVoronoiBand(plan, d, ter, spokes, o, band, cfg) };
       }).filter(Boolean);
       const forms = indigoForms(plan, d, laid.map((b) => b.laid)), misses = [];
-      for (const b of laid) genVoronoiBand(plan, d, ter, spokes, o, b.band, { ...b.cfg, forms, misses }, b.laid);
+      const woods = (cell) => (collegeStyle(d, sectorFromStart(plan, d, cell.k)) || {}).woods;
+      for (const b of laid) genVoronoiBand(plan, d, ter, spokes, o, b.band, { ...b.cfg, forms, misses, woods }, b.laid);
       // an Indigo venue or print works with no room in its plot is built as a studio: say so, venue by venue
       for (const f of VENUE_FORMS) if (misses.includes(f)) o.warnings.push(`The ${venueLabel(o, d, f)} doesn't fit its plot, so a studio stands there instead.`);
       const np = misses.filter((f) => f === "print").length;
@@ -2479,12 +2525,10 @@ const CityGen = (() => {
       }
       const P = d[kind] || {};
       if (kind === "orchard") genEnergy(plan, d, ter, spokes, o, band, bi);
-      // an earth college's grove is forest: dense, full-grown and without clearings
-      const forestAt = (x, y) => kind === "grove" && (collegeStyleAt(plan, spokes, d, x, y) || {}).forest;
-      const forest = kind === "grove" && spokes.map((_, k) => (collegeStyle(d, k) || {}).forest).find(Boolean);
+      // an earth college's grove is part of its wood (saffronWoods plants it)
+      const inWoods = (x, y) => kind === "grove" && (collegeStyleAt(plan, spokes, d, x, y) || {}).woods;
       plantBand(plan, d, ter, spokes, o, `${kind}${bi}`, band.r0 + 4, band.r1 - 4, P.spacing, kind === "orchard" ? 0.6 : 4.0, P.clearing || 0, PALETTE[kind] || PALETTE.grove,
-        forest ? { keep: (x, y) => !forestAt(x, y) } : {});
-      if (forest) plantBand(plan, d, ter, spokes, o, `forest${bi}`, band.r0 + 4, band.r1 - 4, forest, 2.5, 0, PALETTE.grove, { keep: forestAt, scale: FOREST_SCALE });
+        { keep: (x, y) => !inWoods(x, y) });
       // irrigation rill down the middle of the band, broken at the spokes
       const rr = (band.r0 + band.r1) / 2, z = ter.G(rr);
       spokes.forEach((sp, k) => {
@@ -2498,6 +2542,7 @@ const CityGen = (() => {
         }
       });
     });
+    saffronWoods(plan, d, ter, spokes, o, L, kinds);
   }
 
   // Old Town (the core district), built in a fixed order: ground and Lantern first, then (later tasks)
