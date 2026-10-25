@@ -1600,28 +1600,90 @@ const CityGen = (() => {
     });
   }
 
-  // Old Town (the core district): filled in by the following tasks
-  function genOldTown(plan, d, ter, spokes, o) {}
-
-  function genTowers(plan, d, ter, spokes, o) {
-    const sc = plan.scene, temple = sc.temple, island = sc.rings.find((r) => r.id === d.ring);
-    const spireTop = temple.spire_top + ter.templeLift, hero = spokes.find((s) => s.hero), K = plan.skyline;
-    // island deck: plateau round the temple, sloping down to the quay, with a quay wall to the inner water
-    const deck = o.obj(`NBHD_${d.id}_deck`, d.id), r1 = island.r1 - 2, N = Math.ceil(TAU * island.r1 / 14);
-    const pr = Math.min(plan.scene.terrain.plateau_r, r1 - 1);
+  // Old Town (the core district), built in a fixed order: ground and Lantern first, then (later tasks)
+  // the grid and quarter blocks, landmarks, and towers on the blocks left over.
+  // Old Town heights stay under the Lantern's heart top by `clearance` (absolute z).
+  function oldTownCap(plan, ter, d) {
+    const L = oldTownConfig(d).lantern;
+    return ter.G(0) + L.height * L.heart[1] - L.clearance;
+  }
+  // a spoke corridor crossing the canal edge at angle a (the old island quay wall's test)
+  const edgeInSpoke = (plan, spokes, r1, a) => inCorridor(plan, spokes, ...polar(r1 - 2, a), 2)
+    || spokes.some((sp) => angDist(sp.a, a) < Math.asin(Math.min(1, (plan.spokes.corridor_half + 2) / r1)));
+  function genOldTown(plan, d, ter, spokes, o) {
+    const cfg = oldTownConfig(d), L = ringLayout(plan, d), r1 = L.ring.r1, rq = r1 - cfg.quay;
+    // ground: pavers following the terrain out to the quay, then the canal edge (quay walk + wall)
+    const ob = o.obj(`NBHD_${d.id}_ground`, d.id), N = Math.ceil(TAU * r1 / 14);
+    const gz = (r) => ter.G(Math.min(r, r1 - 0.01));
+    const pr = plan.scene.terrain.plateau_r, breaks = [0, ...(pr > 0 && pr < rq ? [pr] : []), rq];
+    const wz = ter.water.inner_water - 0.5, wtop = gz(r1 - 0.5) + 1.1;
     for (let i = 0; i < N; i++) {
       const a = i * TAU / N, b = (i + 1) * TAU / N;
-      for (const [ra, rb] of [[temple.r, pr], [pr, r1]]) {
-        const top = [[...polar(ra, a), ter.G(ra)], [...polar(rb, a), ter.G(rb)], [...polar(rb, b), ter.G(rb)], [...polar(ra, b), ter.G(ra)]];
-        o.solid(deck, top, top.map((p) => p[2] - 1.0), "paver");
-      }
-      const wz = ter.water.inner_water - 0.5, gz = ter.G(island.r1 - 0.5) + 1.1;
-      if (!inCorridor(plan, spokes, ...polar(island.r1 - 2, (a + b) / 2), 2) && !spokes.some((sp) => angDist(sp.a, (a + b) / 2) < Math.asin(Math.min(1, (plan.spokes.corridor_half + 2) / island.r1))))
-        o.prism(deck, [polar(island.r1 - 4, a), polar(island.r1, a), polar(island.r1, b), polar(island.r1 - 4, b)], wz, gz, "stone");
-      const ca = SOUTH + rad(8), span = TAU - rad(16);
-      const ga = ca + span * i / N, gb = ca + span * (i + 1) / N, gz2 = ter.G(temple.r + 1);
-      o.prism(deck, [polar(temple.r + 1, ga), polar(temple.r + 15, ga), polar(temple.r + 15, gb), polar(temple.r + 1, gb)], gz2, gz2 + 0.5, "roof");
+      const pave = (ra, rb) => {
+        const top = ra === 0 ? [[0, 0, gz(0)], [...polar(rb, a), gz(rb)], [...polar(rb, b), gz(rb)]]
+          : [[...polar(ra, a), gz(ra)], [...polar(rb, a), gz(rb)], [...polar(rb, b), gz(rb)], [...polar(ra, b), gz(ra)]];
+        o.solid(ob, top, top.map((q) => q[2] - 1.0), "paver");
+      };
+      for (let k = 0; k + 1 < breaks.length; k++) pave(breaks[k], breaks[k + 1]);
+      if (edgeInSpoke(plan, spokes, r1, (a + b) / 2)) continue;
+      pave(rq, r1);
+      o.prism(ob, [polar(r1 - 1.2, a), polar(r1, a), polar(r1, b), polar(r1 - 1.2, b)], wz, wtop, "stone");
     }
+    genLantern(plan, d, ter, o, cfg, spokes);
+  }
+
+  // The Lantern: the city's tallest tower at the exact centre. A slightly tapered shaft with a tall glazed
+  // reactor heart, gold compute bands above and below it, a crown of radiator fins round a mast, and an
+  // open colonnade hall at its foot facing the square.
+  function genLantern(plan, d, ter, o, cfg, spokes) {
+    const C = cfg.lantern, H = C.height, base = ter.G(0), top = base + H, rB = C.base / 2, rT = C.taper * rB;
+    const crownZ = base + 0.92 * H, hallH = 20, h0 = base + H * C.heart[0], h1 = base + H * C.heart[1];
+    const hero = spokes.find((sp) => sp.hero), ha = hero ? hero.a : SOUTH, NS = 32;
+    const rAt = (z) => rB + (rT - rB) * clamp((z - base) / (crownZ - base), 0, 1);
+    const circ = (r, n = NS) => Array.from({ length: n }, (_, j) => polar(r, ha + (j + 0.5) * TAU / n));
+    const ring = (r, z) => circ(r).map(([x, y]) => [x, y, z]);
+    const ob = o.obj(`NBHD_${d.id}_lantern`, d.id, { height_m: H });
+    const drum = (ra, za, rb, zb, m) => o.loft(ob, [ring(ra, za), ring(rb, zb)], m);
+    // shaft below the heart, the glazed heart (a little proud of the shaft), shaft above it to the crown
+    drum(rB, base, rAt(h0), h0, "stone");
+    drum(rAt(h0) + 1.8, h0, rAt(h1) + 1.8, h1, "glow");
+    drum(rAt(h1), h1, rT, crownZ, "stone");
+    for (const z of [h0, h1]) drum(rAt(z) + 2.6, z - 1.2, rAt(z) + 2.6, z + 1.2, "gold");
+    // compute floors: gold lip bands about every 12 m
+    const bands = (lo, hi) => { if (hi - lo < 6) return; const n = Math.max(1, Math.round((hi - lo) / 12));
+      for (let k = 0; k <= n; k++) { const z = lo + (hi - lo) * k / n; drum(rAt(z) + 0.6, z - 0.4, rAt(z) + 0.6, z + 0.4, "gold"); } };
+    bands(base + hallH + 8, h0 - 8);
+    bands(h1 + 8, crownZ - 8);
+    // crown: a cap, a core drum, radiator fins round it, and a mast to the very top
+    drum(rT + 0.8, crownZ - 1.2, rT + 0.8, crownZ, "lip");
+    const finTop = crownZ + 0.55 * (top - crownZ);
+    drum(rT * 0.4, crownZ, rT * 0.3, finTop, "stone");
+    const nF = rng(`${d.id}|lantern|crown`).randint(8, 12);
+    for (let k = 0; k < nF; k++) {
+      const a = ha + k * TAU / nF, ux = Math.cos(a), uy = Math.sin(a), t = 0.6, r0 = rT * 0.3, r2 = rT * 1.05;
+      o.prism(ob, [[r0 * ux + t * uy, r0 * uy - t * ux], [r2 * ux + t * uy, r2 * uy - t * ux], [r2 * ux - t * uy, r2 * uy + t * ux], [r0 * ux - t * uy, r0 * uy + t * ux]], crownZ, finTop, "lip");
+    }
+    o.loft(ob, [ring(2.2, crownZ), ring(0.4, top)], "lip");
+    // public hall at the foot: a colonnade round the shaft under a canopy, open to the square
+    const s = cfg.grid.square, rc = Math.max(rB + 4, Math.min(rB + 10, s / 2 - 4)), nC = 24, cw = 1.2;
+    for (let k = 0; k < nC; k++) {
+      const [cx, cy] = polar(rc, ha + (k + 0.5) * TAU / nC);
+      o.prism(ob, [[cx - cw, cy - cw], [cx + cw, cy - cw], [cx + cw, cy + cw], [cx - cw, cy + cw]], base, base + hallH, "stone");
+    }
+    for (let k = 0; k < NS; k++) {
+      const a = ha + k * TAU / NS, b = ha + (k + 1) * TAU / NS;
+      o.prism(ob, [polar(rB - 0.5, a), polar(rc + 2.5, a), polar(rc + 2.5, b), polar(rB - 0.5, b)], base + hallH, base + hallH + 1.2, "lip");
+    }
+    // the nominal square round it (task 4 snaps it to the grid)
+    const half = s / 2, square = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([u, v]) => [u * Math.cos(ha) - v * Math.sin(ha), u * Math.sin(ha) + v * Math.cos(ha)]);
+    o.lantern = { x: 0, y: 0, base, top, r_base: rB, r_top: rT, heart: [h0, h1], square };
+    const poly = circ(rB);
+    o.lots.push({ d: d.id, kind: "lantern", key: `${d.id}|lantern`, label: "The Lantern", poly, base, top, storeys: Math.round(H / plan.storey), area: polyArea(poly) });
+  }
+
+  function genTowers(plan, d, ter, spokes, o) {
+    const temple = plan.scene.temple;
+    const spireTop = temple.spire_top + ter.templeLift, hero = spokes.find((s) => s.hero), K = plan.skyline;
     const [plo, phi] = d.podium_storeys, cap = spireTop - d.spire_clearance;
     ringLayout(plan, d).bands.forEach((row, ri) => {
       const hr = (d.band_heights || [])[ri] || [80, 150];
@@ -2171,12 +2233,22 @@ const CityGen = (() => {
       const step = prof.road(c.ri - 0.01) - ter.G(c.ri - 0.01);
       if (step > S.step_threshold) o.warnings.push(`At this road grade the ${c.id.replace("_", " ")} bridge lands ${Math.round(step * 10) / 10} m above the inner bank; raise the grade.`);
     }
+    if (o.lantern) {
+      const over = o.lots.filter((l) => l.kind !== "lantern" && l.top > o.lantern.heart[1]);
+      if (over.length) o.warnings.push(`${over.length} building${over.length > 1 ? "s rise" : " rises"} above the Lantern's heart (top ${Math.round(Math.max(...over.map((l) => l.top)))} m vs ${Math.round(o.lantern.heart[1])} m).`);
+    }
+    for (const d of plan.districts) {
+      if (d.enabled === false || d.type !== "oldtown") continue;
+      const cfg = oldTownConfig(d), cap = oldTownCap(plan, ter, d), bands = ringLayout(plan, d).bands;
+      const wants = [[cfg.heights.grid[1], bands[0]], [cfg.heights.band[1], bands[bands.length - 1]], [cfg.heights.landmark[1], bands[0]]];
+      if (wants.some(([h, b]) => b && ter.G(b.r0) + h > cap)) o.warnings.push(`Old Town towers capped at ${Math.round(cap - ter.G(0))} m to keep the Lantern's heart in view.`);
+    }
     const hero = spokes.find((s) => s.hero);
     const hp = hero && makeProfile(plan, ter, S.hero_skip_crossings);
     if (hp) for (const [c0, c1] of S.hero_kit_ranges || []) hp.rampEnd.forEach((t, i) => { if (t > c0 && t < c1) o.warnings.push(`The ${hp.crossings[i].id.replace("_", " ")} approach ramp runs into the existing hero-avenue kit (ramp starts ${Math.round(t)} m from the centre).`); });
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;
