@@ -1,8 +1,13 @@
-"""Export the /city hero view from the live v05 scene: a culled, AO-baked raw glb plus hero_props.json.
+"""Export the /city hero view from v05: a culled, AO-baked raw glb plus hero_props.json.
 
+Run it headless (the default and the only tested way; see README "Hero export"):
     node -e '<see README: writes build/hero/plan_blimps.json>'     (once per plan change; Blender has no node)
-    then in Blender (Blender MCP):
-    exec(open(G + "export_hero.py").read(), {"__name__": "eh", "__file__": G + "export_hero.py", "OUT_DIR": G + "build/hero/"})
+    flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v05.blend \
+      --python-expr 'G="'$PWD'/"; exec(open(G+"export_hero.py").read(), {"__name__":"eh","__file__":G+"export_hero.py","OUT_DIR":G+"build/hero/"})'
+
+A run inside the live Blender session (exec through the Blender MCP) is unverified: a related temp_override
+pattern segfaulted Blender 5.2, and a crash loses unsaved work. run() refuses it unless the exec globals carry
+"ALLOW_LIVE": True, which should only be passed after the user has saved and opted in.
 
 Writes OUT_DIR/hero_raw.glb, hero_props.json and export_report.json. Never saves the .blend and never edits
 the user's scene: everything it builds lives in a scratch scene HERO_EXPORT_SCENE (collection HERO_EXPORT,
@@ -21,19 +26,22 @@ Stages
                OCCLUSION_SAMPLES camera positions to the 8 AABB corners + centre against a BVH of the
                kept non-tree chunks; dropped only if every ray hits another chunk first.
   realise      everything goes to world-space meshes in HERO_EXPORT, joined per material per tile
-               (near NEAR_TILE, mid MID_TILE, far FAR_TILE) by distance band (NEAR_DIST, FAR_DIST).
+               (near NEAR_TILE, mid MID_TILE, far FAR_TILE) by distance band (NEAR_DIST, FAR_DIST); near is
+               joined too, for the draw-call budget, but keeps full detail.
                Mid: faces facing away from every sample camera are dropped. Far: Decimate (collapse).
                Named, never joined: `Text` (pale PBR), the Lantern (LANTERN_PREFIXES), the well ring
                lights (WELL_RING_LIGHTS), HERO_well_water. Trees (KIT_PlantD_*, asset_Plant_* parts)
                become linked duplicates of one mesh per species part, for glTF-Transform instancing.
   AO           near/mid meshes are subdivided (edges > SUBDIV_NEAR / SUBDIV_MID) and Cycles-baked to a
                byte corner colour attribute `AO`; far, water, trees and lamps get white.
-  night        NIGHT_* materials carry custom property night_emissive -> glTF extras.
+  night        NIGHT_* materials carry custom property night_emissive -> glTF extras. The Lantern's
+               MAT_AP_Cyan and MAT_AP_Glow (its cyan heart) faces both go to NIGHT_MAT_AP_Cyan.
   lamps        lamp posts every LAMP_AVENUE_SPACING m on both avenue pavements and every
                LAMP_RING_STEP_DEG round the plaza ring (clear of the camera), linked duplicates.
   camera       HeroCamera, no parent, world matrix keyed every frame 1-250 (linear), action `Hero`.
-  props        sun, Lantern, blimp orbit (radius searched for the visible sky above the frontage),
-               walk paths, well water node, night material names. glTF space: (x, z, -y).
+  props        sun (dir: from the scene toward the sun), Lantern, blimp orbit (radius searched for the
+               visible sky above the frontage), walk paths, well water node, night material names and
+               night_nodes (the nodes allowed NIGHT_MAT_AP_Cyan / NIGHT_WellRing). glTF space: (x, z, -y).
 
 Pure cull geometry lives in hero_geom.py (tested). Tuning knobs are the constants below.
 """
@@ -63,8 +71,13 @@ CULL_MARGIN = 0.03                      # radians added to both FOVs (hero_geom.
 OCCLUSION_SAMPLES = 5                   # camera positions the occlusion rays start from
 RAY_EPS = 0.05                          # m: hits this close to the target point don't block it
 TILE = 100.0                            # m: chunk size for culling city-wide meshes
+CAST_MAX_HOPS = 16                      # cast(): skipped hits before giving up
+CAST_NUDGE = 0.01                       # m: cast() restarts this far past a skipped hit
 NEAR_DIST, FAR_DIST = 150.0, 700.0      # m from the nearest sample camera: near < NEAR_DIST < mid < FAR_DIST < far
-NEAR_TILE, MID_TILE, FAR_TILE = 100.0, 100.0, 400.0   # m: join tiles per band
+# m: join tiles per band. Near is joined per material per tile too (not kept as modelled, as the plan first
+# said): per-object near meshes would blow the 300 draw-call budget. Near keeps its full detail (no
+# back-face drop, no decimate) and the finest AO subdivision.
+NEAR_TILE, MID_TILE, FAR_TILE = 100.0, 100.0, 400.0
 FAR_DECIMATE = 0.25                     # Decimate (collapse) ratio for far meshes
 SUBDIV_NEAR, SUBDIV_MID = 4.0, 12.0     # m: split edges longer than this before the AO bake
 SUBDIV_MAX_EDGE = 200.0                 # m: faces with longer edges (sea, ground sheets) are not split
@@ -85,11 +98,13 @@ WELL_WATER_NAME = "HERO_well_water"
 WELL_WATER_LIFT = 0.05                  # m above the sea plane it covers
 WELL_WATER_PAD = 0.5                    # m added to the widest water hit seen through the well
 WELL_PROBE_N, WELL_PROBE_STEP, WELL_PROBE_DIST = 12, 0.5, 200.0   # frame-250 rays: (2N+1)^2 grid, m apart
+WELL_WATER_SEGMENTS = 48
 PAVE_PROBE_STEP = 0.25                  # m between downward probes across the pavement
 
 NIGHT_WINDOWS = ("MAT_AP_Void",)
 NIGHT_BANDS = ("MAT_AP_Glow", "MAT_AP_Clerestory")
-NIGHT_CYAN = "NIGHT_MAT_AP_Cyan"        # Lantern only (its MAT_AP_Cyan and MAT_AP_Glow faces)
+NIGHT_CYAN = "NIGHT_MAT_AP_Cyan"        # Lantern only: its MAT_AP_Cyan faces and its MAT_AP_Glow heart, which
+                                        # is the Lantern's cyan heart (README), so it glows cyan, not as a band
 NIGHT_WELL = "NIGHT_WellRing"
 NIGHT_LAMP = "NIGHT_Lamp"
 NIGHT_EMISSIVE = {"window": [1.0, 0.78, 0.5, 2.0], "band": [1, 0.9, 0.7, 1.5], "cyan": [0.3, 0.9, 1, 4],
@@ -98,6 +113,9 @@ NIGHT_EMISSIVE = {"window": [1.0, 0.78, 0.5, 2.0], "band": [1, 0.9, 0.7, 1.5], "
 LAMP_POLE_H, LAMP_POLE_R, LAMP_HEAD_H, LAMP_HEAD_W = 5.0, 0.08, 0.6, 0.35
 LAMP_POLE_COLOR = (0.12, 0.12, 0.12)
 LAMP_HEAD_COLOR = (0.95, 0.9, 0.75)
+LAMP_POLE_ROUGH, LAMP_POLE_METAL = 0.45, 0.6
+LAMP_HEAD_ROUGH = 0.5
+DEFAULT_COLOR, DEFAULT_ROUGH = (0.7, 0.7, 0.7), 0.6   # for source materials without a Principled BSDF
 LAMP_AVENUE_SPACING = 18.0
 LAMP_RING_STEP_DEG = 15.0
 LAMP_KERB_INSET = 0.5                   # m in from the kerb edge of each pavement
@@ -108,11 +126,12 @@ AVENUE_START, AVENUE_LEN, AVENUE_STEP = 20.0, 600.0, 20.0   # m along the avenue
 AVENUE_PROBE = 60.0                     # m along the avenue where the pavement is measured
 PAVEMENT_OBJECT = "KIT_Ave_walk"
 GROUND_TOP = 600.0                      # m: downward ground probes start here
-NOT_GROUND = ("SKYWALK", "KIT_Sky", "KIT_Plant", "TREES_", "KIT_Care", "KIT_Street", "KIT_Facade", "Text")
 FRONTAGE_RANGE = (20.0, 400.0)          # m along the avenue searched for where the frontage starts
+FRONTAGE_STEP = 5.0                     # m between frontage probes
 FRONTAGE_HEIGHT = 10.0                  # m above the camera's frame-1 height
 FRONTAGE_SEARCH = 80.0                  # m sideways
-FRONTAGE_SKIP = ("SKYWALK", "KIT_Sky", "KIT_Plant", "TREES_")
+FRONTAGE_SKIP = ("SKYWALK", "KIT_Sky", "KIT_Plant", "TREES_")   # not frontage: skywalks and trees
+NOT_GROUND = FRONTAGE_SKIP + ("KIT_Care", "KIT_Street", "KIT_Facade", "Text")   # nor street furniture, facades
 
 BLIMP_COUNT, BLIMP_PERIOD_S, BLIMP_ALTITUDE = 6, 240.0, 280.0
 BLIMP_RADII = range(600, 1401, 50)
@@ -177,13 +196,13 @@ def safe_half_tans(scene, dg, mats, half16):
     fwd = (-m1.to_3x3().normalized().col[2]).to_2d().normalized().to_3d()
     side = Vector((fwd.y, -fwd.x, 0))
     f1 = None
-    for s in np.arange(FRONTAGE_RANGE[0], FRONTAGE_RANGE[1], 5.0):
+    for s in np.arange(FRONTAGE_RANGE[0], FRONTAGE_RANGE[1], FRONTAGE_STEP):
         o = pos + fwd * float(s) + Vector((0, 0, FRONTAGE_HEIGHT))
         hits = []
         for d in (side, -side):
             h = cast(lambda a, b, n: scene_ray(scene, dg, a, b, n), o, d, FRONTAGE_SEARCH, FRONTAGE_SKIP)
             if h is not None:
-                hits.append(h)
+                hits.append(h[0])
         if len(hits) == 2:
             f1 = max(abs(cam_space(m1, h)[0]) for h in hits)
             break
@@ -196,17 +215,17 @@ def scene_ray(scene, dg, o, d, dist):
 
 
 def cast(ray, o, d, dist, skip):
-    """First hit along o + t d (t <= dist) whose owner name doesn't start with `skip`; None if none.
-    `ray(o, d, dist)` returns (location, owner_name) or None."""
-    o = Vector(o)
-    for _ in range(16):
+    """(location, owner name) of the first hit along o + t d (t <= dist) whose owner name doesn't start
+    with `skip`; None if none. `ray(o, d, dist)` returns (location, owner_name, ...) or None."""
+    o, d = Vector(o), Vector(d)
+    for _ in range(CAST_MAX_HOPS):
         h = ray(o, d, dist)
         if h is None:
             return None
         if not h[1].startswith(skip):
-            return h[0]
-        dist -= (h[0] - o).length + 0.01
-        o = h[0] + d * 0.01
+            return h[0], h[1]
+        dist -= (h[0] - o).length + CAST_NUDGE
+        o = h[0] + d * CAST_NUDGE
         if dist <= 0:
             return None
     return None
@@ -214,18 +233,17 @@ def cast(ray, o, d, dist, skip):
 
 # ---------------------------------------------------------------- collect
 def hidden_objects(view_layer):
-    """Names of objects that don't render: hidden/excluded collections, SKIP_COLLECTIONS, hide_render."""
-    out = set()
+    """Names of objects that don't render: hide_render, or linked only into hidden/excluded collections
+    or SKIP_COLLECTIONS (an object also linked into a shown collection still renders)."""
+    hidden, shown = set(), set()
 
     def walk(lc, off):
         off = off or lc.exclude or lc.hide_viewport or lc.collection.hide_render or lc.collection.name in SKIP_COLLECTIONS
-        if off:
-            out.update(o.name for o in lc.collection.objects)
+        (hidden if off else shown).update(o.name for o in lc.collection.objects)
         for ch in lc.children:
             walk(ch, off)
     walk(view_layer.layer_collection, False)
-    out.update(o.name for o in bpy.data.objects if o.hide_render)
-    return out
+    return (hidden - shown) | {o.name for o in bpy.data.objects if o.hide_render}
 
 
 def is_tree(obj_orig):
@@ -278,7 +296,9 @@ def collect(dg, view_layer):
         src = (inst.parent if inst.is_instance and inst.parent else obj).original
         if src.name in hidden:
             continue
-        key = (obj.original.name, obj.data.name)
+        # GN geometry instances of one owner can share both names: the counts tell their meshes apart
+        me = obj.data
+        key = (obj.original.name, me.name, len(me.vertices), len(me.polygons), len(me.loops))
         g = geos.get(key)
         if g is None:
             g = geos[key] = Geo(obj)
@@ -437,9 +457,9 @@ class Materials:
         if out == "HERO_TextPale":
             m = pbr(out, TEXT_COLOR, TEXT_ROUGHNESS, 0.0)
         elif out == NIGHT_LAMP:
-            m = pbr(out, LAMP_HEAD_COLOR, 0.5, 0.0, NIGHT_EMISSIVE["lamp"])
+            m = pbr(out, LAMP_HEAD_COLOR, LAMP_HEAD_ROUGH, 0.0, NIGHT_EMISSIVE["lamp"])
         elif out == "HERO_LampPole":
-            m = pbr(out, LAMP_POLE_COLOR, 0.45, 0.6)
+            m = pbr(out, LAMP_POLE_COLOR, LAMP_POLE_ROUGH, LAMP_POLE_METAL)
         else:
             sm = bpy.data.materials.get(src) if src else None
             b = principled(sm)
@@ -448,7 +468,7 @@ class Materials:
                 color = tuple(sm.diffuse_color[:3]) if bc.is_linked else tuple(bc.default_value[:3])
                 rough, metal = b.inputs["Roughness"].default_value, b.inputs["Metallic"].default_value
             else:
-                color, rough, metal = (tuple(sm.diffuse_color[:3]) if sm else (0.7, 0.7, 0.7)), 0.6, 0.0
+                color, rough, metal = (tuple(sm.diffuse_color[:3]) if sm else DEFAULT_COLOR), DEFAULT_ROUGH, 0.0
             night = (NIGHT_EMISSIVE["cyan"] if out in (NIGHT_CYAN, NIGHT_WELL) else
                      NIGHT_EMISSIVE["window"] if src in NIGHT_WINDOWS else
                      NIGHT_EMISSIVE["band"] if src in NIGHT_BANDS else None)
@@ -530,16 +550,8 @@ def subdivide_long(me, limit):
 # ---------------------------------------------------------------- props helpers
 def ground(occ, x, y, top=GROUND_TOP):
     """(z, owner name) of the first walkable surface below (x, y), skipping skywalks, trees, facades etc."""
-    o, d, dist = Vector((x, y, top)), Vector((0, 0, -1)), 2 * top
-    for _ in range(16):
-        h = occ.ray(o, d, dist)
-        if h is None:
-            return None, None
-        if not h[1].startswith(NOT_GROUND):
-            return h[0].z, h[1]
-        dist -= (h[0] - o).length + 0.01
-        o = h[0] + d * 0.01
-    return None, None
+    h = cast(occ.ray, (x, y, top), (0, 0, -1), 2 * top, NOT_GROUND)
+    return (None, None) if h is None else (h[0].z, h[1])
 
 
 def blimp_radius(occ, centre, mats, vfov, cam_data):
@@ -618,6 +630,9 @@ def patch_glb(path):
 
 # ---------------------------------------------------------------- main
 def run():
+    if not bpy.app.background and not _g.get("ALLOW_LIVE"):
+        raise RuntimeError("export_hero: run it headless (blender -b, see README 'Hero export'); a live run "
+                           "needs \"ALLOW_LIVE\": True, only after the user has saved and opted in")
     t0 = time.time()
     timing = {}
     scene = bpy.context.scene
@@ -678,6 +693,9 @@ def run():
             rep(it, "kept")
         for it in kept_trees:
             rep(it, "kept")
+        for r in report.values():
+            r["dropped_frustum"] = r["instances"] - r["in_frustum"]
+            r["dropped_occlusion"] = r["in_frustum"] - r["kept"]
         timing["occlusion"] = time.time() - t0
         if _g.get("STOP_AFTER") == "cull":
             print(json.dumps({"kept_chunks": len(kept_chunks), "kept_trees": len(kept_trees), "timing": timing,
@@ -810,6 +828,7 @@ def run():
             for j in range(-WELL_PROBE_N, WELL_PROBE_N + 1):
                 d = (Vector((well_c.x + i * WELL_PROBE_STEP, well_c.y + j * WELL_PROBE_STEP, well_c.z)) - e250).normalized()
                 h = cast(occ.ray, e250, d, WELL_PROBE_DIST, (TEXT_OBJECT,))
+                h = h[0] if h else None
                 if h is not None:
                     tri = occ.bvh.ray_cast(h - d * 0.01, d, 0.1)[2]
                     if tri is not None and occ.mat[tri] == WATER_MATERIAL:
@@ -818,7 +837,7 @@ def run():
             wz = float(np.median([h.z for h in water_hits]))
             wr = max((h.to_2d() - well_c.to_2d()).length for h in water_hits) + WELL_WATER_PAD
             bm = bmesh.new()
-            bmesh.ops.create_circle(bm, cap_ends=True, segments=48, radius=wr)
+            bmesh.ops.create_circle(bm, cap_ends=True, segments=WELL_WATER_SEGMENTS, radius=wr)
             me = tag(bpy.data.meshes.new(WELL_WATER_NAME))
             bm.to_mesh(me)
             bm.free()
@@ -866,8 +885,8 @@ def run():
             z = ground(occ, q.x, q.y)[0] if clear(q) else None
             if z is None:
                 continue
-            lo = (q.x - 0.5, q.y - 0.5, z)
-            hi = (q.x + 0.5, q.y + 0.5, z + LAMP_POLE_H + LAMP_HEAD_H)
+            lo = (q.x - LAMP_HEAD_W / 2, q.y - LAMP_HEAD_W / 2, z)
+            hi = (q.x + LAMP_HEAD_W / 2, q.y + LAMP_HEAD_W / 2, z + LAMP_POLE_H + LAMP_HEAD_H)
             if not in_view(lo, hi, frusta):
                 continue
             lmesh = lmesh or lamp_mesh(M)
@@ -953,17 +972,24 @@ def run():
         sun = next((o for o in scene.objects if o.type == "LIGHT" and o.data.type == "SUN"), None)
         sun_dir = sun.matrix_world.to_3x3().normalized().col[2] if sun else Vector((0, 0, 1))
         night = sorted({m.name for m in M.cache.values() if m.name.startswith("NIGHT_")})
+        # the only nodes allowed to carry the Lantern / well-ring night materials (for the Task 4 glb test)
+        night_nodes = {}
+        for name in sorted(specials):
+            for m in specials[name].mats:
+                if m.name in (NIGHT_CYAN, NIGHT_WELL):
+                    night_nodes.setdefault(m.name, []).append(name)
         props = {
             "version": 1, "fps": FPS, "frames": [hg.FRAME_START, hg.FRAME_END],
             "base_vfov_deg": round(math.degrees(vfov), 6),
             "safe_half_tan": {"f250": round(sht250, 6), "f1": round(sht1, 6)},
-            "sun": {"dir": gl(sun_dir.normalized())},
+            "sun": {"dir": gl(sun_dir.normalized())},   # unit vector from the scene toward the sun (sun's +Z)
             "lantern": gl(lantern),
             "blimps": {"count": BLIMP_COUNT, "radius": radius, "altitude": BLIMP_ALTITUDE, "period_s": BLIMP_PERIOD_S,
                        "len": blen, "r": br},
             "walk_paths": walk_paths,
             "well_water": well_water,
             "night": night,
+            "night_nodes": night_nodes,
         }
         with open(os.path.join(OUT_DIR, "hero_props.json"), "w") as fh:
             json.dump(props, fh, indent=1)

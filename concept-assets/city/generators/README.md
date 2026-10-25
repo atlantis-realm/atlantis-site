@@ -95,18 +95,24 @@ cd concept-assets/city/generators
 node -e 'const fs=require("fs"),C=require("./citygen.js");fs.mkdirSync("build/hero",{recursive:true});fs.writeFileSync("build/hero/plan_blimps.json",JSON.stringify(C.generate(require("./plan.json")).blimps))'
 ```
 
-Then in Blender, with v05 open:
-
-```python
-G = "/path/to/concept-assets/city/generators/"
-exec(open(G + "export_hero.py").read(), {"__name__": "eh", "__file__": G + "export_hero.py", "OUT_DIR": G + "build/hero/"})
-```
-
-or headless, which is safer than the live session and takes a few minutes (`--factory-startup` keeps add-ons out):
+Then run it **headless** on the saved v05 (about a minute; `--factory-startup` keeps add-ons out). This is
+the default and the only tested way to run it:
 
 ```sh
 flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v05.blend \
   --python-expr 'G="'$PWD'/"; exec(open(G+"export_hero.py").read(), {"__name__":"eh","__file__":G+"export_hero.py","OUT_DIR":G+"build/hero/"})'
+```
+
+It reads the .blend as saved on disk, so unsaved edits in an open Blender session are not exported.
+
+Running it inside the live Blender session (`exec` through the Blender MCP) is **unverified**: a related
+`temp_override` pattern segfaulted Blender 5.2, and a crash loses unsaved work. `run()` refuses to run
+outside background mode unless the exec globals carry `"ALLOW_LIVE": True`. Pass it only after the user
+has saved and opted in:
+
+```python
+G = "/path/to/concept-assets/city/generators/"
+exec(open(G + "export_hero.py").read(), {"__name__": "eh", "__file__": G + "export_hero.py", "OUT_DIR": G + "build/hero/", "ALLOW_LIVE": True})
 ```
 
 Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-ignored `build/hero/`:
@@ -114,13 +120,18 @@ Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-i
 | File | What it is |
 |---|---|
 | `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>`, the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`). Materials are simple PBR, `HERO_<source>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
-| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials (glTF space: Y up). |
-| `export_report.json` | Kept/dropped counts per collection, band and mesh counts, triangles, glb size, timings. |
+| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. |
+| `export_report.json` | Per collection: `instances`, `in_frustum`, `kept`, `dropped_frustum` (= instances − in_frustum), `dropped_occlusion` (= in_frustum − kept), `chunks`, `chunks_kept`. Also band and mesh counts, triangles, glb size, timings. |
 
 Two runs give a byte-identical `hero_raw.glb` and leave the scene's object, material and mesh counts and
 the `Camera.001` keys unchanged. v05's Lantern is `NBHD_core_lantern` (the `KIT_Temple_lantern*` objects are
 in the excluded temple), so it is the node carrying `NIGHT_MAT_AP_Cyan`; the well ring lights use
-`NIGHT_WellRing`. The scene objects' names are taken by the originals, so the copies are built as
+`NIGHT_WellRing`. The Lantern's `MAT_AP_Glow` faces are its cyan heart, so they also go to
+`NIGHT_MAT_AP_Cyan` (cyan), not to the warm `NIGHT_MAT_AP_Glow` band used elsewhere.
+
+The near band (< `NEAR_DIST`) is joined per material per `NEAR_TILE` tile like the mid band, rather than
+kept object by object: per-object near meshes would blow the 300 draw-call budget. Near keeps its full
+detail (no back-face drop, no decimate) and the finest AO subdivision. The scene objects' names are taken by the originals, so the copies are built as
 `<name>@hero` and the suffix is stripped from the glb afterwards.
 
 `hero_glb.mjs` turns `hero_raw.glb` into `static/city/hero.glb`. The tuning knobs (cull margin, bands,

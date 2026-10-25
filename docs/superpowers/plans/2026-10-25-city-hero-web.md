@@ -5,7 +5,7 @@
 **Goal:** A `/city` page that plays the Blender hero camera move in reverse as the visitor scrolls (well → avenue), from a culled, AO-baked glb exported from v05, with a procedural cloud sky, a day/night toggle, circling blimps, moving well water and walking people.
 
 **Architecture:** Three stages:
-1. `export_hero.py` runs in the live Blender (Blender MCP) on v05 and writes a raw glb plus `hero_props.json`. It does the culling, realising, joining, LOD, AO bake, night markers, lamp posts and camera bake, and never saves the .blend.
+1. `export_hero.py` runs in Blender on v05 (headless `blender -b` by default; see Task 3) and writes a raw glb plus `hero_props.json`. It does the culling, realising, joining, LOD, AO bake, night markers, lamp posts and camera bake, and never saves the .blend.
 2. `hero_glb.mjs` (glTF-Transform, node) post-processes the raw glb: dedup, instancing, weld, meshopt and quantize. It writes `static/city/hero.glb`, which stays git-ignored until the user approves it.
 3. The SvelteKit route `/city` mounts `CityHeroScene` (Three.js). The scene scrubs the glb's camera animation from the scroll position, draws a shader sky and runs the night mode and the moving things.
 
@@ -179,7 +179,11 @@ Pure logic lives in small modules with unit tests:
 
 **Interfaces:**
 - Consumes: `hero_geom` (Task 2), loaded with `sys.path.insert(0, _here)`, the same way `build_city.py` finds its directory.
-- Run with `exec(open(G+"export_hero.py").read(), {"__name__":"eh","OUT_DIR":G+"build/hero/"})`.
+- Run with `exec(open(G+"export_hero.py").read(), {"__name__":"eh","OUT_DIR":G+"build/hero/"})`, **headless**
+  (`flatpak run --command=blender org.blender.Blender --factory-startup -b <v05.blend> --python-expr ...`, full
+  command in the README). The live-session exec is unverified (a related `temp_override` pattern segfaulted
+  Blender 5.2), so `run()` refuses it unless the globals carry `"ALLOW_LIVE": True`, passed only after the
+  user has saved and opted in.
 - Produces:
   - `build/hero/hero_raw.glb`;
   - `build/hero/hero_props.json`;
@@ -190,8 +194,11 @@ Pure logic lives in small modules with unit tests:
     "sun": { "dir": [0,0,0] }, "lantern": [0,0,0],
     "blimps": { "count": 0, "radius": 0, "altitude": 0, "period_s": 0, "len": 0, "r": 0 },
     "walk_paths": [ [[0,0,0], [0,0,0]] ],
-    "well_water": "node name", "night": ["material or node names carrying the marker"] }
+    "well_water": "node name", "night": ["material or node names carrying the marker"],
+    "night_nodes": { "NIGHT_MAT_AP_Cyan": ["node names"], "NIGHT_WellRing": ["node names"] } }
   ```
+  - `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z), in glTF space.
+  - `night_nodes` lists the only nodes allowed to use the Lantern and well-ring night materials.
   - Coordinates are in **glTF space**: Y up, so (x, z, −y) from Blender.
   - `safe_half_tan.f250` is measured from the `Text` bounds projected at frame 250.
   - `safe_half_tan.f1` is measured from the avenue frontage width at the camera's frame-1 distance, clamped to the 16:9 half-width.
@@ -210,7 +217,8 @@ Pure logic lives in small modules with unit tests:
   - Copy kept instances as real meshes with modifiers applied.
   - Trees (instances whose source mesh is a `KIT_PlantD_*` or `asset_Plant_*`) become **linked duplicates** of one mesh per species, so glTF-Transform can instance them in Task 4.
   - **Distance bands**, by the minimum distance to any sampled camera position:
-    - **Near** < 150 m: kept as modelled.
+    - **Near** < 150 m: full detail (no back-face drop, no decimate), but joined per material within 100 m
+      tiles like mid (`NEAR_TILE`). Deliberate: per-object near meshes would blow the 300 draw-call budget.
     - **Mid** 150–700 m: joined per material within 100 m grid tiles.
     - **Far** > 700 m: joined per material per tile, then a Decimate modifier (ratio 0.25, collapse).
     - **Exception:** objects named `KIT_Temple_lantern*` are never joined or decimated, whatever their distance.
@@ -224,7 +232,7 @@ Pure logic lives in small modules with unit tests:
   - Far meshes and trees get no bake: fill `AO` with white.
   - Restore the render engine afterwards.
 - [ ] **Step 4: Night markers and lamp posts.**
-  - Duplicate the materials on the night list as `NIGHT_<name>` and point only the qualifying faces or objects at them. `MAT_AP_Cyan` gets a `NIGHT_` twin only on `KIT_Temple_lantern*`.
+  - Duplicate the materials on the night list as `NIGHT_<name>` and point only the qualifying faces or objects at them. `MAT_AP_Cyan` gets a `NIGHT_` twin only on the Lantern (`LANTERN_PREFIXES`: `KIT_Temple_lantern*`, and `NBHD_core_lantern`, which is v05's Lantern) and on the well ring lights (`NIGHT_WellRing`). The Lantern's `MAT_AP_Glow` faces are its cyan heart, so they also go to `NIGHT_MAT_AP_Cyan`.
   - Set `extras.night_emissive`:
     - warm `[1.0, 0.78, 0.5, 2.0]` for windows;
     - `[1, 0.9, 0.7, 1.5]` for bands;
@@ -280,7 +288,9 @@ Pure logic lives in small modules with unit tests:
   - exactly one camera node `HeroCamera`, and an animation `Hero` whose input accessor runs from 0 to 249/24 s ± 1e-3;
   - a node `Text` exists;
   - every `NIGHT_*` material has `extras.night_emissive` as 4 numbers;
-  - no material named `NIGHT_MAT_AP_Cyan` is used by any node whose name does not start with `KIT_Temple_lantern`;
+  - `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` are used only by the nodes listed for them in `hero_props.json`'s
+    `night_nodes` (v05: `NBHD_core_lantern`; `KIT_Walkway_inlay0`, `KIT_Walkway_gallery_inlay`), and every
+    `NIGHT_MAT_AP_Cyan` node name starts with a Lantern prefix (`KIT_Temple_lantern` or `NBHD_core_lantern`);
   - no node named `CANALS_*` uses a `NIGHT_` material;
   - triangles summed over primitives (× instance count) ≤ 1.5 M;
   - primitive count, with instanced meshes once, is ≤ 300;
@@ -288,7 +298,8 @@ Pure logic lives in small modules with unit tests:
   - `hero_props.json` parses and has every key in the Task 3 schema, with `blimps.count` ≥ 1 and `walk_paths.length` ≥ 3.
 - [ ] **Step 2:** `cd gen && npm i -D @gltf-transform/core @gltf-transform/extensions @gltf-transform/functions meshoptimizer`. Then run `node hero_glb.mjs` and `node --test test/hero_glb.test.js` → FAIL until the export exists and is within budget.
 - [ ] **Step 3:** Implement `hero_glb.mjs`.
-  - Run Task 3's export, then this script, then the test.
+  - Run Task 3's export **headless** (the README command; never exec it in the live session without
+    `ALLOW_LIVE` and the user's go-ahead), then this script, then the test.
   - **If over budget, tune the constants at the top of `export_hero.py` and re-run, in this order:**
     1. far decimate ratio;
     2. mid tile size;
