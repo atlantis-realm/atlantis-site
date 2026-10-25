@@ -85,11 +85,12 @@ const PLASTERS = ["plaster_a", "plaster_b", "plaster_c"];
 const onFoot = footprintPrims(O);
 
 test("every Alder lot is built in ashlar", () => {
-  const lots = parkLots(O, "alder");
+  const lots = parkLots(O, "alder").filter((l) => l.kind !== "landmark");  // the observatory is a loft, tested below
   assert.ok(lots.length > 0);
   for (const l of lots) {
     assert.equal(l.college, "alder"); assert.equal(l.wall, "ashlar");
-    const walls = onFoot(l).filter((p) => p.m !== "plinth");
+    // a lab hall's clerestory band is glass on the same footprint
+    const walls = onFoot(l).filter((p) => p.m !== "plinth" && !(l.form === "lab_hall" && p.m === "glass"));
     assert.ok(walls.length > 0, `no wall prims for ${l.key}`);
     assert.ok(walls.every((p) => p.m === "ashlar"), `${l.key} walls ${walls.map((p) => p.m)}`);
   }
@@ -139,4 +140,102 @@ test("a college with an unknown style keeps today's look", () => {
   assert.ok(lots.length > 0);
   assert.ok(lots.every((l) => l.college === undefined && l.wall === undefined));
   assert.ok(parkLots(o, "indigo", p).every((l) => l.college === "indigo"));
+});
+
+// ---------------------------------------------------------------- Alder: lab halls and the observatory (task 3)
+const { ringR, primsOf, primTop } = require("./helpers.js");
+const mid = (poly) => [poly.reduce((t, p) => t + p[0], 0) / poly.length, poly.reduce((t, p) => t + p[1], 0) / poly.length];
+const observatories = (o) => o.lots.filter((l) => l.landmark === "observatory");
+const withPlan = (edit) => { const p = loadPlan(); edit(p); return [p, gen(p)]; };
+
+test("every Alder college lot is a lab hall with a glass clerestory", () => {
+  const labs = parkLots(O, "alder").filter((l) => l.use === "college");
+  assert.ok(labs.length > 0);
+  for (const l of labs) {
+    assert.equal(l.form, "lab_hall", `${l.key} form ${l.form}`);
+    assert.ok(l.storeys >= 2 && l.storeys <= 4, `${l.key} storeys ${l.storeys}`);
+    assert.ok(onFoot(l).some((p) => p.m === "glass"), `${l.key} has no glass band`);
+    assert.ok(onFoot(l).some((p) => p.m === "ashlar"), `${l.key} has no ashlar body`);
+  }
+  // 1-3 halls per cell, each a long bar
+  const perCell = new Map();
+  for (const l of labs) { const c = l.key.split("|").slice(0, -1).join("|"); perCell.set(c, (perCell.get(c) || 0) + 1); }
+  assert.ok([...perCell.values()].every((n) => n >= 1 && n <= 3), JSON.stringify([...perCell.values()]));
+});
+
+test("lab halls only appear in Alder", () => {
+  assert.ok(O.lots.filter((l) => l.form === "lab_hall").every((l) => l.college === "alder" && l.use === "college"));
+});
+
+test("exactly one Alder Observatory, on the inner half of the grove band", () => {
+  const obs = observatories(O);
+  assert.equal(obs.length, 1);
+  const l = obs[0], r = ringR(...mid(l.poly));
+  assert.ok(r >= 540 && r <= 650, `observatory at r ${r}`);
+  assert.equal(l.d, "park"); assert.equal(l.kind, "landmark"); assert.equal(l.college, "alder");
+  assert.equal(l.label, "Alder Observatory"); assert.equal(l.nb, "park-0");
+  for (const f of ["base", "top", "storeys", "area"]) assert.ok(Number.isFinite(l[f]), `${f} ${l[f]}`);
+  const spokes = CityGen.spokeAngles(plan);
+  assert.ok(l.poly.every(([x, y]) => !CityGen.inCorridor(plan, spokes, x, y, 6)), "observatory in a spoke corridor");
+});
+
+test("the observatory has a copper dome lofted at 8 latitudes over an ashlar drum", () => {
+  const prims = primsOf(O, "NBHD_park_alder_observatory");
+  const dome = prims.filter((p) => p.t === "loft" && p.m === "copper");
+  assert.equal(dome.length, 1);
+  assert.equal(dome[0].rings.length, 8);
+  assert.ok(dome[0].rings.every((r) => r.length === dome[0].rings[0].length), "dome ring lengths differ");
+  assert.ok(prims.some((p) => p.t === "loft" && p.m === "ashlar"), "no ashlar drum");
+  assert.ok(prims.some((p) => p.m === "roof"), "no lawn");
+});
+
+test("no tree stands within 45 m of the observatory", () => {
+  const [cx, cy] = mid(observatories(O)[0].poly);
+  const near = O.instances.filter((i) => Math.hypot(i.x - cx, i.y - cy) < 45);
+  assert.equal(near.length, 0, `${near.length} trees on the lawn`);
+  assert.equal(O.trees.length, O.instances.length, "trees and instances out of step");
+});
+
+test("Alder not growing: no observatory, and nothing Alder outside the college band", () => {
+  const [p, o] = withPlan((q) => { q.districts.find((d) => d.id === "park").colleges.alder.grow = false; });
+  assert.equal(observatories(o).length, 0);
+  assert.equal(primsOf(o, "NBHD_park_alder_observatory").length, 0);
+  const lots = parkLots(o, "alder", p);
+  assert.ok(lots.length > 0);
+  const inBand = ([x, y]) => ringR(x, y) >= 770 - 1 && ringR(x, y) <= 950 + 1;
+  for (const l of lots) assert.ok(l.poly.every(inBand), `${l.key} outside the college band`);
+  const pts = (pr) => (pr.t === "prism" ? pr.poly : pr.t === "solid" ? pr.top : pr.rings.flat());
+  const alderObs = o.objects.filter((ob) => ob.coll === "park" && ob.props.nb === "park-0" && !["harbour", "waterworks"].includes(ob.props.use));
+  assert.ok(alderObs.length > 0);
+  for (const ob of alderObs) for (const pr of ob.prims) assert.ok(pts(pr).every(inBand), `${ob.name} ${pr.m} prim outside the college band`);
+  assert.ok(!o.noPlant.some((q) => ringR(...mid(q)) < 770), "a feature footprint in the grove band");
+});
+
+test("with eight spokes there is still exactly one observatory", () => {
+  const [, o] = withPlan((q) => { q.spokes.count = 8; });
+  const obs = observatories(o);
+  assert.equal(obs.length, 1);
+  const r = ringR(...mid(obs[0].poly));
+  assert.ok(r >= 540 && r <= 650, `observatory at r ${r}`);
+});
+
+test("with a 300 m Lantern the observatory stays below the heart", () => {
+  const [p, o] = withPlan((q) => { core(q).lantern = { ...(core(q).lantern || {}), height: 300 }; });
+  const obs = observatories(o);
+  assert.equal(obs.length, 1);
+  assert.ok(obs[0].top < o.lantern.heart[1], `observatory top ${obs[0].top} vs heart ${o.lantern.heart[1]}`);
+  for (const l of o.lots.filter((x) => x.college)) assert.ok(l.top < o.lantern.heart[1], `${l.key || l.label} top ${l.top}`);
+  assert.ok(primsOf(o, "NBHD_park_alder_observatory").every((pr) => primTop(pr) < o.lantern.heart[1]));
+});
+
+test("the observatory is unchanged by the non-park digest", () => {
+  const want = fs.readFileSync(path.join(__dirname, "fixtures", "nonpark.sha256"), "utf8").trim();
+  assert.equal(nonParkDigest(O), want);
+});
+
+test("clearTrees drops trees inside a footprint from o.trees and o.instances alike", () => {
+  const o = { trees: [[0, 0], [50, 0], [1, 1]], instances: [{ name: "a", x: 0, y: 0 }, { name: "b", x: 50, y: 0 }, { name: "c", x: 1, y: 1 }] };
+  CityGen.clearTrees(o, [[-5, -5], [5, -5], [5, 5], [-5, 5]]);
+  assert.deepEqual(o.trees, [[50, 0]]);
+  assert.deepEqual(o.instances.map((i) => i.name), ["b"]);
 });

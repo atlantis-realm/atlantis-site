@@ -475,7 +475,7 @@ const CityGen = (() => {
   // roofs and ground (lot size and depth stay with the type). arts picks one plaster per building; its
   // roofs mix is the fallback for footprints that aren't 4-gons (4-gons are gabled in gableMat).
   const COLLEGE_STYLES = {
-    physics: { wall: "ashlar", lip: "lip", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver" },
+    physics: { wall: "ashlar", lip: "lip", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver", form: "lab_hall" },
     earth: { wall: "timber", lip: "timber", plinth: "plinth", roofs: { garden: 1 }, ground: "roof" },
     arts: { walls: ["plaster_a", "plaster_b", "plaster_c"], lip: "lip", plinth: "brick", roof: "gable", gableMat: "rooftile", roofs: { deco: 0.4, open: 0.6 }, ground: "paver" },
   };
@@ -962,6 +962,36 @@ const CityGen = (() => {
     return out;
   }
 
+  // Lab halls: a cell's building footprints merged along the cell's long axis into 1-3 long bars. Footprints
+  // whose spans across the axis overlap form one row; each row becomes the bar round them, trimmed to the cell
+  // at both long sides. The biggest bars that don't overlap one another are kept, bars running along the axis
+  // first (end wings across it only when there's nothing else).
+  function labHalls(cellPoly, foot) {
+    const p = dedupe(signedArea(cellPoly) < 0 ? [...cellPoly].reverse() : cellPoly);
+    if (p.length < 3 || !foot.length) return foot.slice(0, 1);
+    const [ux, uy] = longAxis(p), nx = -uy, ny = ux;
+    const span = (q, ax, ay) => { const v = q.map(([x, y]) => x * ax + y * ay); return [Math.min(...v), Math.max(...v)]; };
+    const rows = [];
+    for (const q of [...foot].sort((a, b) => span(a, nx, ny)[0] - span(b, nx, ny)[0])) {
+      const [v0, v1] = span(q, nx, ny), [u0, u1] = span(q, ux, uy);
+      const row = rows.find((r) => Math.min(r.v1, v1) - Math.max(r.v0, v0) >= 0.5 * Math.max(r.v1 - r.v0, v1 - v0));
+      if (row) Object.assign(row, { v0: Math.min(row.v0, v0), v1: Math.max(row.v1, v1), u0: Math.min(row.u0, u0), u1: Math.max(row.u1, u1), n: row.n + 1 });
+      else rows.push({ v0, v1, u0, u1, n: 1, q });
+    }
+    const bars = [];
+    for (const r of rows) {
+      const c1 = plotChord(p, ux, uy, nx, ny, r.v0 + 0.05), c2 = plotChord(p, ux, uy, nx, ny, r.v1 - 0.05);
+      const lo = c1 && c2 ? Math.max(r.u0, c1[0], c2[0]) : 0, hi = c1 && c2 ? Math.min(r.u1, c1[1], c2[1]) : 0;
+      if (hi - lo < 6) { bars.push({ q: r.q, along: false }); continue; }
+      const P = (u, v) => [u * ux + v * nx, u * uy + v * ny];
+      bars.push({ q: [P(lo, r.v0), P(hi, r.v0), P(hi, r.v1), P(lo, r.v1)], along: hi - lo >= r.v1 - r.v0 });
+    }
+    const out = [];
+    bars.sort((a, b) => (b.along - a.along) || (polyArea(b.q) - polyArea(a.q)));
+    for (const { q } of bars) if (out.length < 3 && !out.some((k) => quadsOverlap(k, q))) out.push(q);
+    return out;
+  }
+
   // Build one cell as its use: footprints with storeys (and storey height), plus park planting.
   function buildUse(plan, d, ter, o, ob, use, cell, key, opts) {
     const LU = plan.landuse || {}, T = (LU.types || {})[use] || {}, R = cell.R, poly = cell.poly;
@@ -1017,7 +1047,10 @@ const CityGen = (() => {
     } else if (use === "college") {
       const K = plan.skyline, lo = (d.storeys || [2, 6])[0], hi = (d.storeys || [2, 6])[1];
       if (byBldg) ground(poly, pave);
-      for (const q of byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R)) parts.push([q, clamp(Math.round(R.uniform(lo, hi) * Math.exp(K.chaos * 0.6 * R.normal())), 1, hi + 3), plan.storey, "roof"]);
+      const foot = byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R);
+      // a physics college: the footprints merge into 1-3 lab halls, long bars of 2-4 tall (6 m) storeys
+      if (CS && CS.form === "lab_hall") for (const [i, q] of labHalls(poly, foot).entries()) parts.push([q, rng(`park|col|lab|${key}|${i}`).randint(2, 4), 6, "lip", "lab_hall"]);
+      else for (const q of foot) parts.push([q, clamp(Math.round(R.uniform(lo, hi) * Math.exp(K.chaos * 0.6 * R.normal())), 1, hi + 3), plan.storey, "roof"]);
     } else {
       // residential and commercial: lots round a courtyard (commercial: bigger lots, deeper wings, taller)
       const lotPlan = T.lot ? { ...plan, skyline: { ...plan.skyline, lot: T.lot } } : plan;
@@ -1032,8 +1065,19 @@ const CityGen = (() => {
     const cellSt = storeysAt(plan, cx, cy, rng(`${key}|roof`), (d.height_scale || 1) * (T.height || 1) * (opts.nbHeight || 1));
     const cellFixed = parts.length ? parts[0][1] : null;
     const summary = { use, base: Infinity, top: Infinity };
-    for (const [li, [q, st0, sh, roofM]] of parts.entries()) {
+    for (const [li, [q, st0, sh, roofM, form]] of parts.entries()) {
       const LR = rng(`${key}|${li}`), [qx, qy] = centroid(q);
+      if (form === "lab_hall") {  // an ashlar body, a continuous glass clerestory in its top 2 m, a flat lip roof
+        const mats = { wall: CS.wall, lip: CS.lip, plinth: CS.plinth };
+        const bld = building(o, ob, ter, q, st0 * sh - 2, use, { roof: false, lip: false, mats });
+        o.prism(ob, q, bld.top, bld.top + 2, "glass");
+        o.prism(ob, inset(q, -0.35), bld.top + 2, bld.top + 2.9, CS.lip);
+        const top = bld.top + 2.9;
+        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top, storeys: st0, plinth: bld.plinth, area: polyArea(q), label: "Lab hall", college: CS.college, wall: mats.wall, form });
+        o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, top);
+        summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, top);
+        continue;
+      }
       const hv = style.height_var ?? 0.22, own = byBldg ? Math.exp(hv * LR.normal()) : 1;
       const st = st0 == null
         ? clamp(Math.round(byBldg ? cellSt * own : perCell ? cellSt : storeysAt(plan, qx, qy, LR, (d.height_scale || 1) * (T.height || 1) * (opts.nbHeight || 1))), plan.skyline.min, Math.round(plan.skyline.max * (T.height || 1)))
@@ -1664,6 +1708,61 @@ const CityGen = (() => {
     grove: ["asset_Plant_civic", "asset_Plant_column", "asset_Plant_open", "asset_Plant_shrub", "asset_Plant_fruit"],
   };
 
+  // Remove every tree standing inside poly. tree() is the only thing that adds to o.trees and o.instances, one
+  // entry each, so the two arrays are parallel here and are filtered by the same index.
+  function clearTrees(o, poly) {
+    const keep = o.trees.map(([x, y]) => !pointInPoly(x, y, poly));
+    o.trees = o.trees.filter((_, i) => keep[i]);
+    o.instances = o.instances.filter((_, i) => keep[i]);
+  }
+
+  // Alder's observatory: a stone drum under a copper dome on a clear lawn, in the grove band on the inner half
+  // (toward Old Town), clear of the spoke corridors, the hero wedge and the canals. Only when Alder is a physics
+  // college that may grow and has its landmark on.
+  const OBS = { drum: 22, drumH: 14, dome: 22, lawn: 45, lats: 8, segs: 32 };
+  function genObservatory(plan, d, ter, spokes, o, L, kinds) {
+    const cfg = collegeConfig(d).alder;
+    if (!cfg.landmark || !cfg.grow || cfg.style !== "physics") return;
+    const bi = kinds.indexOf("grove"), band = bi >= 0 ? L.bands[bi] : null;
+    if (!band) return;
+    // Alder's sectors, measured the way the neighbourhoods assign them (from the start spoke)
+    const n = spokes.length, step = TAU / n, start = spokes[((d.neighbourhood && d.neighbourhood.start_spoke) || 0) % n].a;
+    const mine = Array.from({ length: n }, (_, k) => k).filter((k) => (collegeOf(d, k) || {}).id === "alder");
+    const inMine = (x, y) => mine.includes(Math.floor((((Math.atan2(y, x) - start) % TAU + TAU) % TAU) / step) % n);
+    const disc = (cx, cy, r, m = OBS.segs) => Array.from({ length: m }, (_, j) => [cx + r * Math.cos(j * TAU / m), cy + r * Math.sin(j * TAU / m)]);
+    const clear = ([x, y]) => inMine(x, y) && !inCorridor(plan, spokes, x, y, 6) && !inHeroWedge(plan, spokes, x, y, 6) && !onCanalLine(o, x, y, 2)
+      && !o.noPlant.some((q) => pointInPoly(x, y, q));
+    const r0 = band.r0 + OBS.lawn + 2, r1 = Math.min((band.r0 + band.r1) / 2, band.r1 - OBS.lawn - 2), found = [];
+    for (let r = r0; r <= r1 + 1e-6; r += 5) for (const k of mine) for (let a = start + k * step; a < start + (k + 1) * step; a += 5 / r) {
+      const [cx, cy] = polar(r, a);
+      if (clear([cx, cy]) && disc(cx, cy, OBS.lawn).every(clear)) found.push({ r, cx, cy });
+    }
+    if (!found.length) { o.warnings.push(`There's no clear site in ${cfg.name}'s grove band for its observatory.`); return; }
+    // the innermost clear sites (toward Old Town), one picked by seed
+    const rMin = Math.min(...found.map((f) => f.r)), site = rng("park|col|alder|observatory").choice(found.filter((f) => f.r <= rMin + 10));
+    const { cx, cy } = site, nb = `park-${cfg.group}`;
+    const ob = o.obj(`NBHD_${d.id}_alder_observatory`, d.id, { use: "landmark", nb, college: "alder" });
+    // the lawn, following the slope, and kept clear of trees (planted ones now, the bands' later)
+    const lawn = disc(cx, cy, OBS.lawn, 48), lt = lawn.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.12]), lb = Math.min(...lt.map((t) => t[2])) - 0.42;
+    o.solid(ob, lt, lt.map(() => lb), "roof");
+    o.noPlant.push(lawn);
+    clearTrees(o, lawn);
+    // drum on a plinth that takes up the slope, then the dome: rings at 8 latitudes, the apex ring all pole
+    const foot = disc(cx, cy, OBS.drum), zs = foot.map(([x, y]) => ter.G(Math.hypot(x, y)));
+    const zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05, eave = base + OBS.drumH, top = eave + OBS.dome;
+    const ring = (r, z) => disc(cx, cy, r).map(([x, y]) => [x, y, z]);
+    o.loft(ob, [ring(OBS.drum, zmin - 0.3), ring(OBS.drum, base)], "plinth");
+    o.loft(ob, [ring(OBS.drum, base), ring(OBS.drum, eave)], "ashlar");
+    o.loft(ob, [ring(OBS.drum + 0.6, eave - 0.9), ring(OBS.drum + 0.6, eave)], "lip");
+    o.loft(ob, Array.from({ length: OBS.lats }, (_, i) => {
+      if (i === OBS.lats - 1) return foot.map(() => [cx, cy, top]);
+      const f = (i / (OBS.lats - 1)) * Math.PI / 2;
+      return ring(OBS.dome * Math.cos(f), eave + OBS.dome * Math.sin(f));
+    }), "copper");
+    o.lots.push({ d: d.id, kind: "landmark", landmark: "observatory", college: "alder", label: "Alder Observatory", nb, key: `${d.id}|alder|observatory`, obj: ob.name,
+      poly: foot, base, top, storeys: Math.max(1, Math.round(OBS.drumH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });
+  }
+
   // Park ring: colleges (courts, pavilions, halls) in the middle band, groves and orchards either side,
   // an irrigation rill down the middle of each planted band.
   function genCampus(plan, d, ter, spokes, o) {
@@ -1678,6 +1777,8 @@ const CityGen = (() => {
       });
       buildCanals(plan, d, ter, o, L);
     }
+    // the colleges' features in the grove and orchard bands, before those bands are planted
+    genObservatory(plan, d, ter, spokes, o, L, kinds);
     L.bands.forEach((band, bi) => {
       const kind = kinds[bi] || "campus";
       if (kind === "campus" && d.layout === "voronoi") return;  // built in the first pass above
@@ -2937,6 +3038,6 @@ const CityGen = (() => {
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, oldTownLandmarks, collegeConfig, collegeOf, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, oldTownLandmarks, collegeConfig, collegeOf, clearTrees, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;
