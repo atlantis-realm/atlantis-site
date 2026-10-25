@@ -2101,6 +2101,7 @@ const CityGen = (() => {
         const fill = o.obj(`SPOKE_${sp.k}_hero_ground`, "spokes");
         const quads = (o.heroFill = []), wquads = (o.heroWater = []);
         for (const ring of plan.scene.rings) {
+          if (ring.id === "island") continue;  // Old Town builds its own ground
           const wet = ring.kind === "water";
           if (wet && (S.hero_skip_crossings || []).includes(ring.id)) continue;  // the kit's own water is there
           // stop where even the corridor-edge corner would leave the ring
