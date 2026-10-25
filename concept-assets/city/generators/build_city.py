@@ -13,6 +13,8 @@ regrade()  puts the hand-built scene on the plan: first the scale, then the terr
            Every touched object keeps its original state (object prop / mesh attribute / curve prop),
            so rerunning with a different plan starts from the original scene.
 build()    rebuilds the generated collections. Trees are point clouds instanced by Geometry Nodes.
+ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
+hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
 """
 import bpy, json, math, os
 from mathutils import Vector
@@ -33,7 +35,8 @@ COLL = {"outer": "20_NBHD_OUTER", "belt": "21_NBHD_BELT", "park": "22_NBHD_PARK"
         "spokes": "24_SPOKES", "avenues": "25_RING_AVENUES", "skywalks": "26_SKYWALKS", "regrade": "19_REGRADE_PLINTHS"}
 MAT = {"stone": "MAT_AP_Stone", "plinth": "MAT_AP_StoneWell", "lip": "MAT_AP_StoneLip", "roof": "MAT_AP_Grass",
        "paver": "MAT_AP_Paver", "water": "MAT_AP_Water", "road": "MAT_AP_Grout", "stair": "MAT_AP_StoneLip",
-       "glass": "MAT_AP_Cyan", "tile": "MAT_AP_Bronze", "panel": "MAT_AP_Cyan", "fabric": "MAT_AP_StoneLip"}
+       "glass": "MAT_AP_Cyan", "tile": "MAT_AP_Bronze", "panel": "MAT_AP_Cyan", "fabric": "MAT_AP_StoneLip",
+       "glow": "MAT_AP_Glow", "gold": "MAT_AP_Gold"}  # new keys go at the END: the material index is the key's position
 MAT_KEYS = list(MAT)
 
 
@@ -400,6 +403,31 @@ def reset_collection(name):
 MATS = []
 
 
+def ensure_glow():
+    """MAT_AP_Glow: emissive cyan. Creates or updates (idempotent); nodes found by type, never by name."""
+    m = get_mat("MAT_AP_Glow")
+    m.use_nodes = True
+    bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None) or m.node_tree.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.inputs["Base Color"].default_value = (0.5, 0.95, 1.0, 1.0)
+    bsdf.inputs["Emission Color"].default_value = (0.5, 0.95, 1.0, 1.0)
+    bsdf.inputs["Emission Strength"].default_value = 8.0
+    if not any(n.type == "OUTPUT_MATERIAL" for n in m.node_tree.nodes):
+        out = m.node_tree.nodes.new("ShaderNodeOutputMaterial")
+        m.node_tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return m
+
+
+def hide_temple():
+    """Old Town replaces the temple: exclude 05_TEMPLE and hide its kit parts. Idempotent and recoverable."""
+    lc = bpy.context.view_layer.layer_collection.children.get("05_TEMPLE")
+    if lc is not None:
+        lc.exclude = True
+    for o in bpy.data.objects:
+        if o.name.startswith("KIT_PlantI_temple_"):
+            o.hide_viewport = True
+            o.hide_render = True
+
+
 class MeshBuilder:
     """Collects prisms/solids as plain vertex and face lists, then makes one mesh with from_pydata
     (much faster than bmesh at city scale). Footprints are wound counter-clockwise so normals face out."""
@@ -583,10 +611,12 @@ def cut_canals():
 
 def main():
     global MATS
+    ensure_glow()
     MATS = [get_mat(MAT[k]) for k in MAT_KEYS]
     if globals().get("DO_REGRADE", True):
         regrade()
     if globals().get("DO_BUILD", True):
+        hide_temple()
         build()
         cut_canals()
 

@@ -18,7 +18,8 @@ const out = {
       rescale: plan.scene.rescale || null, hero_angle: CityGen.spokeAngles(plan).find((s) => s.hero)?.a ?? -Math.PI / 2 };
   })(),
   summary: { lots: o.lots.length, objects: o.objects.length, instances: o.instances.length, prims: o.objects.reduce((t, ob) => t + ob.prims.length, 0), warnings: o.warnings,
-    spokes: o.spokes.map((s) => ({ k: s.k, hero: s.hero, stairs: s.stairs.length, bridges: s.bridges.length })), avenues: o.avenues.map((a) => `${a.d} r${a.r} ${a.dir}`) },
+    spokes: o.spokes.map((s) => ({ k: s.k, hero: s.hero, stairs: s.stairs.length, bridges: s.bridges.length })), avenues: o.avenues.map((a) => `${a.d} r${a.r} ${a.dir}`),
+    lantern: o.lantern ? { top: Math.round(o.lantern.top), heart: o.lantern.heart.map(Math.round) } : null, quarters: o.quarters.length },
 };
 fs.mkdirSync(require("path").dirname(process.argv[3]), { recursive: true });
 fs.writeFileSync(process.argv[3], JSON.stringify(out));
