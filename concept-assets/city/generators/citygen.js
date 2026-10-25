@@ -457,7 +457,24 @@ const CityGen = (() => {
       }
       return src === undefined || src === null ? def : src;
     };
-    return merge(OLD_TOWN_DEFAULTS, d || {});
+    const c = merge(OLD_TOWN_DEFAULTS, d || {}), D = OLD_TOWN_DEFAULTS;
+    // Normalise what the planner can push out of shape: ranges must be two finite numbers (else the
+    // default) and come out as [lo, hi]; the Lantern's numbers must be finite and in range.
+    const fin = (x) => (typeof x === "number" || (typeof x === "string" && x.trim() !== "")) && Number.isFinite(+x);
+    const range = (v, def, min = 0) => (Array.isArray(v) && v.length === 2 && v.every(fin)
+      ? [Math.max(min, Math.min(+v[0], +v[1])), Math.max(min, +v[0], +v[1])] : def.slice());
+    const num = (v, def, ok) => (fin(v) && ok(+v) ? +v : def);
+    for (const k of Object.keys(D.heights)) c.heights[k] = range(c.heights[k], D.heights[k]);
+    c.quarters.block = range(c.quarters.block, D.quarters.block, 1);
+    const L = c.lantern, LD = D.lantern;
+    L.height = num(L.height, LD.height, (x) => x > 0);
+    L.base = num(L.base, LD.base, (x) => x > 0);
+    L.taper = num(L.taper, LD.taper, (x) => x > 0 && x <= 1);
+    L.clearance = num(L.clearance, LD.clearance, (x) => x >= 0);
+    // the heart sits between 5 % and 90 % of the height, so it stays below the crown (92 %), at least 5 % tall
+    const [h0, h1] = range(L.heart, LD.heart), lo = clamp(h0, 0.05, 0.85);
+    L.heart = [lo, clamp(h1, lo + 0.05, 0.9)];
+    return c;
   }
 
   // Old Town tower massing per culture type (neighbourhoods.types[].style.tower):
@@ -1647,9 +1664,16 @@ const CityGen = (() => {
   // Old Town (the core district), built in a fixed order: ground and Lantern first, then (later tasks)
   // the grid and quarter blocks, landmarks, and towers on the blocks left over.
   // Old Town heights stay under the Lantern's heart top by `clearance` (absolute z).
+  // The cap never drops below a podium (OLD_TOWN_FLOOR_STOREYS) above the square, even when the clearance
+  // asks for more than the heart's height; generate() warns when that happens.
+  const OLD_TOWN_FLOOR_STOREYS = 4;
+  function oldTownCapInfo(plan, ter, d) {
+    const L = oldTownConfig(d).lantern, ground = ter.G(0);
+    const want = ground + L.height * L.heart[1] - L.clearance, floor = ground + OLD_TOWN_FLOOR_STOREYS * (plan.storey || 4.3);
+    return { cap: Math.max(want, floor), want, floor, ground, heartTop: L.height * L.heart[1], clearance: L.clearance };
+  }
   function oldTownCap(plan, ter, d) {
-    const L = oldTownConfig(d).lantern;
-    return ter.G(0) + L.height * L.heart[1] - L.clearance;
+    return oldTownCapInfo(plan, ter, d).cap;
   }
   // a spoke corridor crossing the canal edge at angle a (the old centre quay wall's test)
   const edgeInSpoke = (plan, spokes, r1, a) => inCorridor(plan, spokes, ...polar(r1 - 2, a), 2)
@@ -2843,7 +2867,9 @@ const CityGen = (() => {
       if (d.enabled === false || d.type !== "oldtown") continue;
       const cfg = oldTownConfig(d), cap = oldTownCap(plan, ter, d), bands = ringLayout(plan, d).bands;
       const wants = [[cfg.heights.grid[1], bands[0]], [cfg.heights.band[1], bands[bands.length - 1]], [cfg.heights.landmark[1], bands[0]]];
-      if (wants.some(([h, b]) => b && ter.G(b.r0) + h > cap)) o.warnings.push(`Old Town towers capped at ${Math.round(cap - ter.G(0))} m to keep the Lantern's heart in view.`);
+      const ci = oldTownCapInfo(plan, ter, d);
+      if (ci.want < ci.floor) o.warnings.push(`The Lantern's clearance (${Math.round(ci.clearance)} m) is more than its heart's height above the square (${Math.round(ci.heartTop)} m), so Old Town is held to ${Math.round(ci.floor - ci.ground)} m podiums; lower the clearance or raise the heart.`);
+      else if (wants.some(([h, b]) => b && ter.G(b.r0) + h > cap)) o.warnings.push(`Old Town towers capped at ${Math.round(cap - ter.G(0))} m to keep the Lantern's heart in view.`);
     }
     const hero = spokes.find((s) => s.hero);
     const hp = hero && makeProfile(plan, ter, S.hero_skip_crossings);

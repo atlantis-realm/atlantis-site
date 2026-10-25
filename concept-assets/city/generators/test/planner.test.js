@@ -29,7 +29,7 @@ test("assemble.py writes to the path it is given", () => {
 
 test("built page carries the Old Town planner fields", () => {
   assert.ok(!HTML.includes(">Core<"), "a view button still says Core");
-  for (const s of ["Old Town", "quarters.cultures.", "grid.forms.", "lantern.taper", "lantern.heart.0"]) assert.ok(HTML.includes(s), `missing ${s}`);
+  for (const s of ["Old Town", "quarters.cultures.", "quarters.weights.", "grid.forms.", "lantern.taper", "lantern.heart.0"]) assert.ok(HTML.includes(s), `missing ${s}`);
 });
 
 test("banned names only appear as internal ids", () => {
@@ -161,4 +161,30 @@ test("page edits: array settings stay arrays in the saved plan", async () => {
   assert.equal(d.quarters.count, 15);
   const cfg = CityGen.oldTownConfig(d);
   assert.deepEqual(cfg.heights.band, [200, 280]);
+});
+
+test("page edits: quarter culture weights are offered per culture, saved and honoured; blank clears", async () => {
+  const plan = loadPlan(), P = bootPage(plan), ids = plan.neighbourhoods.types.map((t) => t.id);
+  await tick();
+  P.on.get("tabs:click")({ target: { closest: () => ({ dataset: { tab: "core" } }) } });
+  const panel = P.el("panel").innerHTML;
+  assert.match(panel, /Quarter cultures · relative weights/);
+  for (const id of ids) {
+    assert.ok(panel.includes(`data-path="quarters.weights.${id}"`), `panel lacks quarters.weights.${id}`);
+    assert.ok(new RegExp(`data-path="(quarters\\.weights|grid\\.forms)\\.${id}"[^>]*data-blank="1"`).test(panel), `${id} weight field can't be blanked`);
+  }
+  const input = (p, value, ds = {}) => P.on.get("panel:input")({ target: { dataset: { path: p, ...ds }, value, min: "0", max: "20", setAttribute() {} } });
+  input("quarters.weights.works", "5", { blank: "1" });
+  input("grid.forms.gardens", "2", { blank: "1" });
+  input("grid.forms.gardens", "", { blank: "1" });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(P.saved.length > 0, "nothing saved");
+  const saved = P.saved.at(-1), d = saved.districts.find((x) => x.id === "core");
+  assert.equal(d.quarters.weights.works, 5);
+  assert.equal(d.quarters.count, 15, "editing a weight dropped the other quarter settings");
+  assert.ok(!("gardens" in d.grid.forms), `a blanked weight stays in the plan: ${JSON.stringify(d.grid.forms)}`);
+  // with works the only weighted culture, every seeded quarter is works
+  const o = CityGen.generate(saved);
+  assert.ok(o.quarters.length > 0);
+  for (const q of o.quarters) assert.equal(q.culture, "works", `quarter ${q.k} is ${q.culture}`);
 });

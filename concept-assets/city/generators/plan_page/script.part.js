@@ -350,12 +350,14 @@
     const box = ks.reduce((o, k, i) => (o[k] == null ? (o[k] = isIdx(ks[i + 1] ?? last) ? [] : {}) : o[k]), root);
     // no holes in a list: "" for text (a culture left to the seed), else the value itself (a [v, v] range)
     if (Array.isArray(box) && isIdx(last)) for (let i = box.length; i < +last; i++) box[i] = typeof val === "string" ? "" : val;
+    // undefined clears the setting (a blank weight field: the key goes, so it reads as unset)
+    if (val === undefined) { if (Array.isArray(box)) box[last] = null; else delete box[last]; return; }
     box[last] = val;
   }
   function fieldHTML(f) {
     const raw = getPath(f.path), v = raw == null ? "" : Math.round(raw * (f.scale || 1) * 1e4) / 1e4;
     const id = `f-${selected}-${f.path.replace(/[.@]/g, "-")}`, dis = readOnly ? " disabled" : "";
-    return `<div class="f${f.wide ? " wide" : ""}"><label for="${id}">${esc(f.label)}</label><div class="in"><input type="number" id="${id}" data-path="${f.path}" value="${v}" step="${f.step ?? 1}"${f.min != null ? ` min="${f.min}"` : ""}${f.max != null ? ` max="${f.max}"` : ""}${f.int ? ' data-int="1"' : ""}${f.scale ? ` data-scale="${f.scale}"` : ""}${dis}>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}</div></div>`;
+    return `<div class="f${f.wide ? " wide" : ""}"><label for="${id}">${esc(f.label)}</label><div class="in"><input type="number" id="${id}" data-path="${f.path}" value="${v}" step="${f.step ?? 1}"${f.min != null ? ` min="${f.min}"` : ""}${f.max != null ? ` max="${f.max}"` : ""}${f.int ? ' data-int="1"' : ""}${f.blank ? ' data-blank="1"' : ""}${f.scale ? ` data-scale="${f.scale}"` : ""}${dis}>${f.unit ? `<span class="unit">${f.unit}</span>` : ""}</div></div>`;
   }
   function selectHTML(path, label, options) {
     // options whose values are "true"/"false" store real booleans
@@ -371,7 +373,7 @@
     const want = isOldTown(d) && !CityGen.oldTownConfig(d).second_avenue ? 1 : 2;
     if (L.avenues.length !== want || (d.avenues || []).length < want) w.push(want === 1 ? "Old Town needs its ring avenue." : isOldTown(d) ? "The second ring avenue is on, so Old Town needs two ring avenues." : "Each ring should carry exactly two ring avenues.");
     L.avenues.forEach((a, i) => {
-      if (a.r - a.w / 2 < ring.r0 || a.r + a.w / 2 > ring.r1) w.push(`Ring avenue ${i + 1} runs off the ${ring.label.toLowerCase()} (${fmt(ring.r0)}–${fmt(ring.r1)} m).`);
+      if (a.r - a.w / 2 < ring.r0 || a.r + a.w / 2 > ring.r1) w.push(`Ring avenue ${i + 1} runs outside its ring, ${ring.label} (${fmt(ring.r0)}–${fmt(ring.r1)} m).`);
       if ((a.road || 12) > a.w - 4) w.push(`Ring avenue ${i + 1}: the road leaves no room for pavements.`);
     });
     if (L.avenues.length === 2 && L.avenues[0].r + L.avenues[0].w / 2 >= L.avenues[1].r - L.avenues[1].w / 2) w.push("The two ring avenues overlap.");
@@ -512,19 +514,22 @@
     const types = plan.neighbourhoods?.types || [], cfg = CityGen.oldTownConfig(d), n = Math.max(0, Math.round(cfg.quarters.count) || 0);
     let h = group("Grid · round the Lantern square", [num("grid.block", "Block size", "m", { step: 0.5, min: 30, max: 80 }), num("grid.street", "Street width", "m", { step: 0.5, min: 6, max: 30 }),
       num("grid.square", "Square size", "m", { step: 1, min: 60, max: 200 })]);
-    if (types.length) h += group("Grid tower forms · relative weights, all blank for an even mix", types.map((t) => num(`grid.forms.${t.id}`, t.label, "", { step: 0.1, min: 0, max: 20 })));
+    // relative weights: a blank (or 0) field leaves that culture out; with every field blank the pick is even
+    if (types.length) h += group("Grid tower forms · relative weights; blank or 0 leaves a culture out, all blank for an even mix", types.map((t) => num(`grid.forms.${t.id}`, t.label, "", { step: 0.1, min: 0, max: 20, blank: true })));
     h += `<fieldset><legend>Quarters · between the ring avenue and the canal</legend>` + [num("quarters.count", "Quarters", "", { int: true, min: 4, max: 30 }), num("quarters.seed", "Angle seed", "", { int: true, min: 0, max: 99999 }),
       num("quarters.block.0", "Block size from", "m", { step: 0.5, min: 20, max: 80 }), num("quarters.block.1", "Block size to", "m", { step: 0.5, min: 20, max: 80 })].map(fieldHTML).join("") +
       Array.from({ length: n }, (_, k) => {
         const now = (gen.quarters || []).find((q) => q.k === k);
         return selectHTML(`quarters.cultures.${k}`, `Quarter ${k + 1}${now ? ` · now ${cultureLabel(now.culture)}` : ""}`, [["", "Seeded"], ...types.map((t) => [t.id, t.label])]);
       }).join("") + `</fieldset>`;
+    // the seeded pick for quarters left to the seed (an override above always wins)
+    if (types.length) h += group("Quarter cultures · relative weights; blank or 0 leaves a culture out, all blank for an even mix", types.map((t) => num(`quarters.weights.${t.id}`, t.label, "", { step: 0.1, min: 0, max: 20, blank: true })));
     h += group("Heights · above the ground", [num("heights.grid.0", "Grid towers from", "m", { min: 10, max: 900 }), num("heights.grid.1", "Grid towers to", "m", { min: 10, max: 900 }),
       num("heights.band.0", "Quarter towers from", "m", { min: 10, max: 900 }), num("heights.band.1", "Quarter towers to", "m", { min: 10, max: 900 }),
       num("heights.landmark.0", "Landmarks from", "m", { min: 5, max: 400 }), num("heights.landmark.1", "Landmarks to", "m", { min: 5, max: 400 })]);
     h += group("Lantern", [num("lantern.height", "Height above the square", "m", { step: 5, min: 100, max: 900 }), num("lantern.base", "Base width", "m", { step: 1, min: 20, max: 120 }),
       num("lantern.taper", "Taper, top over base", "", { step: 0.01, min: 0.7, max: 0.95 }), num("lantern.clearance", "Roofs stay below the heart's top by", "m", { step: 1, min: 0, max: 300 }),
-      num("lantern.heart.0", "Heart from", "%", { scale: 100, step: 1, min: 5, max: 95 }), num("lantern.heart.1", "Heart to", "%", { scale: 100, step: 1, min: 5, max: 95 })]);
+      num("lantern.heart.0", "Heart from", "%", { scale: 100, step: 1, min: 5, max: 90 }), num("lantern.heart.1", "Heart to", "%", { scale: 100, step: 1, min: 5, max: 90 })]);
     h += group("Landmarks", [num("landmarks.embassies", "Embassies", "", { int: true, min: 0, max: 20 }), num("landmarks.guild_halls", "Guild halls", "", { int: true, min: 0, max: 20 })]);
     h += `<fieldset><legend>Ring avenues</legend>${selectHTML("second_avenue", "Second ring avenue", [["false", "Off"], ["true", "On"]])}</fieldset>`;
     return h;
@@ -649,6 +654,7 @@
     if (el.dataset.list) v = el.value.split(",").map((x) => x.trim()).filter(Boolean);
     else if (el.dataset.str) v = el.value;
     else if (el.dataset.bool) v = el.value === "true";
+    else if (el.dataset.blank && String(el.value).trim() === "") { v = undefined; el.setAttribute("aria-invalid", "false"); }
     else {
       v = parseFloat(el.value);
       const bad = !Number.isFinite(v) || (el.min !== "" && v < +el.min) || (el.max !== "" && v > +el.max);

@@ -15,6 +15,8 @@ regrade()  puts the hand-built scene on the plan: first the scale, then the terr
 build()    rebuilds the generated collections. Trees are point clouds instanced by Geometry Nodes.
 ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
 hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
+hide_centre_strays()  after the build, any other visible hand-built object reaching inside the first ring
+           canal (bar its water, AP_inner_water, and bank, KIT_Terrace_island) is reported and hidden the same way.
 """
 import bpy, json, math, os
 from mathutils import Vector
@@ -612,6 +614,74 @@ def cut_canals():
     print("canal cuts", len(cuts), "on", n, "objects")
 
 
+CENTRE_KEEP = {"AP_inner_water", "KIT_Terrace_island"}  # the first ring canal's water and its college-side bank
+STRAY_TYPES = {"MESH", "CURVE", "SURFACE", "FONT", "META"}
+
+
+def xy_reach(o):
+    """Closest world-space XY distance from the city centre (CX, CY) to the object's geometry: meshes by
+    their edges (0 when a face covers the centre), collection instances and other types by their box."""
+    import numpy as np
+    M = np.array(o.matrix_world)
+    if o.type == "MESH" and o.data and len(o.data.vertices):
+        me = o.data
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        xy = (co.reshape(-1, 3) @ M[:3, :3].T + M[:3, 3])[:, :2] - (CX, CY)
+        best = float(np.hypot(xy[:, 0], xy[:, 1]).min())
+        if len(me.edges):
+            e = np.empty(len(me.edges) * 2, dtype=np.int64)
+            me.edges.foreach_get("vertices", e)
+            e = e.reshape(-1, 2)
+            a, d = xy[e[:, 0]], xy[e[:, 1]] - xy[e[:, 0]]
+            t = np.clip(-(a * d).sum(1) / np.maximum((d * d).sum(1), 1e-12), 0, 1)
+            p = a + d * t[:, None]
+            best = min(best, float(np.hypot(p[:, 0], p[:, 1]).min()))
+        if len(me.polygons):
+            # a face covers the centre when a ray from it along +x crosses the face's boundary an odd number of times
+            lv = np.empty(len(me.loops), dtype=np.int64)
+            me.loops.foreach_get("vertex_index", lv)
+            ls, lt = np.empty(len(me.polygons), dtype=np.int64), np.empty(len(me.polygons), dtype=np.int64)
+            me.polygons.foreach_get("loop_start", ls)
+            me.polygons.foreach_get("loop_total", lt)
+            poly = np.repeat(np.arange(len(ls)), lt)
+            nxt = np.arange(len(lv)) + 1
+            nxt[ls + lt - 1] = ls
+            a, b = xy[lv], xy[lv[nxt]]
+            cross = (a[:, 1] > 0) != (b[:, 1] > 0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                xi = a[:, 0] - a[:, 1] * (b[:, 0] - a[:, 0]) / (b[:, 1] - a[:, 1])
+            hits = np.bincount(poly[cross & (xi > 0)], minlength=len(ls))
+            if (hits % 2).any():
+                best = 0.0
+        return best
+    pts = footprint_world(o) if o.type == "EMPTY" else [o.matrix_world @ Vector(c) for c in o.bound_box]
+    xs, ys = [p.x - CX for p in pts], [p.y - CY for p in pts]
+    return math.hypot(max(min(xs), 0, -max(xs)), max(min(ys), 0, -max(ys)))
+
+
+def hide_centre_strays(dry_run=False):
+    """Spec §7: after building, any visible non-generated object reaching inside the first ring canal
+    (r < the innermost water band's inner edge, 460) other than the canal water and its bank is reported
+    and hidden the recoverable way (hide_viewport / hide_render). Idempotent; never deletes."""
+    r_in = min(r0 for r0, _ in WATER_BANDS)
+    found = []
+    for o in bpy.data.objects:
+        if o.name in CENTRE_KEEP or o.get("citygen") or is_source(o) or not o.visible_get():
+            continue
+        if o.type not in STRAY_TYPES and not (o.type == "EMPTY" and o.instance_collection):
+            continue
+        if any(c.name in GENERATED for c in o.users_collection):
+            continue
+        r = xy_reach(o)
+        if r < r_in:
+            found.append((o.name, collection_of(o), round(r, 1)))
+            if not dry_run:
+                o.hide_viewport = o.hide_render = True
+    print("centre strays inside r <", r_in, ":", found if found else "none")
+    return found
+
+
 def main():
     global MATS
     ensure_glow()
@@ -622,6 +692,7 @@ def main():
         hide_temple()
         build()
         cut_canals()
+        hide_centre_strays()
 
 
 main()

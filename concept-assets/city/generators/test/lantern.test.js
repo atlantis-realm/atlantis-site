@@ -1,5 +1,5 @@
 const test = require("node:test"), assert = require("node:assert/strict");
-const { CityGen, loadPlan, gen, core, ringR, primsOf, primTop } = require("./helpers.js");
+const { CityGen, loadPlan, gen, core, ringR, primsOf, primTop, assertUnderCap } = require("./helpers.js");
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 const ptsOf = (p) => (p.t === "prism" ? p.poly : p.t === "solid" ? p.top : p.rings.flat());
@@ -60,3 +60,28 @@ test("deck, quay wall and garden ring are gone", () => {
   assert.equal(O.objects.filter((ob) => ob.name === "NBHD_core_deck").length, 0);
   assert.ok(O.objects.some((ob) => ob.name === "NBHD_core_lantern" && ob.coll === "core"));
   assert.ok(O.objects.some((ob) => ob.name === "NBHD_core_ground" && ob.coll === "core")); });
+
+// Out-of-range settings the planner can save are normalised: no non-finite numbers anywhere, the heart
+// stays the right way up and below the crown, Old Town stays under the cap, and the cap stays above ground.
+function finiteEverywhere(v, where) {
+  if (typeof v === "number") assert.ok(Number.isFinite(v), `non-finite number at ${where}`);
+  else if (Array.isArray(v)) v.forEach((x, i) => finiteEverywhere(x, `${where}[${i}]`));
+  else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) finiteEverywhere(x, `${where}.${k}`);
+}
+for (const [name, edit, warn] of [
+  ["inverted heart [0.8, 0.4]", (d) => { d.lantern.heart = [0.8, 0.4]; }],
+  ["heart top at 95 %", (d) => { d.lantern.heart[1] = 0.95; }],
+  ["height 300 with clearance 300", (d) => { d.lantern.height = 300; d.lantern.clearance = 300; }, /clearance \(300 m\) is more than its heart/],
+  ["partial height range [100]", (d) => { d.heights.grid = [100]; }],
+]) test(`out-of-range settings: ${name}`, () => {
+  const p = loadPlan(); edit(core(p)); const o = gen(p), ter = CityGen.makeTerrain(p);
+  finiteEverywhere(o.lots, "lots");
+  o.objects.forEach((ob) => finiteEverywhere(ob.prims, ob.name));
+  const L = o.lantern, cap = CityGen.oldTownCap(p, ter, core(p));
+  assert.ok(L.heart[0] < L.heart[1], `heart ${L.heart}`);
+  assert.ok(L.heart[1] <= L.crown + 1e-6, `heart top ${L.heart[1]} above crown base ${L.crown}`);
+  assert.ok(cap >= ter.G(0), `cap ${cap} below ground ${ter.G(0)}`);
+  assertUnderCap(o, p);
+  if (warn) assert.ok(o.warnings.some((w) => warn.test(w)), JSON.stringify(o.warnings));
+  else assert.ok(!o.warnings.some((w) => /NaN|-\d/.test(w)), JSON.stringify(o.warnings));
+});
