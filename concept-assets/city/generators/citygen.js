@@ -1878,7 +1878,8 @@ const CityGen = (() => {
   // (counter-clockwise) and `front`, the index of the edge its colonnade or forecourt faces.
   //   parliament  the two square-facing grid blocks either side of the hero axis on the far side of the
   //               square, merged across the axis street (which stops at it), so it closes the hero view
-  //   exchange    the next square-facing block along the square's far edge, beside the parliament
+  //   exchange    beside the parliament on the square: the next block along the far edge when the square
+  //               spans n ≥ 2 pitches, else the square-facing block on the hero + 90° side nearest the parliament
   //   courts      the square-facing block at hero − 90°
   //   embassy     landmarks.embassies quarter blocks, one per distinct quarter culture first
   //   guild       landmarks.guild_halls quarter blocks, spread over the quarters
@@ -1919,8 +1920,12 @@ const CityGen = (() => {
     };
     const pair = [gb(-n - 1, -1), gb(-n - 1, 0)].filter(free);
     if (pair.length) civic("parliament", "Parliament", pair, ux, uy);
-    const ex = shuffle([gb(-n - 1, 1), gb(-n - 1, -2)]).find(free);
-    if (ex) civic("exchange", "Exchange", [ex], ux, uy);
+    // the exchange faces the square too: beside the parliament on the far edge when that edge has room
+    // (n ≥ 2), else on the hero + 90° side, in the block nearest the parliament (mirroring the courts)
+    // (the far-edge order is drawn either way, so the quarter picks after it don't shift with n)
+    const farOrder = shuffle([gb(-n - 1, 1), gb(-n - 1, -2)]), exFar = n >= 2 ? farOrder.find(free) : null, exSide = exFar ? null : gb(-1, n);
+    if (exFar) civic("exchange", "Exchange", [exFar], ux, uy);
+    else if (free(exSide)) civic("exchange", "Exchange", [exSide], uy, -ux);
     const ct = shuffle([gb(0, -n - 1), gb(-1, -n - 1)]).find(free);
     if (ct) civic("courts", "Courts", [ct], -uy, ux);
     // the quarters' candidate blocks, by quarter
@@ -2017,7 +2022,7 @@ const CityGen = (() => {
       }
       const kept = ob.prims.filter((p) => primZ(p) <= eave + above + 1e-9), top = Math.max(...kept.map(primZ));
       if (solids) real.prims.push(...kept);
-      o.lots.push({ d: d.id, kind: "landmark", landmark: a.kind, keys: a.keys, label: a.label, culture: a.culture, obj: real.name, poly, footprint: mass, base, eave, top, storeys: Math.round((eave - base) / plan.storey), area: polyArea(poly), roofs });
+      o.lots.push({ d: d.id, kind: "landmark", landmark: a.kind, keys: a.keys, label: a.label, culture: a.culture, obj: real.name, poly, front: [poly[a.front], poly[(a.front + 1) % poly.length]], footprint: mass, base, eave, top, storeys: Math.round((eave - base) / plan.storey), area: polyArea(poly), roofs });
     }
   }
 

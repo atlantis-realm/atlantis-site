@@ -26,8 +26,6 @@ function segDist(p, a, b) {
 // distance between two disjoint polygons (vertex to edge, both ways)
 const edges = (p) => p.map((a, i) => [a, p[(i + 1) % p.length]]);
 const polyDist = (P, Q) => Math.min(...P.flatMap((p) => edges(Q).map(([a, b]) => segDist(p, a, b))), ...Q.flatMap((q) => edges(P).map(([a, b]) => segDist(q, a, b))));
-// distance from point p to the infinite line through a, b
-const lineDist = (p, [a, b]) => Math.abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) / Math.hypot(b[0] - a[0], b[1] - a[1]);
 
 test("oldTownLandmarks assigns kinds to block keys, and the lots match", () => {
   const A = CityGen.oldTownLandmarks(plan, D, blocks, grid.square, hero);
@@ -51,7 +49,7 @@ test("lot records: fields, names, no height key", () => {
   const n = {};
   assert.ok(LM.length > 0, "no landmark lots");
   for (const l of LM) {
-    for (const f of ["d", "kind", "landmark", "keys", "label", "culture", "poly", "base", "eave", "top", "storeys", "area"]) assert.ok(f in l, `${l.landmark} lot missing ${f}`);
+    for (const f of ["d", "kind", "landmark", "keys", "label", "culture", "poly", "front", "base", "eave", "top", "storeys", "area"]) assert.ok(f in l, `${l.landmark} lot missing ${f}`);
     assert.ok(!("height" in l), `${l.landmark} lot has a height key`);
     assert.ok(typeof l.label === "string" && l.label.length > 0);
     assert.ok(!/island|temple|spire/i.test(l.label), l.label);
@@ -60,12 +58,29 @@ test("lot records: fields, names, no height key", () => {
     assert.ok(objOf(O, l), `no object ${l.obj}`);
   }
 });
-test("parliament, exchange and courts face the square", () => {
-  for (const k of ["parliament", "exchange", "courts"])
-    for (const key of of(k)[0].keys) {
-      const dd = polyDist(byKey.get(key).poly, grid.square);
-      assert.ok(dd <= cfg.grid.street + 1, `${k} block ${key} is ${dd} m from the square`);
+// the lot's front edge (l.front: [a, b]) runs along one of the square's edges: parallel, a positive length of
+// overlap when projected onto that edge, and no more than a street (+1 m) away from it
+function frontOnSquare(l, square, street) {
+  const [p, q] = l.front;
+  return edges(square).some(([a, b]) => {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ex = (b[0] - a[0]) / L, ey = (b[1] - a[1]) / L;
+    const t = (r) => (r[0] - a[0]) * ex + (r[1] - a[1]) * ey, gap = (r) => Math.abs((r[0] - a[0]) * ey - (r[1] - a[1]) * ex);
+    const lo = Math.max(0, Math.min(t(p), t(q))), hi = Math.min(L, Math.max(t(p), t(q)));
+    return hi - lo > 1 && gap(p) <= street + 1 && gap(q) <= street + 1;
+  });
+}
+const variants = [["default plan", plan, O], ...[["grid 40/10", { block: 40, street: 10, square: 100 }], ["square 200", { block: 46, street: 12, square: 200 }]].map(([name, g]) => {
+  const p = loadPlan(); core(p).grid = { ...g, forms: {} }; return [name, p, gen(p)];
+})];
+test("parliament, exchange and courts face the square (default, grid 40/10, square 200)", () => {
+  for (const [name, p, o] of variants) {
+    const g = CityGen.oldTownGrid(p, core(p), hero), street = CityGen.oldTownConfig(core(p)).grid.street, L = landmarks(o);
+    for (const k of ["parliament", "exchange", "courts"]) {
+      const l = L.find((x) => x.landmark === k);
+      assert.ok(l, `${name}: no ${k}`);
+      assert.ok(frontOnSquare(l, g.square, street), `${name}: the ${k}'s front doesn't face the square`);
     }
+  }
 });
 test("the parliament closes the hero axis on the far side of the square", () => {
   const P = of("parliament")[0], [u, v] = uv(centroid(P.poly));
@@ -77,12 +92,14 @@ test("the parliament closes the hero axis on the far side of the square", () => 
   assert.ok(Math.min(...vs) < -cfg.grid.street && Math.max(...vs) > cfg.grid.street);
   assert.ok(area(P.poly) >= P.keys.reduce((s, k) => s + area(byKey.get(k).poly), 0), "merged lot smaller than its blocks");
 });
-test("the exchange stands beside the parliament on the same square-facing line", () => {
-  const P = of("parliament")[0], X = byKey.get(of("exchange")[0].keys[0]);
-  // the parliament's edge nearest the square
-  const front = edges(P.poly).reduce((best, e) => { const m = [(e[0][0] + e[1][0]) / 2, (e[0][1] + e[1][1]) / 2]; const dd = Math.hypot(...m); return !best || dd < best.dd ? { e, dd } : best; }, null).e;
-  assert.ok(edges(X.poly).some(([a, b]) => lineDist(a, front) < 0.01 && lineDist(b, front) < 0.01 && Math.hypot(b[0] - a[0], b[1] - a[1]) > 5), "exchange has no edge on the parliament's front line");
-  assert.ok(uv(centroid(X.poly))[0] < 0, "exchange not on the far side");
+test("the exchange stands beside the parliament (default, grid 40/10, square 200)", () => {
+  for (const [name, p, o] of variants) {
+    const street = CityGen.oldTownConfig(core(p)).grid.street, L = landmarks(o);
+    const P = L.find((x) => x.landmark === "parliament"), X = L.find((x) => x.landmark === "exchange");
+    const dd = polyDist(P.poly, X.poly);
+    assert.ok(dd <= street * Math.SQRT2 + 1, `${name}: exchange ${dd} m from the parliament`);
+    assert.ok(uv(centroid(X.poly))[0] < 0, `${name}: exchange not on the parliament's side of the square`);
+  }
 });
 test("the courts stand at hero − 90°", () => {
   const [u, v] = uv(centroid(of("courts")[0].poly));
