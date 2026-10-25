@@ -1681,9 +1681,12 @@ const CityGen = (() => {
     const qs = oldTownQuarters(plan, d, spokes);
     o.quarters = qs.quarters.map(({ k, culture, poly, angle, a0, a1, block }) => ({ k, culture, poly, angle, a0, a1, block }));
     const blocks = [...grid.blocks, ...qs.blocks];
-    // then build on them
-    buildGridLots(plan, d, ter, o, cfg, blocks.filter((b) => b.zone === "grid"), grid.gridR);
-    buildBandLots(plan, d, ter, o, cfg, blocks.filter((b) => b.zone === "band"), qs.r0, qs.r1);
+    // then the landmarks claim their blocks, and towers go on every other block
+    const assigns = oldTownLandmarks(plan, d, blocks, grid.square, spokes.find((sp) => sp.hero));
+    const claimed = new Set(assigns.flatMap((a) => a.keys)), rest = blocks.filter((b) => !claimed.has(b.key));
+    buildLandmarks(plan, d, ter, o, cfg, assigns);
+    buildGridLots(plan, d, ter, o, cfg, rest.filter((b) => b.zone === "grid"), grid.gridR);
+    buildBandLots(plan, d, ter, o, cfg, rest.filter((b) => b.zone === "band"), qs.r0, qs.r1);
   }
 
   // Old Town's central grid, Manhattan style, aligned to the hero bearing (u along it, v across it).
@@ -1866,6 +1869,155 @@ const CityGen = (() => {
       const t = oldTownTower(o, ob, ter, b.poly, H, style, R, cap);
       o.lots.push({ ...lot, ...towerLot(plan, t), area });
       o.band(`${d.id}|band`, r0, r1, t.base, t.top);
+    }
+  }
+
+  // ---------------------------------------------------------------- Old Town landmarks
+  // Civic buildings on their own blocks, lower and broader than the towers. oldTownLandmarks assigns kinds
+  // to block keys (layout only); buildLandmarks draws them. Each assignment also carries its lot polygon
+  // (counter-clockwise) and `front`, the index of the edge its colonnade or forecourt faces.
+  //   parliament  the two square-facing grid blocks either side of the hero axis on the far side of the
+  //               square, merged across the axis street (which stops at it), so it closes the hero view
+  //   exchange    the next square-facing block along the square's far edge, beside the parliament
+  //   courts      the square-facing block at hero − 90°
+  //   embassy     landmarks.embassies quarter blocks, one per distinct quarter culture first
+  //   guild       landmarks.guild_halls quarter blocks, spread over the quarters
+  // Fragments are never claimed. A quarter block qualifies when a 6 m forecourt still leaves ≥ 80 % of it.
+  const LANDMARK_DEPTH = [4, 6];  // colonnade or forecourt depth (m)
+  const ccwPoly = (p) => (signedArea(p) < 0 ? [...p].reverse() : p);
+  function convexHull(pts) {
+    const P = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]), cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const half = (list) => { const h = []; for (const p of list) { while (h.length >= 2 && cr(h[h.length - 2], h[h.length - 1], p) <= 1e-9) h.pop(); h.push(p); } h.pop(); return h; };
+    return [...half(P), ...half([...P].reverse())];
+  }
+  // the edge of a ccw polygon whose outward normal points most along (dx, dy)
+  const facingEdge = (p, dx, dy) => p.reduce((best, a, i) => {
+    const b = p[(i + 1) % p.length], L = dist(a, b), s = L > 1 ? ((b[1] - a[1]) * dx - (b[0] - a[0]) * dy) / L : -Infinity;
+    return s > best.s ? { i, s } : best;
+  }, { i: 0, s: -Infinity }).i;
+  const longestEdge = (p) => p.reduce((best, a, i) => (dist(a, p[(i + 1) % p.length]) > dist(p[best], p[(best + 1) % p.length]) ? i : best), 0);
+  // a ccw convex polygon split along its front edge: the strip `depth` deep and the mass behind it.
+  // (ex, ey) runs along the front edge from a, (nx, ny) points inward.
+  function frontSplit(p, front, depth) {
+    const a = p[front], b = p[(front + 1) % p.length], L = dist(a, b), ex = (b[0] - a[0]) / L, ey = (b[1] - a[1]) / L, nx = -ey, ny = ex, c = nx * a[0] + ny * a[1] + depth;
+    return { strip: dedupe(clipHalf(p, nx, ny, c)), mass: dedupe(clipHalf(p, -nx, -ny, -c)), a, ex, ey, nx, ny };
+  }
+  function oldTownLandmarks(plan, d, blocks, square, hero, R) {
+    const cfg = oldTownConfig(d), G = cfg.grid, LM = cfg.landmarks, out = [], used = new Set();
+    R = R || rng(`${d.id}|lm|assign`);
+    const ha = typeof hero === "number" ? hero : hero ? hero.a : SOUTH, ux = Math.cos(ha), uy = Math.sin(ha);
+    const byKey = new Map(blocks.map((b) => [b.key, b])), free = (b) => b && !b.fragment && !used.has(b.key);
+    const claim = (kind, label, bs, poly, front, culture = null) => { for (const b of bs) used.add(b.key); out.push({ kind, label, keys: bs.map((b) => b.key), culture, poly, front }); };
+    const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    // the grid's civic blocks by grid index (i along the hero bearing, j across it); the square spans [-n, n)
+    const pitch = G.block + G.street, half = Math.max(...square.map(([x, y]) => Math.abs(x * ux + y * uy))), n = Math.max(1, Math.round(half / pitch));
+    const gb = (i, j) => byKey.get(`${d.id}|g|${i}|${j}`);
+    // the far side faces the square along +u (towards the hero avenue), the hero − 90° side along +v
+    const civic = (kind, label, bs, dx, dy) => {
+      const poly = bs.length > 1 ? convexHull(bs.flatMap((b) => b.poly)) : ccwPoly(bs[0].poly);
+      claim(kind, label, bs, poly, facingEdge(poly, dx, dy));
+    };
+    const pair = [gb(-n - 1, -1), gb(-n - 1, 0)].filter(free);
+    if (pair.length) civic("parliament", "Parliament", pair, ux, uy);
+    const ex = shuffle([gb(-n - 1, 1), gb(-n - 1, -2)]).find(free);
+    if (ex) civic("exchange", "Exchange", [ex], ux, uy);
+    const ct = shuffle([gb(0, -n - 1), gb(-1, -n - 1)]).find(free);
+    if (ct) civic("courts", "Courts", [ct], -uy, ux);
+    // the quarters' candidate blocks, by quarter
+    const typeLabel = (id) => (nbTypes(plan).find((t) => t.id === id) || {}).label || id;
+    const fits = (b) => { if (b.zone !== "band" || b.fragment || b.culture == null) return false;
+      const p = ccwPoly(b.poly); return polyArea(frontSplit(p, longestEdge(p), LANDMARK_DEPTH[1]).mass) >= 0.8 * polyArea(p); };
+    const byQ = new Map();
+    for (const b of blocks) if (fits(b)) { if (!byQ.has(b.quarter)) byQ.set(b.quarter, []); byQ.get(b.quarter).push(b); }
+    const qOrder = shuffle([...byQ.keys()].sort((a, b) => a - b)), load = new Map(qOrder.map((q) => [q, 0]));
+    // in the least-used of these quarters (seeded order breaks ties) that has a free candidate, a seeded block
+    const take = (kind, quarters, label) => {
+      const qs = quarters.filter((q) => byQ.get(q).some(free));
+      if (!qs.length) return false;
+      const q = qs.reduce((a, b) => (load.get(b) < load.get(a) ? b : a)), list = byQ.get(q).filter(free), b = list[Math.floor(R.random() * list.length)];
+      const poly = ccwPoly(b.poly);
+      claim(kind, label(b.culture), [b], poly, longestEdge(poly), b.culture);
+      load.set(q, load.get(q) + 1);
+      return true;
+    };
+    const nE = Math.max(0, Math.round(+LM.embassies) || 0), nG = Math.max(0, Math.round(+LM.guild_halls) || 0);
+    // embassies cycle through the cultures in a seeded order, so every culture gets one before any gets two
+    const cultures = shuffle([...new Set(qOrder.map((q) => byQ.get(q)[0].culture))].sort());
+    for (let e = 0, k = 0, miss = 0; e < nE && cultures.length && miss < cultures.length; k++) {
+      const c = cultures[k % cultures.length];
+      if (take("embassy", qOrder.filter((q) => byQ.get(q)[0].culture === c), (id) => `${typeLabel(id)} embassy`)) { e++; miss = 0; } else miss++;
+    }
+    for (let g = 0; g < nG; g++) if (!take("guild", qOrder, (id) => `${typeLabel(id)} guild hall`)) break;
+    return out;
+  }
+
+  // the highest z a prim reaches
+  const primZ = (p) => (p.t === "prism" ? p.z1 : p.t === "solid" ? Math.max(...p.top.map((q) => q[2])) : Math.max(...p.rings.flat().map((q) => q[2])));
+  // A landmark on its lot: one broad mass behind a colonnade (civic) or a walled forecourt (embassies, guild
+  // halls) 4–6 m deep along the front edge, its eave through heights.landmark. The parliament adds a domed
+  // drum, the exchange a glazed drum, the courts a raised attic; embassies and guild halls roof in their
+  // culture's mix. Everything above the eave stays within 20 m of it and under the cap. Colonnade and
+  // forecourt prims carry `part`.
+  function buildLandmarks(plan, d, ter, o, cfg, assigns) {
+    const cap = oldTownCap(plan, ter, d), [lo, hi] = cfg.heights.landmark, count = {};
+    const tag = (ob, part, from) => { for (let i = from; i < ob.prims.length; i++) ob.prims[i].part = part; };
+    // draw into a recorder first (so the plan page, without solids, gets the same top), then trim and keep
+    const rec = { ...o, prism: (b, poly, z0, z1, m) => { if (z1 > z0 + 1e-3) b.prims.push({ t: "prism", poly, z0, z1, m }); },
+      solid: (b, top, bot, m) => b.prims.push({ t: "solid", top, bot, m }), loft: (b, rings, m) => b.prims.push({ t: "loft", rings, m }) };
+    const ring = (cx, cy, r, z, n = 24) => Array.from({ length: n }, (_, k) => [cx + r * Math.cos((k + 0.5) * TAU / n), cy + r * Math.sin((k + 0.5) * TAU / n), z]);
+    for (const a of assigns) {
+      const n = count[a.kind] = (count[a.kind] ?? -1) + 1;
+      const R = rng(`${d.id}|lm|${a.kind}|${n}`), real = o.obj(`NBHD_${d.id}_lm_${a.kind}_${n}`, d.id), solids = o.objects.includes(real);
+      const ob = { name: real.name, coll: real.coll, props: {}, prims: [] }, poly = a.poly;
+      const zs = poly.map(([x, y]) => ter.G(Math.hypot(x, y))), zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05;
+      const eave = Math.min(base + lerp(lo, hi, R.random()), cap - 1.3), above = Math.min(20, cap - eave), roofZ = eave + 0.9;
+      const { strip, mass, a: fa, ex, ey, nx, ny } = frontSplit(poly, a.front, R.uniform(LANDMARK_DEPTH[0], LANDMARK_DEPTH[1]));
+      if (zmax - zmin > 0.1) rec.prism(ob, poly, zmin - 0.3, base, "plinth");
+      // the front: a colonnade under an entablature, or a paved forecourt behind a low wall and gateposts
+      const at = (s, t) => [fa[0] + ex * s + nx * t, fa[1] + ey * s + ny * t], box = (s0, s1, t0, t1) => [at(s0, t0), at(s1, t0), at(s1, t1), at(s0, t1)];
+      // s runs along the front edge, 1 m in from its ends; t back from it
+      const s0 = 1, s1 = dist(poly[a.front], poly[(a.front + 1) % poly.length]) - 1, p0 = ob.prims.length;
+      rec.prism(ob, strip, base - 0.3, base + 0.15, "paver");
+      if (a.kind === "parliament" || a.kind === "exchange" || a.kind === "courts") {
+        const nc = Math.max(2, Math.floor((s1 - s0 - 1) / 4.5) + 1), w = 0.7;
+        for (let k = 0; k < nc; k++) { const s = lerp(s0 + 0.5, s1 - 0.5, k / (nc - 1)); rec.prism(ob, box(s - w, s + w, 1, 1 + 2 * w), base + 0.15, eave - 1.6, "stone"); }
+        rec.prism(ob, strip, eave - 1.6, roofZ, "lip");
+        tag(ob, "colonnade", p0);
+      } else {
+        const gate = lerp(s0, s1, R.uniform(0.3, 0.7)), gw = 3;
+        for (const [w0, w1] of [[s0, gate - gw], [gate + gw, s1]]) if (w1 - w0 > 1) rec.prism(ob, box(w0, w1, 0.2, 0.8), base + 0.15, base + 1.4, "stone");
+        for (const s of [gate - gw, gate + gw]) rec.prism(ob, box(s - 0.6, s + 0.6, 0, 1.2), base + 0.15, base + 3.5, "stone");
+        tag(ob, "forecourt", p0);
+      }
+      // the mass and its parapet
+      rec.prism(ob, mass, base - (zmax - zmin > 0.1 ? 0 : 0.3), eave, "stone");
+      rec.prism(ob, inset(mass, -0.35), eave, roofZ, "lip");
+      const [cx, cy] = centroid(mass), side = Math.sqrt(polyArea(mass)), roofs = [];
+      if (a.kind === "parliament" || a.kind === "exchange") {
+        // a drum, then a dome (parliament) or a shallow glazed cap (exchange), with a finial, all within `above`
+        rec.prism(ob, inset(mass, 1.4), roofZ, roofZ + 0.4, "roof");
+        const dome = a.kind === "parliament", rd = clamp(side * 0.25, 5, 11);
+        const hd = dome ? clamp(above * 0.3, 2, 6) : clamp(above * 0.45, 2, 9), z1 = roofZ + hd;
+        const rise = Math.max(0.5, Math.min(dome ? rd : rd * 0.35, eave + above - z1 - 0.6 - 1.4));
+        rec.loft(ob, [ring(cx, cy, rd, roofZ - 0.4), ring(cx, cy, rd, z1)], dome ? "stone" : "glass");
+        rec.loft(ob, [ring(cx, cy, rd + 0.6, z1), ring(cx, cy, rd + 0.6, z1 + 0.6)], "lip");
+        const NR = 6, zd = z1 + 0.6;
+        rec.loft(ob, Array.from({ length: NR + 1 }, (_, k) => { const t = k / NR * Math.PI / 2; return ring(cx, cy, Math.max(0.3, rd * Math.cos(t)), zd + rise * Math.sin(t)); }), dome ? "tile" : "glass");
+        rec.loft(ob, [ring(cx, cy, 1.2, zd + rise - 0.3, 12), ring(cx, cy, 0.2, Math.min(eave + above, zd + rise + 1.4), 12)], "tile");
+      } else if (a.kind === "courts") {
+        rec.prism(ob, inset(mass, 1.4), roofZ, roofZ + 0.4, "roof");
+        const attic = inset(mass, side * 0.2), h = Math.min(5, above - 1.6);
+        rec.prism(ob, attic, roofZ - 0.4, roofZ + h, "stone");
+        rec.prism(ob, inset(attic, -0.3), roofZ + h, roofZ + h + 0.7, "lip");
+      } else {
+        // the culture's roof, drawn aside and trimmed to the 20 m allowance (a deco finial can overreach it)
+        const kind = pickRoof(cultureStyle(plan, a.culture).roofs, R);
+        roofTop(rec, ob, ter, mass, roofZ, kind, R, ob.coll, ob.name);
+        roofs.push(kind);
+      }
+      const kept = ob.prims.filter((p) => primZ(p) <= eave + above + 1e-9), top = Math.max(...kept.map(primZ));
+      if (solids) real.prims.push(...kept);
+      o.lots.push({ d: d.id, kind: "landmark", landmark: a.kind, keys: a.keys, label: a.label, culture: a.culture, obj: real.name, poly, footprint: mass, base, eave, top, storeys: Math.round((eave - base) / plan.storey), area: polyArea(poly), roofs });
     }
   }
 
@@ -2687,6 +2839,6 @@ const CityGen = (() => {
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, oldTownQuarters, oldTownLandmarks, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;
