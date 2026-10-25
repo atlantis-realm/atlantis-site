@@ -1010,6 +1010,8 @@ const CityGen = (() => {
     const CS = collegeStyle(d, opts.nb != null ? opts.nb : cell.k);
     if (CS) { style.roof = CS.roof; style.roofs = CS.roofs; }
     const pave = CS ? CS.ground : "paver";
+    // an Indigo college cell's form (opera, amphitheatre, bigtop, print or studio), chosen by genCampus
+    let cellForm = use === "college" && CS ? opts.form : undefined;
     // the plot's ground plate follows the slope corner to corner, so it meets the quays and streets
     const ground = (q, m) => { const top = q.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.12]); o.solid(ob, top, top.map((t) => Math.min(...top.map((u) => u[2])) - 0.42), m); };
     if (use === "harbour" || use === "waterworks") return buildWaterCell(plan, d, ter, o, ob, use, cell, key, opts);
@@ -1047,6 +1049,8 @@ const CityGen = (() => {
     } else if (use === "college") {
       const K = plan.skyline, lo = (d.storeys || [2, 6])[0], hi = (d.storeys || [2, 6])[1];
       if (byBldg) ground(poly, pave);
+      // an Indigo venue or print works fills the cell with one building (a studio if it can't fit)
+      if (cellForm && cellForm !== "studio") { const s = indigoBuilding(plan, d, ter, o, ob, use, cell, key, opts, cellForm); if (s) return s; cellForm = "studio"; }
       const foot = byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R);
       // a physics college: the footprints merge into 1-3 lab halls, long bars of 2-4 tall (6 m) storeys
       if (CS && CS.form === "lab_hall") for (const [i, q] of labHalls(poly, foot).entries()) parts.push([q, rng(`park|col|lab|${key}|${i}`).randint(2, 4), 6, "lip", "lab_hall"]);
@@ -1106,7 +1110,7 @@ const CityGen = (() => {
         // two roof halves, ridge running from the canal back into the block, gable end facing the water
         o.solid(ob, [[...q[0], top], [...mf, ridge], [...mb, ridge], [...q[3], top]], [top, top, top, top], gm);
         o.solid(ob, [[...mf, ridge], [...q[1], top], [...q[2], top], [...mb, ridge]], [top, top, top, top], gm);
-        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: ridge, storeys: cs, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : (T.label || use), ...(CS ? { college: CS.college, wall: mats.wall } : {}) });
+        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: ridge, storeys: cs, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : (T.label || use), ...(CS ? { college: CS.college, wall: mats.wall } : {}), ...(cellForm ? { form: cellForm, obj: ob.name } : {}) });
         o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, ridge);
         summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, top);
         continue;
@@ -1118,12 +1122,149 @@ const CityGen = (() => {
         : byBldg && use !== "industrial" && use !== "hydroponics" ? pickRoof(q.canal ? { deco: 0.6, open: 0.3, garden: 0.1 } : style.roofs || PL.roofs, LR) : null;
       const bld = building(o, ob, ter, q, (q.canal ? clamp(st + LR.randint(-1, 1), plan.skyline.min, plan.skyline.max) : st) * sh, use, { roofMat: roofM, roof: !roofKind, mats });
       const extra = roofKind ? roofTop(o, ob, ter, q, bld.top, roofKind, LR, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`, mats) : 0;
-      o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: bld.top + extra, roofTop: bld.top, roof: roofKind, storeys: st, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : T.label || use, ...(CS ? { college: CS.college, wall: mats.wall } : {}) });
+      o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: bld.top + extra, roofTop: bld.top, roof: roofKind, storeys: st, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : T.label || use, ...(CS ? { college: CS.college, wall: mats.wall } : {}), ...(cellForm ? { form: cellForm, obj: ob.name } : {}) });
       o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, bld.top);
       summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, bld.top);
     }
     if (houses.length > 1 && thLevel != null) canopyWalks(o, ob, poly, houses, d.id);
     return summary;
+  }
+
+  // ---------------------------------------------------------------- Indigo's venues and print works
+  // One building per cell, by form:
+  //   opera         a 4-storey plaster_a box under a copper drum and dome, a lip colonnade along its front
+  //                 (the side facing Old Town)
+  //   amphitheatre  a Roman-style bowl: 5 stepped ashlar tiers (a 200° horseshoe) rising up and out from a
+  //                 sunken timber stage, a plaster stage wall across the open side; outer radius ~0.4·√area
+  //   bigtop        a canvas cone over a 6 m canvas wall, peaking 18-24 m up, with 4 masts through the top
+  //   print         a brick shed under rooftile saw teeth (glazed in each steep face), with 1-2 brick chimneys 18-25 m
+  // Returns the cell summary, or null when the cell has no room (it is then a studio).
+  const VENUE_LABELS = { opera: "Indigo Opera", amphitheatre: "Indigo Amphitheatre", bigtop: "Indigo Big Top" };
+  // the point inside a polygon farthest from its edges (a grid search), and that distance
+  function innerDisc(poly) {
+    const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const ring = [...poly, poly[0]], step = Math.max(1, Math.max(x1 - x0, y1 - y0) / 40);
+    let best = { c: centroid(poly), r: 0 };
+    for (let x = x0 + step / 2; x < x1; x += step) for (let y = y0 + step / 2; y < y1; y += step) {
+      if (!pointInPoly(x, y, poly)) continue;
+      const r = distToPath(x, y, ring);
+      if (r > best.r) best = { c: [x, y], r };
+    }
+    return best;
+  }
+  function indigoBuilding(plan, d, ter, o, ob, use, cell, key, opts, form) {
+    const poly = cell.poly, area = polyArea(poly), R = rng(`park|col|indigo|${form}|${key}`);
+    const G = (x, y) => ter.G(Math.hypot(x, y));
+    const disc = (cx, cy, r, m = 32) => Array.from({ length: m }, (_, j) => [cx + r * Math.cos(j * TAU / m), cy + r * Math.sin(j * TAU / m)]);
+    const ringAt = (cx, cy, r, z, m = 32) => disc(cx, cy, r, m).map(([x, y]) => [x, y, z]);
+    const lot = { d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|0`, obj: ob.name, college: "indigo", form };
+    const finish = (l, roofZ) => {
+      o.lots.push({ ...lot, ...l, area: polyArea(l.poly) });
+      o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, l.base, l.top);
+      return { use, base: l.base, top: roofZ };
+    };
+    // footprint heights: plinth from the lowest corner, floor at the highest
+    const levels = (q) => { const zs = q.map(([x, y]) => G(x, y)), zmax = Math.max(...zs), zmin = Math.min(...zs); return { zmin, base: zmax + 0.05, plinth: zmax - zmin }; };
+
+    if (form === "opera" || form === "print") {
+      let q = solidRect(insetEdges(poly, () => (form === "opera" ? 8 : 5)) || poly);
+      if (!q || polyArea(q) < 200) return null;
+      if (dist(q[1], q[2]) > dist(q[0], q[1])) q = [q[1], q[2], q[3], q[0]];  // u (q0 -> q1) along the long side
+      const P = (u, v) => { const a = [lerp(q[0][0], q[1][0], u), lerp(q[0][1], q[1][1], u)], b = [lerp(q[3][0], q[2][0], u), lerp(q[3][1], q[2][1], u)]; return [lerp(a[0], b[0], v), lerp(a[1], b[1], v)]; };
+      const sub = (u0, u1, v0, v1) => [P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)];
+      const lu = dist(q[0], q[1]), lv = dist(q[1], q[2]), [qx, qy] = centroid(q);
+      if (form === "opera") {
+        const st = 4, bld = building(o, ob, ter, q, st * plan.storey, use, { roof: false, mats: { wall: "plaster_a", lip: "lip", plinth: "brick" } });
+        // the drum and dome, lofted like the observatory's (the apex ring all pole)
+        const rd = clamp(0.3 * Math.min(lu, lv), 5, 14), drumH = 4, eave = bld.top + drumH, top = eave + rd, lats = 8;
+        o.loft(ob, [ringAt(qx, qy, rd, bld.top - 0.9), ringAt(qx, qy, rd, eave)], "copper");
+        o.loft(ob, Array.from({ length: lats }, (_, i) => {
+          if (i === lats - 1) return disc(qx, qy, rd).map(() => [qx, qy, top]);
+          const f = (i / (lats - 1)) * Math.PI / 2;
+          return ringAt(qx, qy, rd * Math.cos(f), eave + rd * Math.sin(f));
+        }), "copper");
+        // the colonnade along the edge facing Old Town: columns 3.2 m out, two storeys tall, under an entablature
+        let fi = 0;
+        for (let i = 1; i < 4; i++) if (Math.hypot(...centroid([q[i], q[(i + 1) % 4]])) < Math.hypot(...centroid([q[fi], q[(fi + 1) % 4]]))) fi = i;
+        const a = q[fi], b = q[(fi + 1) % 4], L = dist(a, b), ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+        let nx = -uy, ny = ux;
+        const m = centroid([a, b]);
+        if (nx * (m[0] - qx) + ny * (m[1] - qy) < 0) { nx = -nx; ny = -ny; }
+        const colH = 2 * plan.storey, n = Math.max(4, Math.floor(L / 4.5));
+        for (let i = 0; i < n; i++) {
+          const t = (i + 0.5) / n * L, cx = a[0] + ux * t + nx * 3.2, cy = a[1] + uy * t + ny * 3.2, h = 0.55;
+          o.prism(ob, [[cx - ux * h - nx * h, cy - uy * h - ny * h], [cx + ux * h - nx * h, cy + uy * h - ny * h], [cx + ux * h + nx * h, cy + uy * h + ny * h], [cx - ux * h + nx * h, cy - uy * h + ny * h]], bld.base, bld.base + colH, "lip");
+        }
+        const out = (p, s) => [p[0] + nx * s, p[1] + ny * s];
+        o.prism(ob, [a, b, out(b, 4), out(a, 4)], bld.base + colH, bld.base + colH + 1, "lip");
+        const pod = [a, b, out(b, 4.6), out(a, 4.6)];
+        o.prism(ob, pod, levels(pod).zmin - 0.3, bld.base, "brick");  // the podium under the colonnade, down to the ground
+        return finish({ poly: q, base: bld.base, top, storeys: st, plinth: bld.plinth, kind: "landmark", landmark: form, label: VENUE_LABELS[form], wall: "plaster_a" }, bld.top);
+      }
+      // print works: brick walls two storeys high, saw teeth across the long side, glass in each steep face
+      const st = 2, bld = building(o, ob, ter, q, st * plan.storey, use, { roof: false, lip: false, mats: { wall: "brick", lip: "lip", plinth: "brick" } });
+      const z = bld.top, th = 3.2, n = Math.max(2, Math.round(lu / 7));
+      for (let i = 0; i < n; i++) {
+        const u0 = i / n, u1 = (i + 1) / n;
+        o.solid(ob, [[...P(u0, 0), z], [...P(u1, 0), z + th], [...P(u1, 1), z + th], [...P(u0, 1), z]], [z, z, z, z], "rooftile");
+        o.prism(ob, sub(u1 - 0.15 / lu, u1, 0.03, 0.97), z, z + th - 0.15, "glass");
+      }
+      // chimneys: 2.4 m square brick stacks from the floor, at the ends of the shed, with a lip cap
+      let top = z + th;
+      const nc = R.randint(1, 2), hs = 1.2;
+      for (let i = 0; i < nc; i++) {
+        const uc = i ? 1 - 4 / lu : 4 / lu, vc = clamp(R.uniform(0.2, 0.8), 3 / lv, 1 - 3 / lv), H = R.uniform(18, 25);
+        const sq = sub(uc - hs / lu, uc + hs / lu, vc - hs / lv, vc + hs / lv);
+        o.prism(ob, sq, bld.base, bld.base + H, "brick");
+        o.prism(ob, inset(sq, -0.25), bld.base + H, bld.base + H + 0.5, "lip");
+        top = Math.max(top, bld.base + H + 0.5);
+      }
+      return finish({ poly: q, base: bld.base, top, storeys: st, plinth: bld.plinth, label: "Print works", wall: "brick" }, z);
+    }
+
+    // round venues on the cell's most open spot
+    const { c: [cx, cy], r: rin } = innerDisc(poly);
+    if (form === "amphitheatre") {
+      const Ro = Math.min(0.4 * Math.sqrt(area), rin - 2);
+      if (!(Ro >= 14)) return null;
+      const foot = disc(cx, cy, Ro), { zmin, base, plinth } = levels(foot), rs = 0.3 * Ro, w = (Ro - rs) / 5, step = 1.3;
+      // the cavea faces Old Town across the stage: a horseshoe of 200° centred away from the centre
+      const face = Math.atan2(cy, cx), half = rad(100), m = 24;
+      const arc = (r, z, rev) => { const pts = Array.from({ length: m + 1 }, (_, j) => { const a = face - half + 2 * half * j / m; return [cx + r * Math.cos(a), cy + r * Math.sin(a), z]; }); return rev ? pts.reverse() : pts; };
+      const horseshoe = (r0, r1, z) => [...arc(r1, z, false), ...arc(r0, z, true)];
+      o.loft(ob, [ringAt(cx, cy, rs, zmin - 0.3), ringAt(cx, cy, rs, base + 0.2)], "timber");  // the stage
+      let tz = base + 0.2;
+      for (let i = 0; i < 5; i++) {
+        tz = base + 0.2 + (i + 1) * step;
+        o.loft(ob, [horseshoe(rs + i * w, rs + (i + 1) * w, zmin - 0.3), horseshoe(rs + i * w, rs + (i + 1) * w, tz)], "ashlar");
+      }
+      // the stage wall (scaenae frons) across the open side
+      const bx = -Math.cos(face), by = -Math.sin(face), tx = -by, ty = bx, d0 = rs + 1, d1 = rs + 3.5, hw = rs * 1.3;
+      const wall = [[cx + bx * d0 - tx * hw, cy + by * d0 - ty * hw], [cx + bx * d0 + tx * hw, cy + by * d0 + ty * hw], [cx + bx * d1 + tx * hw, cy + by * d1 + ty * hw], [cx + bx * d1 - tx * hw, cy + by * d1 - ty * hw]];
+      const wallTop = base + 9;
+      o.prism(ob, wall, zmin - 0.3, wallTop, "plaster_b");
+      o.prism(ob, inset(wall, -0.3), wallTop, wallTop + 0.6, "lip");
+      const top = Math.max(tz, wallTop + 0.6);
+      return finish({ poly: foot, base, top, storeys: Math.max(1, Math.round((top - base) / plan.storey)), plinth, kind: "landmark", landmark: form, label: VENUE_LABELS[form], wall: "ashlar" }, tz);
+    }
+    // the big top
+    const Rb = clamp(Math.min(0.35 * Math.sqrt(area), rin - 3), 0, 26);
+    if (!(Rb >= 12)) return null;
+    const foot = disc(cx, cy, Rb), { zmin, base, plinth } = levels(foot), eave = base + 6, peak = base + R.uniform(18, 24), lats = 7;
+    o.loft(ob, [ringAt(cx, cy, Rb, zmin - 0.3), ringAt(cx, cy, Rb, base)], "brick");
+    o.loft(ob, [ringAt(cx, cy, Rb, base), ringAt(cx, cy, Rb, eave)], "canvas");
+    // the cone sags between the masts: radius falls off faster than height rises
+    o.loft(ob, Array.from({ length: lats }, (_, i) => {
+      const t = i / (lats - 1);
+      if (i === lats - 1) return foot.map(() => [cx, cy, peak]);
+      return ringAt(cx, cy, (Rb + 0.6) * Math.pow(1 - t, 1.5), eave - 0.2 + (peak - eave + 0.2) * t);
+    }), "canvas");
+    const mr = 0.15 * Rb, mh = 0.3, mastTop = peak + 2.5, a0 = R.uniform(0, TAU / 4);
+    for (let i = 0; i < 4; i++) {
+      const a = a0 + i * TAU / 4, mx = cx + mr * Math.cos(a), my = cy + mr * Math.sin(a);
+      o.prism(ob, [[mx - mh, my - mh], [mx + mh, my - mh], [mx + mh, my + mh], [mx - mh, my + mh]], base, mastTop, "lip");
+    }
+    return finish({ poly: foot, base, top: mastTop, storeys: 1, plinth, kind: "landmark", landmark: form, label: VENUE_LABELS[form], wall: "canvas" }, eave);
   }
 
   // ---------------------------------------------------------------- Saffron's tree-houses
@@ -1285,25 +1426,25 @@ const CityGen = (() => {
     function ground(q) { const top = q.map(([x, y]) => [x, y, gAt(x, y) + 0.12]); o.solid(ob, top, top.map((t) => t[2] - 0.42), "paver"); }
   }
 
-  // Fill one band of a ring with Voronoi cells, cell-edge canals and land uses.
-  function genVoronoiBand(plan, d, ter, spokes, o, band, cfg) {
+  // Lay out one band of a ring: its Voronoi cells, cell-edge canals and adjacency, and for each cell its key,
+  // use, neighbourhood and water side. Nothing is built or counted, so a pre-pass can read the uses before
+  // genVoronoiBand builds the band (Indigo's venues are chosen this way).
+  function layVoronoiBand(plan, d, ter, spokes, o, band, cfg) {
     const ring = plan.scene.rings.find((r) => r.id === d.ring), LU = plan.landuse || {};
     const { cells, canals, adj } = voronoiCells(plan, spokes, cfg.key, band, cfg.spacing, cfg.street, d.canals ? { ...d.canals, prev: cfg.canalEnds } : null);
     const rings = [...plan.scene.rings].sort((a, b) => a.r0 - b.r0), ri = rings.indexOf(ring);
     const L = ringLayout(plan, d), first = band.i === Math.min(...L.bands.map((b) => b.i)), last = band.i === Math.max(...L.bands.map((b) => b.i));
     const waterIn = ri > 0 && rings[ri - 1].kind === "water" && first ? rings[ri - 1] : null;
     const waterOut = ri < rings.length - 1 && rings[ri + 1].kind === "water" && last ? rings[ri + 1] : null;
-    const H = d.harbours || {}, summaries = [];
-    for (const cn of canals) o.canals.push({ d: d.id, band: band.i, k: cn.k, c: cn.c, path: cn.path, width: d.canals.width });
-    for (const cell of cells) {
-      if (cell.plaza) { o.squares.push(cell.poly); continue; }
+    const H = d.harbours || {};
+    const lay = cells.map((cell) => {
+      if (cell.plaza) return null;
       const [cx, cy] = centroid(cell.poly), r = Math.hypot(cx, cy);
       let dw = Math.min(r - ring.r0, ring.r1 - r);
       for (const cn of canals) if (cn.k === cell.k) dw = Math.min(dw, distToPath(cx, cy, cn.path));
       const wf = clamp(dw / (LU.waterfront_depth || 160), 0, 1);
       const UR = rng(`${cfg.key}|use|${band.i}|${cell.k}|${cell.j}`);
       const nb = o.nb ? o.nb.assign(cx, cy, ring.id) : null, nbType = nb ? o.nb.typeOf(nb.type) : null;
-      if (nb) { nb.cells++; nb.sx += cx; nb.sy += cy; (nb.rings || (nb.rings = new Set())).add(ring.id); }
       let use = cfg.forceUse || pickUse(plan, d, cx, cy, wf, UR, nbType);
       // a small chance that a cell on a ring canal becomes part of the water
       const rs = cell.raw.map(([x, y]) => Math.hypot(x, y));
@@ -1313,15 +1454,30 @@ const CityGen = (() => {
         const wl0 = ter.water[(side < 0 ? waterIn : waterOut).id], gMin = Math.min(...cell.poly.map(([x, y]) => ter.G(clamp(Math.hypot(x, y), band.r0 + 0.1, band.r1 - 0.1))));
         if (wl0 <= gMin - 1 && wl0 >= gMin - (H.max_depth ?? 9) && !inHeroWedge(plan, spokes, cx, cy, 10)) use = HR.random() < (H.waterworks_share ?? 0.4) ? "waterworks" : "harbour";
       }
-      const key = `${cfg.key}|v${band.i}|${cell.k}|${cell.j}`;
+      return { cx, cy, nb, nbType, use, side, key: `${cfg.key}|v${band.i}|${cell.k}|${cell.j}` };
+    });
+    return { ring, cells, canals, adj, waterIn, waterOut, lay };
+  }
+
+  // Fill one band of a ring with Voronoi cells, cell-edge canals and land uses. laid is the band from
+  // layVoronoiBand when a pre-pass already laid it out; cfg.forms maps a cell key to a college form.
+  function genVoronoiBand(plan, d, ter, spokes, o, band, cfg, laid) {
+    const { ring, cells, canals, adj, waterIn, waterOut, lay } = laid || layVoronoiBand(plan, d, ter, spokes, o, band, cfg);
+    const summaries = [];
+    for (const cn of canals) o.canals.push({ d: d.id, band: band.i, k: cn.k, c: cn.c, path: cn.path, width: d.canals.width });
+    for (const [ci, cell] of cells.entries()) {
+      if (cell.plaza) { o.squares.push(cell.poly); continue; }
+      const { cx, cy, nb, nbType, use, side, key } = lay[ci];
+      if (nb) { nb.cells++; nb.sx += cx; nb.sy += cy; (nb.rings || (nb.rings = new Set())).add(ring.id); }
       const ob = o.obj(`NBHD_${d.id}_${use.slice(0, 4)}_v${band.i}_s${cell.k}_${String(cell.j).padStart(4, "0")}`, d.id,
         nb ? { use, nb: nb.id, nb_name: nb.name, nb_type: nb.type } : { use });
       o.cells.push({ d: d.id, use, poly: cell.poly, nb: nb ? nb.id : null, sky: nbType ? (nbType.skywalk ?? 1) : 1 });
       const wr = side < 0 ? waterIn : waterOut;
-      summaries[cells.indexOf(cell)] = buildUse(plan, d, ter, o, ob, use, cell, key, {
+      summaries[ci] = buildUse(plan, d, ter, o, ob, use, cell, key, {
         wing: cfg.wing, row: `v${band.i}`, band, waterSide: side, gap: cfg.street / 2,
-        ringEdge: side < 0 ? ring.r0 : ring.r1, waterLevel: wr ? ter.water[wr.id] : 0, nbHeight: nbType ? (nbType.height ?? 1) : 1, nbStyle: nbType ? nbType.style : null, nb: nb ? nb.id : null });
-      summaries[cells.indexOf(cell)] && (summaries[cells.indexOf(cell)].sky = nbType ? (nbType.skywalk ?? 1) : 1);
+        ringEdge: side < 0 ? ring.r0 : ring.r1, waterLevel: wr ? ter.water[wr.id] : 0, nbHeight: nbType ? (nbType.height ?? 1) : 1, nbStyle: nbType ? nbType.style : null, nb: nb ? nb.id : null,
+        form: cfg.forms ? cfg.forms.get(key) : undefined });
+      summaries[ci] && (summaries[ci].sky = nbType ? (nbType.skywalk ?? 1) : 1);
     }
     for (const e of adj) {
       const A = summaries[e.a], B = summaries[e.b];
@@ -1860,6 +2016,26 @@ const CityGen = (() => {
       poly: foot, base, top, storeys: Math.max(1, Math.round(OBS.drumH / plan.storey)), plinth: zmax - zmin, area: polyArea(foot) });
   }
 
+  // Indigo's college cells, each given a form before any is built: the cells (in band and cell order) are
+  // shuffled by seed; the first three become the opera, the amphitheatre and the big top, a third of the rest
+  // (rounded up) print works, and the others studios. Returns a Map from cell key to form; empty unless
+  // Indigo is an arts college.
+  const VENUE_FORMS = ["opera", "amphitheatre", "bigtop"];
+  function indigoForms(d, bands) {
+    const out = new Map(), cfg = collegeConfig(d).indigo;
+    if (cfg.style !== "arts") return out;
+    const keys = [];
+    for (const B of bands) B.cells.forEach((cell, ci) => {
+      const c = B.lay[ci];
+      if (c && c.use === "college" && (collegeOf(d, c.nb ? c.nb.id : cell.k) || {}).id === "indigo") keys.push(c.key);
+    });
+    const R = rng("park|col|indigo|venues");
+    for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(R.random() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
+    const nv = Math.min(VENUE_FORMS.length, keys.length), nPrint = Math.ceil((keys.length - nv) / 3);
+    keys.forEach((k, i) => out.set(k, i < nv ? VENUE_FORMS[i] : i < nv + nPrint ? "print" : "studio"));
+    return out;
+  }
+
   // Park ring: colleges (courts, pavilions, halls) in the middle band, groves and orchards either side,
   // an irrigation rill down the middle of each planted band.
   function genCampus(plan, d, ter, spokes, o) {
@@ -1867,11 +2043,14 @@ const CityGen = (() => {
     const rillOb = o.obj(`NBHD_${d.id}_rills`, d.id);
     if (d.layout === "voronoi") {
       // colleges first, so their cell-edge canals exist before the groves and orchards are planted round them
-      L.bands.forEach((band, bi) => {
-        if ((kinds[bi] || "campus") !== "campus") return;
-        const c = d.campus;
-        genVoronoiBand(plan, d, ter, spokes, o, band, { key: `${d.id}campus`, spacing: [c.row_depth + c.street, c.block + c.street], street: c.street, wing: c.wing, canalEnds: new Map() });
-      });
+      // lay every campus band out first, so Indigo's venues can be chosen from all its college cells
+      const c = d.campus, laid = L.bands.map((band, bi) => {
+        if ((kinds[bi] || "campus") !== "campus") return null;
+        const cfg = { key: `${d.id}campus`, spacing: [c.row_depth + c.street, c.block + c.street], street: c.street, wing: c.wing, canalEnds: new Map() };
+        return { band, cfg, laid: layVoronoiBand(plan, d, ter, spokes, o, band, cfg) };
+      }).filter(Boolean);
+      const forms = indigoForms(d, laid.map((b) => b.laid));
+      for (const b of laid) genVoronoiBand(plan, d, ter, spokes, o, b.band, { ...b.cfg, forms }, b.laid);
       buildCanals(plan, d, ter, o, L);
     }
     // the colleges' features in the grove and orchard bands, before those bands are planted

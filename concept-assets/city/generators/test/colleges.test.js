@@ -106,8 +106,10 @@ test("every Saffron lot is timber under a garden roof", () => {
   }
 });
 
+// Indigo's venues and print works (task 5) have their own materials; the rest keep the arts palette
+const SIGNATURE = ["opera", "amphitheatre", "bigtop", "print"];
 test("every Indigo lot is plastered, in at least 3 colours, over a brick plinth", () => {
-  const lots = parkLots(O, "indigo");
+  const lots = parkLots(O, "indigo").filter((l) => !SIGNATURE.includes(l.form));
   assert.ok(lots.length > 0);
   for (const l of lots) {
     assert.equal(l.college, "indigo"); assert.ok(PLASTERS.includes(l.wall), `${l.key} wall ${l.wall}`);
@@ -119,7 +121,7 @@ test("every Indigo lot is plastered, in at least 3 colours, over a brick plinth"
 
 test("every 4-gon Indigo lot has a rooftile gable", () => {
   const gables = parkPrims(O).filter((p) => p.t === "solid" && p.m === "rooftile");
-  const quads = parkLots(O, "indigo").filter((l) => l.poly.length === 4);
+  const quads = parkLots(O, "indigo").filter((l) => l.poly.length === 4 && !SIGNATURE.includes(l.form));
   assert.ok(quads.length > 0);
   for (const l of quads) {
     assert.ok(gables.some((g) => sameXY(g.top[0], l.poly[0])), `no rooftile gable on ${l.key}`);
@@ -312,3 +314,86 @@ function pointIn(x, y, q) {
   for (let a = 0, c = q.length - 1; a < q.length; c = a++) if ((q[a][1] > y) !== (q[c][1] > y) && x < (q[c][0] - q[a][0]) * (y - q[a][1]) / (q[c][1] - q[a][1]) + q[a][0]) ins = !ins;
   return ins;
 }
+
+// ---------------------------------------------------------------- Indigo: venues, print works and studios (task 5)
+const VENUES = { opera: "Indigo Opera", amphitheatre: "Indigo Amphitheatre", bigtop: "Indigo Big Top" };
+const FORMS = ["opera", "amphitheatre", "bigtop", "print", "studio"];
+const indigoCollege = (o, p = plan) => parkLots(o, "indigo", p).filter((l) => l.use === "college");
+const indigoCells = (o) => o.cells.filter((c) => c.nb === "park-1" && c.use === "college");
+const lotPrims = (o, l) => { const ob = o.objects.find((x) => x.name === l.obj); assert.ok(ob, `no object for ${l.key}`); return ob.prims; };
+const centreIn = (pr, l) => pointIn(...mid(ptsOf(pr)), l.poly);
+
+test("Indigo has exactly one opera, amphitheatre and big top, as labelled landmark lots", () => {
+  const lots = indigoCollege(O);
+  assert.ok(lots.length > 0);
+  for (const l of lots) assert.ok(FORMS.includes(l.form), `${l.key} form ${l.form}`);
+  for (const [form, label] of Object.entries(VENUES)) {
+    const v = lots.filter((l) => l.form === form);
+    assert.equal(v.length, 1, `${form}: ${v.length}`);
+    assert.equal(v[0].kind, "landmark"); assert.equal(v[0].label, label); assert.equal(v[0].college, "indigo");
+    for (const f of ["base", "top", "storeys", "area"]) assert.ok(Number.isFinite(v[0][f]), `${form} ${f} ${v[0][f]}`);
+  }
+  // the forms belong to Indigo's college cells only
+  assert.ok(O.lots.filter((l) => FORMS.includes(l.form)).every((l) => l.college === "indigo" && l.use === "college"));
+});
+
+test("about a third of the remaining Indigo college cells are print works, the rest studios", () => {
+  const N = indigoCells(O).length, lots = indigoCollege(O), want = Math.ceil((N - 3) / 3);
+  assert.ok(N > 3, `only ${N} Indigo college cells`);
+  const prints = lots.filter((l) => l.form === "print").length;
+  assert.ok(prints >= want - 1 && prints <= want + 1, `${prints} print lots, want about ${want} of ${N - 3}`);
+  assert.ok(lots.some((l) => l.form === "studio"), "no studios");
+});
+
+test("the big top is a canvas cone over a 6 m wall, peaking at 18-24 m, with 4 masts", () => {
+  const l = indigoCollege(O).find((x) => x.form === "bigtop"), prims = lotPrims(O, l);
+  const canvas = prims.filter((p) => p.t === "loft" && p.m === "canvas" && centreIn(p, l));
+  assert.ok(canvas.length > 0, "no canvas lofts");
+  const peak = Math.max(...canvas.map(primTop));
+  assert.ok(peak - l.base >= 18 - 1e-6 && peak - l.base <= 24 + 1e-6, `peak ${peak - l.base} above base`);
+  assert.ok(canvas.some((p) => Math.abs(primTop(p) - (l.base + 6)) < 0.01), "no 6 m wall");
+  const masts = prims.filter((p) => p.t === "prism" && centreIn(p, l) && p.z1 - p.z0 >= 18);
+  assert.equal(masts.length, 4);
+});
+
+test("every print works has rooftile saw teeth and a brick chimney at least 18 m tall", () => {
+  const prints = indigoCollege(O).filter((l) => l.form === "print");
+  assert.ok(prints.length > 0);
+  for (const l of prints) {
+    const prims = lotPrims(O, l).filter((p) => centreIn(p, l));
+    assert.ok(prims.some((p) => p.t === "solid" && p.m === "rooftile"), `${l.key} has no rooftile teeth`);
+    const chim = prims.filter((p) => p.t === "prism" && p.m === "brick" && p.z1 - p.z0 >= 18);
+    assert.ok(chim.length >= 1 && chim.length <= 2, `${l.key} has ${chim.length} chimneys`);
+    assert.ok(chim.every((p) => p.z1 - p.z0 <= 25 + 1e-6));
+    assert.equal(l.wall, "brick");
+  }
+});
+
+test("the amphitheatre is a bowl of 5 ashlar rings under 15 m tall", () => {
+  const l = indigoCollege(O).find((x) => x.form === "amphitheatre"), prims = lotPrims(O, l);
+  assert.equal(prims.filter((p) => p.t === "loft" && p.m === "ashlar" && centreIn(p, l)).length, 5);
+  assert.ok(l.top - l.base < 15, `amphitheatre ${l.top - l.base} m tall`);
+});
+
+test("the opera is a 4-storey plaster_a box under a copper drum and dome", () => {
+  const l = indigoCollege(O).find((x) => x.form === "opera"), prims = lotPrims(O, l);
+  assert.equal(l.storeys, 4); assert.equal(l.wall, "plaster_a");
+  assert.ok(prims.some((p) => p.t === "prism" && p.m === "plaster_a" && centreIn(p, l)));
+  assert.ok(prims.filter((p) => p.t === "loft" && p.m === "copper" && centreIn(p, l)).length >= 2, "no copper drum and dome");
+});
+
+test("with five spokes nothing throws and there is at most one of each venue", () => {
+  let p, o;
+  assert.doesNotThrow(() => { [p, o] = withPlan((q) => { q.spokes.count = 5; }); });
+  for (const form of Object.keys(VENUES)) assert.ok(o.lots.filter((l) => l.form === form).length <= 1, form);
+});
+
+test("with a 300 m Lantern every venue stays below the heart", () => {
+  const [p, o] = withPlan((q) => { core(q).lantern = { ...(core(q).lantern || {}), height: 300 }; });
+  const v = indigoCollege(o, p).filter((l) => VENUES[l.form]);
+  assert.equal(v.length, 3);
+  for (const l of v) {
+    assert.ok(l.top < o.lantern.heart[1], `${l.form} top ${l.top}`);
+    assert.ok(lotPrims(o, l).filter((pr) => centreIn(pr, l)).every((pr) => primTop(pr) < o.lantern.heart[1]));
+  }
+});
