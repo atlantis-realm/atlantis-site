@@ -239,3 +239,76 @@ test("clearTrees drops trees inside a footprint from o.trees and o.instances ali
   assert.deepEqual(o.trees, [[50, 0]]);
   assert.deepEqual(o.instances.map((i) => i.name), ["b"]);
 });
+
+// ---------------------------------------------------------------- Saffron: grand tree-houses (task 4)
+const saffronObs = (o) => o.objects.filter((ob) => ob.coll === "park" && ob.props.nb === "park-2");
+const treehouses = (o, p = plan) => parkLots(o, "saffron", p).filter((l) => l.use === "college");
+const ptsOf = (pr) => (pr.t === "prism" ? pr.poly : pr.t === "solid" ? pr.top : pr.rings.flat());
+
+test("every Saffron college lot is a tree-house with at least 2 decks", () => {
+  const lots = treehouses(O);
+  assert.ok(lots.length > 0);
+  for (const l of lots) {
+    assert.equal(l.form, "treehouse", `${l.key} form ${l.form}`);
+    assert.ok(Number.isInteger(l.decks) && l.decks >= 2 && l.decks <= 4, `${l.key} decks ${l.decks}`);
+  }
+  assert.ok(O.lots.filter((l) => l.form === "treehouse").every((l) => l.college === "saffron" && l.use === "college"));
+});
+
+test("each tree-house stands on 3-6 timber trunk columns rising from the ground", () => {
+  const ter = CityGen.makeTerrain(plan);
+  for (const l of treehouses(O)) {
+    const ob = O.objects.find((x) => x.name === l.obj);
+    assert.ok(ob, `no object for ${l.key}`);
+    // a trunk: a timber prism 3-4 m square under the lot's lower deck, taller than the deck is high
+    const area = (q) => Math.abs(q.reduce((t, p, i) => { const r = q[(i + 1) % q.length]; return t + p[0] * r[1] - r[0] * p[1]; }, 0)) / 2;
+    const cols = ob.prims.filter((p) => p.t === "prism" && p.m === "timber" && area(p.poly) >= 9 - 1e-6 && area(p.poly) <= 16 + 1e-6 && p.z1 - p.z0 >= 8 && pointIn(...mid(p.poly), l.poly));
+    assert.ok(cols.length >= 3 && cols.length <= 6, `${l.key} has ${cols.length} columns`);
+    for (const c of cols) {
+      const [x, y] = mid(c.poly), g = ter.G(Math.hypot(x, y));
+      assert.ok(Math.abs(c.z0 - g) <= 1, `${l.key} column foot ${c.z0} vs ground ${g}`);
+      assert.ok(c.z1 >= l.base + 8, `${l.key} column stops at ${c.z1}`);
+    }
+  }
+});
+
+test("every canopy walkway lies inside one Saffron college cell", () => {
+  const cells = O.cells.filter((c) => c.nb === "park-2" && c.use === "college");
+  const walks = saffronObs(O).filter((ob) => ob.props.walkway).flatMap((ob) => ob.prims);
+  assert.ok(walks.length > 0, "no walkways");
+  for (const w of walks) {
+    assert.equal(w.m, "timber");
+    // the four corners and points along each side, all in the same cell
+    const pts = w.poly.flatMap((p, i) => { const q = w.poly[(i + 1) % w.poly.length]; return [0, 0.25, 0.5, 0.75].map((f) => [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f]); });
+    assert.ok(cells.some((c) => pts.every(([x, y]) => pointIn(x, y, c.poly))), `walkway ${JSON.stringify(w.poly)} leaves its cell`);
+  }
+});
+
+test("no Saffron prim reaches past r 948 (decks stop short of the ring avenue)", () => {
+  const obs = saffronObs(O);
+  assert.ok(obs.length > 0);
+  for (const ob of obs) for (const pr of ob.prims) for (const [x, y] of ptsOf(pr)) assert.ok(ringR(x, y) <= 948 + 1e-6, `${ob.name} ${pr.m} vertex at r ${ringR(x, y)}`);
+  // some decks do overhang their cell toward the orchard
+  assert.ok(obs.some((ob) => ob.prims.some((pr) => pr.t === "prism" && pr.poly.some(([x, y]) => ringR(x, y) > 940))), "no deck overhangs toward the orchard");
+});
+
+test("Saffron's orchard keeps every tree it had at Task 1", () => {
+  // 4917: Saffron's trees (sectors k 4-5) at r 970-1170, from plan.json run through citygen.js at Task 1's commit 9a81230
+  const d = park, spokes = CityGen.spokeAngles(plan), n = spokes.length, step = CityGen.TAU / n, start = spokes[(d.neighbourhood.start_spoke || 0) % n].a;
+  const sector = (x, y) => Math.floor((((Math.atan2(y, x) - start) % CityGen.TAU + CityGen.TAU) % CityGen.TAU) / step) % n;
+  const inOrchard = (i) => i.coll === "park" && ringR(i.x, i.y) >= 970 && ringR(i.x, i.y) <= 1170 && CityGen.collegeOf(d, sector(i.x, i.y)).id === "saffron";
+  assert.equal(O.instances.filter(inOrchard).length, 4917);
+});
+
+test("with a 300 m Lantern every tree-house stays below the heart", () => {
+  const [p, o] = withPlan((q) => { core(q).lantern = { ...(core(q).lantern || {}), height: 300 }; });
+  const lots = treehouses(o, p);
+  assert.ok(lots.length > 0);
+  for (const l of lots) assert.ok(l.top < o.lantern.heart[1], `${l.key} top ${l.top} vs heart ${o.lantern.heart[1]}`);
+});
+
+function pointIn(x, y, q) {
+  let ins = false;
+  for (let a = 0, c = q.length - 1; a < q.length; c = a++) if ((q[a][1] > y) !== (q[c][1] > y) && x < (q[c][0] - q[a][0]) * (y - q[a][1]) / (q[c][1] - q[a][1]) + q[a][0]) ins = !ins;
+  return ins;
+}

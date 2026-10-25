@@ -476,7 +476,7 @@ const CityGen = (() => {
   // roofs mix is the fallback for footprints that aren't 4-gons (4-gons are gabled in gableMat).
   const COLLEGE_STYLES = {
     physics: { wall: "ashlar", lip: "lip", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver", form: "lab_hall" },
-    earth: { wall: "timber", lip: "timber", plinth: "plinth", roofs: { garden: 1 }, ground: "roof" },
+    earth: { wall: "timber", lip: "timber", plinth: "plinth", roofs: { garden: 1 }, ground: "roof", form: "treehouse" },
     arts: { walls: ["plaster_a", "plaster_b", "plaster_c"], lip: "lip", plinth: "brick", roof: "gable", gableMat: "rooftile", roofs: { deco: 0.4, open: 0.6 }, ground: "paver" },
   };
   // The college style for a park cell (by group id, or sector index when neighbourhoods are off), or null:
@@ -1050,6 +1050,8 @@ const CityGen = (() => {
       const foot = byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R);
       // a physics college: the footprints merge into 1-3 lab halls, long bars of 2-4 tall (6 m) storeys
       if (CS && CS.form === "lab_hall") for (const [i, q] of labHalls(poly, foot).entries()) parts.push([q, rng(`park|col|lab|${key}|${i}`).randint(2, 4), 6, "lip", "lab_hall"]);
+      // an earth college: every plot becomes a tree-house (trunks, tiered decks, garden-roofed timber halls)
+      else if (CS && CS.form === "treehouse") for (const q of foot) parts.push([q, null, plan.storey, "roof", "treehouse"]);
       else for (const q of foot) parts.push([q, clamp(Math.round(R.uniform(lo, hi) * Math.exp(K.chaos * 0.6 * R.normal())), 1, hi + 3), plan.storey, "roof"]);
     } else {
       // residential and commercial: lots round a courtyard (commercial: bigger lots, deeper wings, taller)
@@ -1065,8 +1067,19 @@ const CityGen = (() => {
     const cellSt = storeysAt(plan, cx, cy, rng(`${key}|roof`), (d.height_scale || 1) * (T.height || 1) * (opts.nbHeight || 1));
     const cellFixed = parts.length ? parts[0][1] : null;
     const summary = { use, base: Infinity, top: Infinity };
+    // tree-houses share one lower-deck level per cell when the ground allows it, so walkways meet them flush
+    const houses = [], thLevel = parts.some((p) => p[4] === "treehouse") ? treeLevel(ter, parts.map((p) => p[0]), `park|col|tree|${key}|level`) : null;
     for (const [li, [q, st0, sh, roofM, form]] of parts.entries()) {
       const LR = rng(`${key}|${li}`), [qx, qy] = centroid(q);
+      if (form === "treehouse") {
+        const th = treeHouse(plan, ter, o, ob, q, poly, `${key}|${li}`, thLevel, opts.band, { wall: CS.wall, lip: CS.lip }, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`);
+        houses.push(th);
+        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, obj: ob.name, poly: th.decks[0], base: th.base, top: th.top, storeys: th.storeys, plinth: 0, area: polyArea(th.decks[0]),
+          label: "Tree-house", college: CS.college, wall: CS.wall, roof: "garden", form, decks: th.decks.length });
+        o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, th.base, th.top);
+        summary.base = Math.min(summary.base, th.base); summary.top = Math.min(summary.top, th.top);
+        continue;
+      }
       if (form === "lab_hall") {  // an ashlar body, a continuous glass clerestory in its top 2 m, a flat lip roof
         const mats = { wall: CS.wall, lip: CS.lip, plinth: CS.plinth };
         const bld = building(o, ob, ter, q, st0 * sh - 2, use, { roof: false, lip: false, mats });
@@ -1109,7 +1122,91 @@ const CityGen = (() => {
       o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, bld.top);
       summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, bld.top);
     }
+    if (houses.length > 1 && thLevel != null) canopyWalks(o, ob, poly, houses, d.id);
     return summary;
+  }
+
+  // ---------------------------------------------------------------- Saffron's tree-houses
+  // A plot raised into the canopy: 3-6 trunk columns from the ground to the top deck, 2-4 tiered timber decks
+  // (each smaller and shifted), the lowest 8-14 m up, and on each deck a 1-2 storey timber hall under a garden
+  // roof. The lowest deck may overhang toward the orchard (up to 6 m), but stops 2 m short of the band edge,
+  // so it never reaches the ring avenue. Trees under an overhang stay.
+  const TREE = { rise: [8, 14], decks: [2, 4], shrink: [0.8, 0.9], col: [3, 4], hall: 1.2, deck: 1, clear: 5.5, overhang: [3, 6], reach: 24, stop: 2 };
+  const groundTop = (ter, q) => Math.max(...q.map(([x, y]) => ter.G(Math.hypot(x, y)))) + 0.05;
+  // the lower-deck level the cell's tree-houses share, 8-14 m above every one of them, or null when the
+  // ground falls too far across the cell for one level (each house then picks its own)
+  function treeLevel(ter, qs, key) {
+    const bs = qs.map((q) => groundTop(ter, q)), lo = Math.max(...bs) + TREE.rise[0], hi = Math.min(...bs) + TREE.rise[1];
+    return lo <= hi ? rng(key).uniform(lo, hi) : null;
+  }
+  function treeHouse(plan, ter, o, ob, q, cellPoly, key, level, band, pal, treeColl, name) {
+    const R = rng(`park|col|tree|${key}`), base = groundTop(ter, q);
+    const z0 = level ?? base + R.uniform(...TREE.rise);
+    // the decks: the plot, then each smaller and pulled toward a point inside the one below
+    const decks = [q], want = R.randint(...TREE.decks);
+    while (decks.length < want) {
+      const prev = decks[decks.length - 1], c = centroid(prev), v = prev[R.randint(0, prev.length - 1)], t = R.uniform(0.2, 0.6), f = R.uniform(...TREE.shrink);
+      const an = [lerp(c[0], v[0], t), lerp(c[1], v[1], t)], next = prev.map(([x, y]) => [an[0] + (x - an[0]) * f, an[1] + (y - an[1]) * f]);
+      if (decks.length >= 2 && polyArea(inset(next, TREE.hall)) < 50) break;  // too small for a garden-roofed hall
+      decks.push(next);
+    }
+    // overhang: the lowest deck's outer edge reaches 3-6 m past the cell edge toward the orchard (straight
+    // out, so it never swings into a spoke corridor), clipped 2 m short of the band edge
+    const rq = q.map(([x, y]) => Math.hypot(x, y)), rOut = Math.max(...rq), rMax = band.r1 - TREE.stop;
+    if (rOut > band.r1 - TREE.reach) {
+      const ov = R.uniform(...TREE.overhang);
+      // the cell edge straight out from a corner: walk out until leaving the cell
+      const edge = (r, a) => { let e = r; while (e < rMax && pointInPoly(...polar(e + 0.5, a), cellPoly)) e += 0.5; return e; };
+      decks[0] = q.map(([x, y], i) => {
+        if (rq[i] < rOut - 2) return [x, y];
+        const a = Math.atan2(y, x), e = edge(rq[i], a);
+        return e > band.r1 - TREE.reach ? polar(Math.min(e + ov, rMax), a) : [x, y];
+      });
+    }
+    // each deck, its hall and garden roof; the next deck clears the garden's trees
+    let zd = z0, top = z0, storeys = 0;
+    const levels = [];
+    for (const [i, dk] of decks.entries()) {
+      levels.push(zd);
+      o.prism(ob, dk, zd, zd + TREE.deck, "timber");
+      const hq = inset(dk, TREE.hall), st = R.randint(1, 2), wallTop = zd + TREE.deck + st * plan.storey;
+      o.prism(ob, hq, zd + TREE.deck, wallTop, pal.wall);
+      o.prism(ob, inset(hq, -0.35), wallTop, wallTop + 0.9, pal.lip);
+      const extra = roofTop(o, ob, ter, hq, wallTop + 0.9, "garden", R, treeColl, `${name}_deck${i}`, pal);
+      if (!extra) o.prism(ob, inset(hq, 0.6), wallTop + 0.35, wallTop + 0.8, "roof");  // too small for planting: a turf lid
+      storeys += st; top = wallTop + 0.9 + extra;
+      zd = wallTop + 0.9 + TREE.clear;
+    }
+    // the trunks: 3-6 columns spread under the top deck, from the ground up through every deck
+    const T = decks[decks.length - 1], c = centroid(T), n = R.randint(3, 6), w = R.uniform(...TREE.col);
+    const spots = T.flatMap((p, i) => { const r = T[(i + 1) % T.length]; return [p, [(p[0] + r[0]) / 2, (p[1] + r[1]) / 2]]; });
+    const ux0 = T[1][0] - T[0][0], uy0 = T[1][1] - T[0][1], ul = Math.hypot(ux0, uy0) || 1, ux = ux0 / ul * w / 2, uy = uy0 / ul * w / 2;
+    for (let j = 0; j < n; j++) {
+      const s = spots[Math.floor(j * spots.length / n)], px = lerp(c[0], s[0], 0.5), py = lerp(c[1], s[1], 0.5);
+      const sq = [[px - ux + uy, py - uy - ux], [px + ux + uy, py + uy - ux], [px + ux - uy, py + uy + ux], [px - ux - uy, py - uy + ux]];
+      o.prism(ob, sq, Math.min(...sq.map(([x, y]) => ter.G(Math.hypot(x, y)))) - 0.3, levels[levels.length - 1] + TREE.deck, "timber");
+    }
+    return { decks, base, top, storeys, z: z0, c: centroid(q) };
+  }
+  // Canopy walkways: 3 m timber bridges at the lower-deck level joining a cell's tree-houses (a spanning tree,
+  // shortest links first). A link is only built when its whole footprint lies inside the cell, so it never
+  // crosses an avenue, canal or spoke corridor.
+  function canopyWalks(o, ob, cellPoly, houses, coll) {
+    const inCell = (q) => q.every((p, i) => { const r = q[(i + 1) % q.length]; return [0, 0.25, 0.5, 0.75].every((f) => pointInPoly(lerp(p[0], r[0], f), lerp(p[1], r[1], f), cellPoly)); });
+    const links = [];
+    for (let a = 0; a < houses.length; a++) for (let b = a + 1; b < houses.length; b++) links.push([dist(houses[a].c, houses[b].c), a, b]);
+    links.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
+    const up = houses.map((_, i) => i), root = (i) => (up[i] === i ? i : (up[i] = root(up[i])));
+    let wob = null;
+    for (const [L, a, b] of links) {
+      if (root(a) === root(b) || L < 1) continue;
+      const A = houses[a].c, B = houses[b].c, nx = -(B[1] - A[1]) / L * 1.5, ny = (B[0] - A[0]) / L * 1.5;
+      const q = [[A[0] + nx, A[1] + ny], [A[0] - nx, A[1] - ny], [B[0] - nx, B[1] - ny], [B[0] + nx, B[1] + ny]];
+      if (!inCell(q)) continue;
+      up[root(a)] = root(b);
+      wob = wob || o.obj(`${ob.name}_walkways`, coll, { ...ob.props, walkway: true });
+      o.prism(wob, q, houses[a].z, houses[a].z + TREE.deck, "timber");
+    }
   }
 
   // A cell on a ring canal turned into water: a boat harbour (basin, quays, piers) or a waterworks
