@@ -488,7 +488,13 @@ test("Indigo's landmark off: no arcology or pines, but the dye gardens stay", ()
   const [, o] = withPlan((q) => { q.districts.find((d) => d.id === "park").colleges.indigo.landmark = false; });
   assert.equal(arcologies(o).length, 0);
   assert.equal(pines(o).length, 0);
-  assert.ok(dyeGardens(o).length >= 2);
+  const g = dyeGardens(o);
+  assert.ok(g.length >= 2);
+  // no bare reserved square where the arcology would have stood: the only 4-gon no-plant zones in Indigo's
+  // orchard band are the gardens (solar patches and blimp pads have more corners)
+  const quads = o.noPlant.filter((q) => q.length === 4 && inOrchard(mid(q)) && sectorCollege(plan, ...mid(q)) === "indigo");
+  assert.equal(quads.length, g.length, `${quads.length} reserved squares for ${g.length} gardens`);
+  assert.ok(quads.every((q) => g.some((l) => JSON.stringify(l.poly) === JSON.stringify(q))), "a reserved zone that isn't a garden");
 });
 
 test("with five or eight spokes nothing throws and there is at most one arcology", () => {

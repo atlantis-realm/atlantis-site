@@ -2069,10 +2069,11 @@ const CityGen = (() => {
     }
     if (!found.length) { o.warnings.push(`There's no clear site in ${cfg.name}'s orchard band for its pine arcology and dye gardens.`); return; }
     const site = rng("park|col|indigo|arcology").choice(found), F = frame(site.cx, site.cy);
-    const zone = rect(F, -H, H, -H, H);
-    o.noPlant.push(zone);
-    clearTrees(o, zone);
     if (cfg.landmark) {
+      // the arcology and its margin are reserved only when it is built (the site still anchors the gardens)
+      const zone = rect(F, -H, H, -H, H);
+      o.noPlant.push(zone);
+      clearTrees(o, zone);
       const ob = o.obj(`NBHD_${d.id}_indigo_arcology`, d.id, { use: "landmark", nb, college: "indigo" });
       const sq = (h) => rect(F, -h, h, -h, h), foot = sq(ARC.base / 2), zs = foot.map(([x, y]) => ter.G(Math.hypot(x, y)));
       const zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05;

@@ -46,6 +46,15 @@ test("build_city.py builds a procedural pine and doesn't skip asset_Plant_pine",
   assert.ok(src.includes("MAT_AP_LeafC") && src.includes("MAT_AP_Bark"), "pine materials missing");
   const build = src.slice(src.indexOf("def build():"), src.indexOf("def cut_canals"));
   assert.match(build, /asset not in bpy\.data\.collections and asset not in PROCEDURAL_TREES/);
-  // the pine's materials get their colours in code, before MATS is built
-  assert.match(src, /"MAT_AP_LeafC": \(/); assert.match(src, /"MAT_AP_Bark": \(/);
+});
+
+test("college_palette() only colours the new college materials, never the shared kit ones", () => {
+  // MAT_AP_LeafC and MAT_AP_Bark are shared by the kit trees city-wide; the pine uses them as they are
+  const m = src.match(/^COLLEGE_COLORS = \{([\s\S]*?)\}/m);
+  assert.ok(m, "COLLEGE_COLORS not found");
+  const names = [...m[1].matchAll(/"(MAT_[^"]+)"\s*:/g)].map((k) => k[1]);
+  for (const shared of ["MAT_AP_LeafC", "MAT_AP_Bark", "MAT_AP_Grout", "MAT_AP_Paver", "MAT_AP_Water", "MAT_AP_Glow"])
+    assert.ok(!names.includes(shared), `college_palette() recolours ${shared}`);
+  const fn = src.slice(src.indexOf("def college_palette():"), src.indexOf("def ground_material"));
+  assert.ok(!/LeafC|Bark/.test(fn), "college_palette() touches the kit tree materials");
 });

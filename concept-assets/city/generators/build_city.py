@@ -19,8 +19,7 @@ build()    rebuilds the generated collections. Trees are point clouds instanced 
 ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
 ground_palette()  basic colours: asphalt roads, sandstone pavers, deep sea-teal water, and materials for the bare ground
            rings (orchard grass-and-dirt for the college ring, meadow for the greenbelt, pavers outside).
-college_palette()  colours for the colleges' materials (ashlar, verdigris, timber, brick, plasters, roof tile, canvas, dye)
-           and the pine's needles and bark.
+college_palette()  colours for the colleges' materials (ashlar, verdigris, timber, brick, plasters, roof tile, canvas, dye).
 hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
 hide_centre_strays()  after the build, any other visible hand-built object reaching inside the first ring
            canal (bar its water, AP_inner_water, and bank, KIT_Terrace_island) is reported and hidden the same way.
@@ -458,9 +457,7 @@ COLLEGE_COLORS = {"MAT_AP_Ashlar": (0.78, 0.76, 0.70, 1.0), "MAT_AP_Verdigris": 
                   "MAT_AP_Timber": (0.42, 0.26, 0.13, 1.0), "MAT_AP_Brick": (0.45, 0.17, 0.10, 1.0),
                   "MAT_AP_PlasterOchre": (0.80, 0.58, 0.25, 1.0), "MAT_AP_PlasterRose": (0.78, 0.42, 0.40, 1.0),
                   "MAT_AP_PlasterTeal": (0.30, 0.55, 0.55, 1.0), "MAT_AP_RoofTile": (0.55, 0.20, 0.10, 1.0),
-                  "MAT_AP_Canvas": (0.85, 0.20, 0.18, 1.0), "MAT_AP_DyeBed": (0.35, 0.15, 0.55, 1.0),
-                  # the procedural pine's needles and bark (not MAT keys: the scatter's distance tree uses them)
-                  "MAT_AP_LeafC": (0.04, 0.14, 0.06, 1.0), "MAT_AP_Bark": (0.16, 0.09, 0.05, 1.0)}
+                  "MAT_AP_Canvas": (0.85, 0.20, 0.18, 1.0), "MAT_AP_DyeBed": (0.35, 0.15, 0.55, 1.0)}
 
 
 def college_palette():
@@ -630,7 +627,8 @@ def link_distance(ob):
 
 def pine_distance_tree():
     """KIT_PlantD_pine: a conifer of 3 stacked 5-sided cones (10 m tall, 2.2 m at the base) in MAT_AP_LeafC
-    over a triangular MAT_AP_Bark trunk, about 36 tris. Gets or creates the mesh and object (idempotent)."""
+    over a triangular MAT_AP_Bark trunk, about 36 tris. Gets or creates the mesh and object (idempotent).
+    Both materials are the kit trees' shared ones, used as they are: never recoloured here."""
     name = "KIT_PlantD_pine"
     me = bpy.data.meshes.get(name) or bpy.data.meshes.new(name)
     me.clear_geometry()
