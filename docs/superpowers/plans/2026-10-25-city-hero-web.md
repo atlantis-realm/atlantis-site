@@ -11,14 +11,14 @@
 
 Pure logic lives in small modules with unit tests:
 - Python: `hero_geom.py`, tested with `python3 -m unittest`.
-- Site TS: `src/lib/city/*.ts`, tested with vitest.
+- Site TS: `src/lib/city/*.ts`, tested with Node's built-in runner (`node --test`, Node 24 strips TS types; user chose not to add vitest, since installs need GitHub Packages auth).
 
 **Tech Stack:**
 - Blender 5.2 (Flatpak) via the Blender MCP, Python/bpy, Cycles AO bake.
 - Node with `@gltf-transform/core`, `@gltf-transform/extensions`, `@gltf-transform/functions` and `meshoptimizer`.
 - SvelteKit 2 / Svelte 5 with adapter-static.
 - `three` ^0.184: GLTFLoader, MeshoptDecoder, EffectComposer/UnrealBloomPass, PMREMGenerator.
-- vitest.
+- `node:test` + `node:assert/strict` for site unit tests (no new dependencies).
 
 **Spec:** `docs/superpowers/specs/2026-10-25-city-hero-web-design.md`
 
@@ -69,7 +69,9 @@ Pure logic lives in small modules with unit tests:
     ```
 - **Site code style:** TypeScript, Svelte 5 runes, tabs, `#lib/...` imports. Follow `src/lib/dice/DicePreviewScene.ts` (class owning renderer, scene, timer and RAF loop, with `destroy()`) and `src/routes/ladyofcode/dice-themes/+page.svelte` (canvas bound with `$state`, scene created in `onMount`).
 - **Commands:**
-  - site tests `pnpm vitest run`;
+  - site tests `pnpm test` (= `node --test "src/lib/city/*.test.ts"`);
+  - **No new site dependencies.** The worktree's `node_modules` is a copy of the main checkout's (installs need GitHub Packages auth). Never run `pnpm install`/`pnpm add` in the site; the generators' own `gen/package.json` installs from public npm and is fine.
+  - **Node TS rules for tested modules:** erasable syntax only (no `enum`, no parameter properties, no namespaces), `import type` for type-only imports, and relative imports between `src/lib/city` modules written with the `.ts` extension. Add `"allowImportingTsExtensions": true` to `tsconfig.json` compilerOptions so `pnpm check` accepts them (SvelteKit already sets `noEmit`). `.test.ts` files are never imported by the app, so the build ignores them.
   - site checks `pnpm check` and `pnpm build`;
   - generator tests `cd gen && node --test "test/*.test.js"` (162 today; must stay green);
   - Python tests `cd gen && python3 -m unittest discover -s test -p "test_*.py"`.
@@ -100,7 +102,8 @@ Pure logic lives in small modules with unit tests:
 ### Task 1: Site test runner and the camera maths
 
 **Files:**
-- Modify: `package.json` (add devDependency `vitest`, script `"test": "vitest run"`)
+- Modify: `package.json` (add script `"test": "node --test \"src/lib/city/*.test.ts\""`; no new dependencies)
+- Modify: `tsconfig.json` (add `"allowImportingTsExtensions": true`)
 - Create: `src/lib/city/heroCamera.ts`
 - Test: `src/lib/city/heroCamera.test.ts`
 
@@ -129,10 +132,10 @@ Pure logic lives in small modules with unit tests:
   - `easeToward(0, 10, 10)===10` (snaps).
   - `easeToward(0,10,0)===0`.
   - Repeated calls converge monotonically and never overshoot.
-- [ ] **Step 2:** `pnpm add -D vitest`, then `pnpm vitest run src/lib/city`. Expected: FAIL (module missing).
+- [ ] **Step 2:** `pnpm test`. Expected: FAIL (module missing).
 - [ ] **Step 3:** Implement `heroCamera.ts`.
-- [ ] **Step 4:** `pnpm vitest run` → PASS, then `pnpm check` → no new errors.
-- [ ] **Step 5:** Commit `package.json pnpm-lock.yaml src/lib/city/heroCamera.ts src/lib/city/heroCamera.test.ts`: "City hero: camera maths".
+- [ ] **Step 4:** `pnpm test` → PASS, then `pnpm check` → no new errors.
+- [ ] **Step 5:** Commit `package.json tsconfig.json src/lib/city/heroCamera.ts src/lib/city/heroCamera.test.ts`: "City hero: camera maths".
 
 ### Task 2: Cull geometry (pure Python)
 
@@ -342,9 +345,9 @@ Pure logic lives in small modules with unit tests:
   - each frame: `frame = easeToward(frame, target, dt)` (or `= target` when `reducedMotion`), then `mixer.setTime(frameToTime(frame))`, then `sky.update(t)` (t frozen when `reducedMotion`), then render;
   - the RAF loop follows `DicePreviewScene`'s pattern.
 
-- [ ] **Step 1:** Write the failing `props.test.ts` → `pnpm vitest run` FAIL.
+- [ ] **Step 1:** Write the failing `props.test.ts` → `pnpm test` FAIL.
 - [ ] **Step 2:** Implement `props.ts`, `sky.ts` and `CityHeroScene.ts`.
-- [ ] **Step 3:** `pnpm vitest run` PASS and `pnpm check` clean.
+- [ ] **Step 3:** `pnpm test` PASS and `pnpm check` clean.
 - [ ] **Step 4:** Commit the four files: "City hero: Three.js scene and sky".
 
 ### Task 6: `/city` route, scroll track, still and fallback, and M1 verification
@@ -410,7 +413,7 @@ Pure logic lives in small modules with unit tests:
   - It persists the choice to `localStorage['city-mode']`, with try/catch around reads and writes.
 
 - [ ] **Step 1:** Write the failing `night.test.ts` → FAIL.
-- [ ] **Step 2:** Implement, then `pnpm vitest run` PASS and `pnpm check` clean.
+- [ ] **Step 2:** Implement, then `pnpm test` PASS and `pnpm check` clean.
 - [ ] **Step 3: Browser:** take night screenshots at progress 0, 0.5 and 1.
   - Windows, bands, lamp posts, the Lantern and the well ring glow.
   - The canals do not glow.
@@ -435,7 +438,7 @@ Pure logic lives in small modules with unit tests:
   - After a quarter of `period_s` they have advanced π/2.
   - The bob is within ±4 m.
 - Modify: `CityHeroScene.ts`: add the blimps at load and update them each frame (frozen with `reducedMotion`).
-- [ ] Steps: failing test → implement → `pnpm vitest run` PASS → the browser shows a blimp crossing the sky at progress 1 within one period → commit "City hero: circling blimps".
+- [ ] Steps: failing test → implement → `pnpm test` PASS → the browser shows a blimp crossing the sky at progress 1 within one period → commit "City hero: circling blimps".
 
 ### Task 9: Well water
 
@@ -480,7 +483,7 @@ Pure logic lives in small modules with unit tests:
 ### Task 11: Final verification and the reviewed glb
 
 - [ ] **Step 1:** Run every check:
-  - `pnpm vitest run`
+  - `pnpm test`
   - `pnpm check`
   - `pnpm build`
   - `cd gen && node --test "test/*.test.js"`
