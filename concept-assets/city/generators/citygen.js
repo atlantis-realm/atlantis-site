@@ -1353,21 +1353,25 @@ const CityGen = (() => {
   function solidRect(poly) {
     const p = dedupe(signedArea(poly) < 0 ? [...poly].reverse() : poly);
     let best = null;
-    for (let i = 0; i < p.length; i++) {
-      const a = p[i], b = p[(i + 1) % p.length], L = dist(a, b);
-      if (L < 4) continue;
-      const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, nx = -uy, ny = ux, c0 = nx * a[0] + ny * a[1];
-      const maxT = Math.max(...p.map((v) => nx * v[0] + ny * v[1] - c0));
-      for (let k = 1; k <= 12; k++) {
-        const t = maxT * k / 12, c1 = plotChord(p, ux, uy, nx, ny, c0 + 0.05), c2 = plotChord(p, ux, uy, nx, ny, c0 + t - 0.05);
-        if (!c1 || !c2) continue;
-        const lo = Math.max(c1[0], c2[0]), hi = Math.min(c1[1], c2[1]);
-        if (hi - lo < 3) continue;
-        const area = (hi - lo) * t;
-        if (!best || area > best.area) best = { area, q: [[lo * ux + c0 * nx, lo * uy + c0 * ny], [hi * ux + c0 * nx, hi * uy + c0 * ny], [hi * ux + (c0 + t) * nx, hi * uy + (c0 + t) * ny], [lo * ux + (c0 + t) * nx, lo * uy + (c0 + t) * ny]] };
-      }
-    }
+    for (let i = 0; i < p.length; i++) { const r = rectOnEdge(p, i); if (r && (!best || r.area > best.area)) best = r; }
     return best ? best.q : null;
+  }
+  // the biggest rectangle standing on edge i of a counter-clockwise convex polygon ({area, q} or null)
+  function rectOnEdge(p, i) {
+    const a = p[i], b = p[(i + 1) % p.length], L = dist(a, b);
+    if (L < 4) return null;
+    const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, nx = -uy, ny = ux, c0 = nx * a[0] + ny * a[1];
+    const maxT = Math.max(...p.map((v) => nx * v[0] + ny * v[1] - c0));
+    let best = null;
+    for (let k = 1; k <= 12; k++) {
+      const t = maxT * k / 12, c1 = plotChord(p, ux, uy, nx, ny, c0 + 0.05), c2 = plotChord(p, ux, uy, nx, ny, c0 + t - 0.05);
+      if (!c1 || !c2) continue;
+      const lo = Math.max(c1[0], c2[0]), hi = Math.min(c1[1], c2[1]);
+      if (hi - lo < 3) continue;
+      const area = (hi - lo) * t;
+      if (!best || area > best.area) best = { area, q: [[lo * ux + c0 * nx, lo * uy + c0 * ny], [hi * ux + c0 * nx, hi * uy + c0 * ny], [hi * ux + (c0 + t) * nx, hi * uy + (c0 + t) * ny], [lo * ux + (c0 + t) * nx, lo * uy + (c0 + t) * ny]] };
+    }
+    return best;
   }
   function plotBuildings(plan, poly, style, R, canalFront) {
     const p = dedupe(signedArea(poly) < 0 ? [...poly].reverse() : poly), CH = plan.canal_houses || {};
@@ -1630,6 +1634,113 @@ const CityGen = (() => {
       o.prism(ob, [polar(r1 - 1.2, a), polar(r1, a), polar(r1, b), polar(r1 - 1.2, b)], wz, wtop, "stone");
     }
     genLantern(plan, d, ter, o, cfg, spokes);
+    // collect the blocks (layout only), then build on them
+    const grid = oldTownGrid(plan, d, spokes.find((sp) => sp.hero));
+    o.lantern.square = grid.square;
+    o.squares.push(grid.square);
+    const blocks = grid.blocks;
+    buildGridLots(plan, d, ter, o, cfg, blocks, grid.gridR);
+  }
+
+  // Old Town's central grid, Manhattan style, aligned to the hero bearing (u along it, v across it).
+  // Street centrelines sit at k·pitch, so the k = 0 street is the hero avenue's line into the centre;
+  // block centres sit at (k + 0.5)·pitch. The square snaps outward to whole street lines (half-size
+  // n·pitch) and holds no block. Blocks are clipped to the disc inside the first ring avenue (a 48-gon),
+  // trimmed and never dropped; a piece under 300 m² is a fragment. Each block's polygon is
+  // counter-clockwise and starts at its corner nearest the centre, so its first edge lies on a street.
+  // Layout only: genOldTown builds on the blocks.
+  function oldTownGrid(plan, d, hero) {
+    const G = oldTownConfig(d).grid, L = ringLayout(plan, d), av = L.avenues[0];
+    const ha = typeof hero === "number" ? hero : hero ? hero.a : SOUTH, ux = Math.cos(ha), uy = Math.sin(ha);
+    const at = (u, v) => [u * ux - v * uy, u * uy + v * ux];
+    const pitch = G.block + G.street, h = G.block / 2, n = Math.ceil(G.square / 2 / pitch), sh = n * pitch;
+    const gridR = av ? av.r - av.w / 2 - 2 : L.bands[0].r1 - 2, NG = 48, rim = gridR * Math.cos(Math.PI / NG);
+    const sides = Array.from({ length: NG }, (_, k) => { const m = ha + (k + 0.5) * TAU / NG; return [Math.cos(m), Math.sin(m)]; });
+    const K = Math.ceil(gridR / pitch) + 1, blocks = [];
+    for (let i = -K; i < K; i++) for (let j = -K; j < K; j++) {
+      if (i >= -n && i < n && j >= -n && j < n) continue;  // the square
+      const cu = (i + 0.5) * pitch, cv = (j + 0.5) * pitch, su = Math.sign(cu), sv = Math.sign(cv);
+      if (Math.hypot(Math.abs(cu) - h, Math.abs(cv) - h) >= gridR) continue;  // nearest corner off the disc
+      // counter-clockwise from the corner nearest the centre
+      const uvs = [[-h, -h], [h, -h], [h, h], [-h, h]], k0 = uvs.findIndex(([du, dv]) => Math.sign(du) === -su && Math.sign(dv) === -sv);
+      let poly = [0, 1, 2, 3].map((t) => { const [du, dv] = uvs[(k0 + t) % 4]; return at(cu + du, cv + dv); });
+      if (poly.some(([x, y]) => Math.hypot(x, y) > rim)) {
+        for (const [a, b] of sides) poly = clipHalf(poly, a, b, rim);
+        poly = dedupe(poly);
+      }
+      const area = poly.length >= 3 ? polyArea(poly) : 0;
+      if (area < 0.5) continue;
+      blocks.push({ key: `${d.id}|g|${i}|${j}`, i, j, poly, zone: "grid", fragment: area < 300 });
+    }
+    const square = [[-sh, -sh], [sh, -sh], [sh, sh], [-sh, sh]].map(([u, v]) => at(u, v));
+    return { blocks, square, gridR, pitch, axis: ha };
+  }
+
+  // Grid lots on the blocks: a fragment becomes a plaza (paving, or a podium of one or two storeys),
+  // every other block a tower lerped through heights.grid, scaled by the cloud and kept under the cap.
+  function buildGridLots(plan, d, ter, o, cfg, blocks, gridR) {
+    const cap = oldTownCap(plan, ter, d), hg = cfg.heights.grid, share = plan.cloud?.tower_share ?? 0.5;
+    for (const b of blocks) {
+      const R = rng(b.key), ob = o.obj(`NBHD_${d.id}_g_${b.i}_${b.j}`, d.id), area = polyArea(b.poly);
+      if (b.fragment) {
+        const storeys = R.randint(0, 2);
+        let base, top;
+        if (storeys) ({ base, top } = building(o, ob, ter, b.poly, storeys * plan.storey, "plaza"));
+        else {
+          const pts = b.poly.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.12]);
+          o.solid(ob, pts, pts.map((q) => q[2] - 0.42), "paver");
+          base = Math.min(...pts.map((q) => q[2])); top = Math.max(...pts.map((q) => q[2]));
+        }
+        o.lots.push({ d: d.id, zone: "grid", kind: "plaza", key: b.key, poly: b.poly, tower: null, crown: null, base, top, podiumTop: top, height: top - base, capped: false, storeys, area });
+        continue;
+      }
+      const [cx, cy] = centroid(b.poly);
+      const H = lerp(hg[0], hg[1], R.random()) * cloudMul(plan, cx, cy, share);
+      const t = oldTownTower(o, ob, ter, b.poly, H, {}, R, cap);
+      o.lots.push({ d: d.id, zone: "grid", key: b.key, poly: b.poly, tower: t.tower, crown: t.crown, base: t.base, top: t.top, podiumTop: t.podiumTop, height: t.height, capped: t.capped, storeys: Math.round(t.height / plan.storey), area });
+      o.band(`${d.id}|grid`, 0, gridR, t.base, t.top);
+    }
+  }
+
+  // Tower forms for Old Town: each draws the shaft from z0 up a span over footprint rect(s) (s = 1 is the
+  // tower's full footprint) and returns the scale of its top, which carries the crown. style.tower picks
+  // one; an unknown or missing form is the setback.
+  const TOWER_FORMS = {
+    // four setback tiers, a lip at each step
+    setback(o, ob, rect, z0, span) {
+      for (const [t0, t1, s] of [[0, 0.58, 1], [0.58, 0.78, 0.8], [0.78, 0.91, 0.6], [0.91, 1, 0.4]]) {
+        o.prism(ob, rect(s), z0 + span * t0, z0 + span * t1, "stone");
+        o.prism(ob, rect(s + 0.04), z0 + span * t1 - 0.6, z0 + span * t1 + 0.4, "lip");
+      }
+      return 0.4;
+    },
+  };
+  const TOWER_CROWN = 22;  // the most a roofTop crown adds above the top lip (a deco crown with a finial)
+  // An Old Town tower on a lot: a podium filling the lot, then the tower form squared to the lot's first
+  // edge, then a roofTop crown (style.roof, default "deco"). H runs from the base to the top of the shaft;
+  // it's clamped so the drawn top, crown included, stays at or under cap (absolute z).
+  function oldTownTower(o, ob, ter, poly, H, style, R, cap) {
+    style = style || {};
+    const zs = poly.map(([x, y]) => ter.G(Math.hypot(x, y))), zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05;
+    const Hmax = Math.max(0, cap - base - 0.4 - TOWER_CROWN), capped = H > Hmax;
+    H = Math.min(H, Hmax);
+    if (zmax - zmin > 0.1) o.prism(ob, poly, zmin - 0.3, base, "plinth");
+    const podium = Math.min(clamp(H * R.uniform(0.07, 0.13), 9, 26), H * 0.4), podiumTop = base + podium;
+    o.prism(ob, poly, base, podiumTop, "stone");
+    // footprint: the biggest rectangle on the first edge (a street edge for grid blocks), shrunk to a tower
+    const ccw = signedArea(poly) < 0 ? [poly[1], poly[0], ...poly.slice(2).reverse()] : poly;
+    const fr = rectOnEdge(ccw, 0), foot = (fr && fr.area > 150 ? fr.q : null) || solidRect(poly) || inset(poly, 2);
+    const [fx, fy] = centroid(foot), k = 0.72;
+    const rect = (s) => foot.map(([x, y]) => [fx + (x - fx) * k * s, fy + (y - fy) * k * s]);
+    const span = H - podium - 1;
+    if (span < 4 || foot.length !== 4) {  // too low for a shaft: the podium and a lip
+      o.prism(ob, inset(poly, -0.4), podiumTop, podiumTop + 0.4, "lip");
+      return { base, top: podiumTop + 0.4, podiumTop, tower: rect(1), crown: rect(1), height: H, capped };
+    }
+    o.prism(ob, inset(poly, -0.4), podiumTop, podiumTop + 1, "lip");
+    const s = (TOWER_FORMS[style.tower] || TOWER_FORMS.setback)(o, ob, rect, podiumTop + 1, span), z = podiumTop + 1 + span + 0.4;
+    const crown = rect(s), extra = roofTop(o, ob, ter, crown, z, style.roof || "deco", R, ob.coll, ob.name);
+    return { base, top: z + extra, podiumTop, tower: rect(1), crown, height: H, capped };
   }
 
   // The Lantern: the city's tallest tower at the exact centre. A slightly tapered shaft with a tall glazed
@@ -1674,7 +1785,7 @@ const CityGen = (() => {
       const a = ha + k * TAU / NS, b = ha + (k + 1) * TAU / NS;
       o.prism(ob, [polar(rB - 0.5, a), polar(rc + 2.5, a), polar(rc + 2.5, b), polar(rB - 0.5, b)], base + hallH, base + hallH + 1.2, "lip");
     }
-    // the nominal square round it (task 4 snaps it to the grid)
+    // the nominal square round it; genOldTown swaps in the grid's snapped square
     const half = s / 2, square = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([u, v]) => [u * Math.cos(ha) - v * Math.sin(ha), u * Math.sin(ha) + v * Math.cos(ha)]);
     o.lantern = { x: 0, y: 0, base, top, r_base: rB, r_top: rT, heart: [h0, h1], square };
     const poly = circ(rB);
@@ -2249,6 +2360,6 @@ const CityGen = (() => {
     return o;
   }
 
-  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
+  return { generate, rng, makeTerrain, makeProfile, spokeAngles, ringLayout, oldTownConfig, oldTownCap, oldTownGrid, polar, inCorridor, edgeAngle, cloud, cloudMul, USES, RECIPE_USES, SOUTH, NORTH, TAU, rad, angDist };
 })();
 if (typeof module !== "undefined") module.exports = CityGen;

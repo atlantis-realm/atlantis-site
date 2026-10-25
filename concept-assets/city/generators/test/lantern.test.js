@@ -33,9 +33,10 @@ test("public hall at the foot, on the square", () => { const L = O.lantern, P = 
   const hall = P.filter((p) => near(z0Of(p), L.base, 0.5) && primTop(p) - z0Of(p) >= 15 && primTop(p) - z0Of(p) <= 25
     && ptsOf(p).every(([x, y]) => ringR(x, y) > L.r_base && inPoly(x, y, L.square)));
   assert.ok(hall.length >= 1); });
-test("square is the nominal square", () => { const L = O.lantern, s = core(loadPlan()).grid.square;
+test("square snaps outward to the grid's street lines", () => { const L = O.lantern, g = core(loadPlan()).grid, pitch = g.block + g.street;
+  const half = Math.ceil(g.square / 2 / pitch) * pitch;  // 58 m for the defaults
   assert.equal(L.square.length, 4);
-  for (const [x, y] of L.square) assert.ok(near(ringR(x, y), s / 2 * Math.SQRT2)); });
+  for (const [x, y] of L.square) assert.ok(near(ringR(x, y), half * Math.SQRT2)); });
 test("oldTownCap", () => { const p = loadPlan(), ter = CityGen.makeTerrain(p);
   assert.ok(near(CityGen.oldTownCap(p, ter, core(p)), ter.G(0) + 500 * 0.8 - 60));
   assert.ok(near(CityGen.oldTownCap(p, ter, core(p)), 424)); });
