@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import type { HomeScene } from '#lib/home/HomeScene.js';
 	import { blogPosts } from '#lib/content/blogPosts.js';
 	import { upcomingEvents } from '#lib/content/events.js';
 
@@ -39,23 +41,74 @@
 	}
 
 	const upcomingStreams = nextStreamDates(2);
+
+	// The scene is pinned while the page scrolls past it. Scroll distances are in screen heights:
+	// the camera intro plays over the first stretch, then the view finishes fading to black.
+	const INTRO_SCREENS = 3;
+	const FADE_SCREENS = 0.5;
+	// Point in the intro where the fade begins; ~0.8 is roughly when the camera goes underwater.
+	const FADE_START = 0.8;
+
+	let sceneTrack: HTMLElement | undefined = $state();
+	let canvas: HTMLCanvasElement | undefined = $state();
+	let scene: HomeScene | undefined;
+	let fade = $state(0);
+
+	function syncScroll(): void {
+		if (!sceneTrack) return;
+
+		const scrolled = -sceneTrack.getBoundingClientRect().top;
+		const introProgress = scrolled / (INTRO_SCREENS * window.innerHeight);
+		scene?.setProgress(introProgress);
+
+		const fadeFrom = FADE_START * INTRO_SCREENS * window.innerHeight;
+		const fadeTo = (INTRO_SCREENS + FADE_SCREENS) * window.innerHeight;
+		fade = Math.min(Math.max((scrolled - fadeFrom) / (fadeTo - fadeFrom), 0), 1);
+	}
+
+	onMount(() => {
+		if (!canvas) return;
+
+		let observer: ResizeObserver | undefined;
+		let unmounted = false;
+
+		void import('#lib/home/HomeScene.js').then(({ HomeScene }) => {
+			if (unmounted || !canvas) return;
+
+			scene = new HomeScene(canvas);
+			syncScroll();
+			observer = new ResizeObserver(() => scene?.resize());
+			observer.observe(canvas);
+		});
+
+		return () => {
+			unmounted = true;
+			observer?.disconnect();
+			scene?.destroy();
+			scene = undefined;
+		};
+	});
 </script>
 
-<video autoplay muted loop id="myVideo">
-	<source src="background.m4v" type="video/mp4" />
-	Your browser does not support HTML5 video.
-</video>
-<div id="container">
-	<svg viewBox="0 0 100 80">
-		<text x="52%" y="55%" text-anchor="middle"> Atlantis </text>
-	</svg>
-</div>
+<svelte:window onscroll={syncScroll} onresize={syncScroll} />
+
+<section
+	id="scene-section"
+	bind:this={sceneTrack}
+	style:--scroll-screens={INTRO_SCREENS + FADE_SCREENS}
+>
+	<div class="scene-viewport">
+		<canvas bind:this={canvas}></canvas>
+		<div class="scene-fade" style:opacity={fade}></div>
+	</div>
+</section>
 
 <section id="community-section">
 	<div class="content-wrapper">
 		<h2>Think MMORPG vibes, but tech.</h2>
 		<p class="intro">
-			Atlantis is a community of high effort builders, bringing together nerds from around the world in tech, design, arts, and more.
+			Atlantis is a community of high effort builders, bringing together nerds from around the world
+			in tech, design, arts, and more.
 		</p>
 		<p class="intro">We approach our crafts and each other with XXX.</p>
 		<p class="added">
@@ -93,7 +146,6 @@
 			</div>
 		{/if}
 		<p class="added"><a href="/blog" class="text-link">All news</a></p>
-	
 
 		<div class="divider"></div>
 
@@ -120,10 +172,15 @@
 		<h2>Community projects</h2>
 		<div class="project-grid">
 			<div class="project-card">
-				<p>We're creating a collective mood board to define our design language direction... And brainstorm ideas for visualising Atlantis as an actual city.</p>
+				<p>
+					We're creating a collective mood board to define our design language direction... And
+					brainstorm ideas for visualising Atlantis as an actual city.
+				</p>
 			</div>
 			<div class="project-card">
-				<p>We're also starting a collaborative playlist to share favourite songs with each other. :D</p>
+				<p>
+					We're also starting a collaborative playlist to share favourite songs with each other. :D
+				</p>
 			</div>
 			<div class="project-card">
 				<p>
@@ -148,14 +205,19 @@
 
 		<h3>What are we like?</h3>
 		<p>
-			Everyone approaches their craft with love and a huge amount of effort. Guildies are from around the world, so expect a bunch of different cultures and personalities. The vibe is generally easygoing, littered with puns and terrible jokes.
+			Everyone approaches their craft with love and a huge amount of effort. Guildies are from
+			around the world, so expect a bunch of different cultures and personalities. The vibe is
+			generally easygoing, littered with puns and terrible jokes.
 		</p>
-		<p class="reassurance">
-			Atlantis is chaos only a portion of the time, we promise &lt;3
-		</p>
+		<p class="reassurance">Atlantis is chaos only a portion of the time, we promise &lt;3</p>
 		<p class="age-note">18+ only</p>
 
-		<a href="https://discord.com/invite/4gQAndh" target="_blank" rel="noopener noreferrer" class="discord-button">
+		<a
+			href="https://discord.com/invite/4gQAndh"
+			target="_blank"
+			rel="noopener noreferrer"
+			class="discord-button"
+		>
 			Join us on Discord
 		</a>
 	</div>
@@ -165,58 +227,39 @@
 	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
 	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap');
 
-	video {
-		object-fit: cover;
-		width: 100vw;
-		height: 100vh;
-		position: absolute;
-		top: 0;
-		left: 0;
-	}
-
-	#container {
+	/* Tall scroll track; the viewport inside sticks to the screen while the track scrolls past. */
+	#scene-section {
 		position: relative;
+		height: calc((1 + var(--scroll-screens)) * 100vh);
+		background: #000;
+	}
+
+	.scene-viewport {
+		position: sticky;
+		top: 0;
 		height: 100vh;
-		text-align: center;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 20px;
 	}
 
-	svg {
+	.scene-viewport canvas {
+		position: absolute;
+		inset: 0;
+		display: block;
 		width: 100%;
+		height: 100%;
 	}
 
-	svg text {
-		font-family: 'Cinzel Decorative', cursive;
-		letter-spacing: 2px;
-		stroke: #eeefb7;
-		font-size: 1em;
-		font-weight: 900;
-		stroke-width: 0.24;
-		animation: textAnimate 5s infinite alternate;
-	}
-
-	@keyframes textAnimate {
-		0% {
-			stroke-dasharray: 0 50%;
-			stroke-dashoffset: 20%;
-			fill: hsl(45, 67%, 74%);
-		}
-
-		100% {
-			stroke-dasharray: 50% 0;
-			stroke-dashoffstet: -20%;
-			fill: rgba(8, 107, 125, 0.666);
-		}
+	/* Black overlay faded in by scroll, so the water hands off seamlessly to the black page below. */
+	.scene-fade {
+		position: absolute;
+		inset: 0;
+		background: #000;
+		pointer-events: none;
 	}
 
 	#community-section {
 		position: relative;
 		min-height: 100vh;
-		background: linear-gradient(to bottom, #2e4057 0%, #1a2838 100%);
+		background: #000;
 		padding: 80px 20px;
 		display: flex;
 		align-items: center;
@@ -303,12 +346,7 @@
 	.divider {
 		width: 100px;
 		height: 2px;
-		background: linear-gradient(
-			to right,
-			transparent,
-			hsl(45, 67%, 74%),
-			transparent
-		);
+		background: linear-gradient(to right, transparent, hsl(45, 67%, 74%), transparent);
 		margin: 3rem auto;
 	}
 
@@ -401,20 +439,20 @@
 		text-decoration: none;
 		transition: background 0.2s ease;
 	}
-	.news-small .news-card:nth-child(1){
-		clip-path: polygon(100% 0, 100% 5%, 100% 100%, 0 100%, 0 5%, 5% 0);	
+	.news-small .news-card:nth-child(1) {
+		clip-path: polygon(100% 0, 100% 5%, 100% 100%, 0 100%, 0 5%, 5% 0);
 	}
-	.news-small .news-card:nth-child(2){
-		clip-path: polygon(95% 0, 100% 5%, 100% 100%, 0 100%, 0 0, 20% 0);	
+	.news-small .news-card:nth-child(2) {
+		clip-path: polygon(95% 0, 100% 5%, 100% 100%, 0 100%, 0 0, 20% 0);
 	}
-	.news-small .news-card:nth-child(3){
-		clip-path: polygon(0 0, 100% 0, 100% 100%, 5% 100%, 0 95%, 0% 50%);	
+	.news-small .news-card:nth-child(3) {
+		clip-path: polygon(0 0, 100% 0, 100% 100%, 5% 100%, 0 95%, 0% 50%);
 	}
-	.news-small .news-card:nth-child(4){
-		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);	
+	.news-small .news-card:nth-child(4) {
+		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);
 	}
 
-	.news-card--main{
+	.news-card--main {
 		clip-path: polygon(0 0, 100% 0, 100% 95%, 95% 100%, 0 100%, 0% 50%);
 	}
 	.news-card:hover {
