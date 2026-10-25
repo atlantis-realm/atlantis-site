@@ -1825,7 +1825,7 @@ const CityGen = (() => {
     return { base: Math.min(...pts.map((q) => q[2])), top: Math.max(...pts.map((q) => q[2])), storeys };
   }
   // the lot record of an Old Town tower
-  const towerLot = (plan, t) => ({ tower: t.tower, crown: t.crown, base: t.base, top: t.top, podiumTop: t.podiumTop, height: t.height, capped: t.capped, storeys: Math.round(t.height / plan.storey), plan: t.plan, crownKind: t.crownKind, podiumRoof: t.podiumRoof, roofs: t.roofs });
+  const towerLot = (plan, t) => ({ tower: t.tower, crown: t.crown, base: t.base, top: t.top, podiumTop: t.podiumTop, height: t.height, capped: t.capped, storeys: Math.round(t.height / plan.storey), plan: t.plan, crownKind: t.crownKind, podiumRoof: t.podiumRoof, terraces: t.terraces, roofs: t.roofs });
 
   // Grid lots on the blocks: a fragment becomes a plaza, every other block a tower lerped through
   // heights.grid, scaled by the cloud and kept under the cap. Each tower takes a culture's form from the
@@ -1875,8 +1875,17 @@ const CityGen = (() => {
   // it used on its terraces. An unknown plan is the setback.
   const tierFracs = (n) => { const w = Array.from({ length: n }, (_, i) => Math.pow(0.62, i)), s = w.reduce((a, b) => a + b, 0); return w.map((x) => x / s); };
   const tierScale = (T, i) => (T.tiers > 1 ? 1 - T.taper * i / (T.tiers - 1) : 1);
-  // stacked tiers from z0 up span, a lip at each step; returns each tier's top
-  function towerTiers(o, ob, z0, span, n, shape) {
+  // each tier's scale for a tapering shaft dim metres across: the taper, with the first step at least 1.6 m
+  // a side so the lowest setback terrace is wide enough to roof
+  const tierScales = (T, dim) => {
+    const out = [1];
+    for (let i = 1; i < T.tiers; i++) out.push(Math.max(0.25, Math.min(tierScale(T, i), out[i - 1], i === 1 && T.taper > 0 ? 1 - 3.2 / Math.max(dim, 1) : 1)));
+    return out;
+  };
+  // stacked tiers from z0 up span, a lip at each step; returns each tier's top. With c, the lowest two
+  // setback terraces (the ring between a tier and the one above it) are roofed in the culture's mix, and
+  // their kinds go on c.terraces.
+  function towerTiers(o, ob, z0, span, n, shape, c) {
     const f = tierFracs(n), tops = [];
     let z = z0;
     for (let i = 0; i < n; i++) {
@@ -1885,48 +1894,80 @@ const CityGen = (() => {
       o.prism(ob, inset(q, -0.4), z1 - 0.6, z1 + 0.4, "lip");
       tops.push(z1); z = z1;
     }
+    if (c) for (let i = 1; i < Math.min(n, 3); i++) {
+      const kind = ringRoof(o, ob, c.ter, shape(i - 1), shape(i), tops[i - 1] + 0.4, pickRoof(c.roofs, c.R), c.R, `${ob.name}_s${c.terraces.length}`);
+      if (kind) c.terraces.push(kind);
+    }
     return tops;
+  }
+  // A roof on the ring between an outer and an inner outline (same vertex count, same order): a deco
+  // balustrade with finials, an open paved walk with pergola posts, a planted bed with trees, or farm beds
+  // with a small glasshouse. Returns the kind, or null when the ring is too narrow to hold anything.
+  function ringRoof(o, ob, ter, outer, inner, z, kind, R, name, open) {
+    const n = outer.length, width = Math.min(...outer.map((p, i) => dist(p, inner[i])));
+    if (n !== inner.length || !(width > 1)) return null;
+    const L = (p, q, f) => [lerp(p[0], q[0], f), lerp(p[1], q[1], f)];
+    const quad = (i, f0, f1) => { const j = (i + 1) % n; return [L(outer[i], inner[i], f0), L(outer[j], inner[j], f0), L(outer[j], inner[j], f1), L(outer[i], inner[i], f1)]; };
+    const post = ([x, y], h, m, w = 0.3) => o.prism(ob, [[x - w, y - w], [x + w, y - w], [x + w, y + w], [x - w, y + w]], z, z + h, m);
+    const every = Math.max(1, Math.floor(n / 8));
+    for (let i = 0; i < (open ? n - 1 : n); i++) {
+      if (kind === "deco") {
+        o.prism(ob, quad(i, 0, Math.min(0.5, 0.35 / width)), z, z + 1.1, "lip");
+        if (i % every === 0) post(L(outer[i], inner[i], Math.min(0.5, 0.6 / width)), 2.6, "tile", 0.45);
+      } else if (kind === "open") {
+        o.prism(ob, quad(i, 0.05, 0.95), z, z + 0.15, "paver");
+        if (i % every === 0) post(L(outer[i], inner[i], 0.5), 3, "lip", 0.15);
+      } else if (kind === "garden") {
+        o.prism(ob, quad(i, 0.1, 0.9), z, z + 0.5, "roof");
+        if (i % every === 0 && width > 2) { const [x, y] = L(L(outer[i], inner[i], 0.5), L(outer[(i + 1) % n], inner[(i + 1) % n], 0.5), 0.5); tree(o, ter, ob.coll, R.choice(["asset_Plant_shrub", "asset_Plant_sapling"]), x, y, R, `${name}_tree_${i}`, 0.35, 0.6, z + 0.5); }
+      } else {
+        o.prism(ob, quad(i, 0.2, 0.8), z, z + 0.45, "roof");
+      }
+    }
+    if (kind === "farm") o.prism(ob, quad(0, 0.15, 0.85), z, z + 2.5, "glass");
+    return kind;
   }
   const centred = (c, s, cu = 0.5, hu = 0.5) => c.env(cu - hu * s, cu + hu * s, 0.5 - 0.5 * s, 0.5 + 0.5 * s);
   const TOWER_FORMS = {
     // four setback tiers, a lip at each step
     setback(o, ob, c) {
-      const tops = towerTiers(o, ob, c.z0, c.span, 4, (i) => centred(c, [1, 0.8, 0.6, 0.4][i]));
-      return { crowns: [{ q: centred(c, 0.4), z: tops[3] + 0.4 }], terraces: [] };
+      const tops = towerTiers(o, ob, c.z0, c.span, 4, (i) => centred(c, [1, 0.8, 0.6, 0.4][i]), c);
+      return { crowns: [{ q: centred(c, 0.4), z: tops[3] + 0.4 }], terraces: c.terraces };
     },
     // a box shrinking evenly at each tier (the wedding cake)
     rect(o, ob, c) {
-      const n = c.T.tiers, tops = towerTiers(o, ob, c.z0, c.span, n, (i) => centred(c, tierScale(c.T, i)));
-      return { crowns: [{ q: centred(c, tierScale(c.T, n - 1)), z: tops[n - 1] + 0.4 }], terraces: [] };
+      const n = c.T.tiers, S = tierScales(c.T, Math.min(c.envW, c.envD)), tops = towerTiers(o, ob, c.z0, c.span, n, (i) => centred(c, S[i]), c);
+      return { crowns: [{ q: centred(c, S[n - 1]), z: tops[n - 1] + 0.4 }], terraces: c.terraces };
     },
     // a ziggurat stepping back from the front edge, its lower terraces roofed in the culture's mix
     stepped(o, ob, c) {
       const n = c.T.tiers, back = clamp(0.35 + c.T.taper, 0.35, 0.8), vr = (i) => (n > 1 ? back * i / (n - 1) : 0), du = (i) => 0.05 * i;
-      const shape = (i) => c.env(du(i), 1 - du(i), vr(i), 1), tops = towerTiers(o, ob, c.z0, c.span, n, shape), terraces = [];
+      const shape = (i) => c.env(du(i), 1 - du(i), vr(i), 1), tops = towerTiers(o, ob, c.z0, c.span, n, shape);
       for (let i = 1; i < Math.min(n, 3); i++) {
         const kind = pickRoof(c.roofs, c.R);
-        roofTop(o, ob, c.ter, c.env(du(i), 1 - du(i), vr(i - 1) + 0.02, vr(i) - 0.02), tops[i - 1] + 0.95, kind, c.R, ob.coll, `${ob.name}_t${i}`);
-        terraces.push(kind);
+        // a roofTop where the strip is big enough, else a ring roof along it
+        const q = c.env(du(i), 1 - du(i), vr(i - 1) + 0.02, vr(i) - 0.02);
+        if (roofTop(o, ob, c.ter, q, tops[i - 1] + 0.95, kind, c.R, ob.coll, `${ob.name}_t${i}`) > 0 || ringRoof(o, ob, c.ter, [q[0], q[1]], [q[3], q[2]], tops[i - 1] + 0.4, kind, c.R, `${ob.name}_t${i}`, true)) c.terraces.push(kind);
       }
-      return { crowns: [{ q: shape(n - 1), z: tops[n - 1] + 0.4 }], terraces };
+      return { crowns: [{ q: shape(n - 1), z: tops[n - 1] + 0.4 }], terraces: c.terraces };
     },
     // an elliptical drum in tapering tiers
     round(o, ob, c) {
-      const n = c.T.tiers, NS = 24;
+      const n = c.T.tiers, NS = 24, S = tierScales(c.T, Math.min(c.envW, c.envD));
       const ell = (s) => Array.from({ length: NS }, (_, k) => { const t = (k + 0.5) * TAU / NS; return c.at(0.5 + 0.5 * s * Math.cos(t), 0.5 + 0.5 * s * Math.sin(t)); });
-      const tops = towerTiers(o, ob, c.z0, c.span, n, (i) => ell(tierScale(c.T, i)));
-      return { crowns: [{ q: ell(tierScale(c.T, n - 1)), z: tops[n - 1] + 0.4 }], terraces: [] };
+      const tops = towerTiers(o, ob, c.z0, c.span, n, (i) => ell(S[i]), c);
+      return { crowns: [{ q: ell(S[n - 1]), z: tops[n - 1] + 0.4 }], terraces: c.terraces };
     },
     // two slender shafts of unequal height, a glazed bridge between them
     twin(o, ob, c) {
-      const n = c.T.tiers, spanB = c.span * c.R.uniform(0.75, 0.9), crowns = [];
+      const n = c.T.tiers, spanB = c.span * c.R.uniform(0.75, 0.9), crowns = [], S = tierScales(c.T, Math.min(0.43 * c.envW, c.envD));
       for (const [cu, span] of [[0.215, c.span], [0.785, spanB]]) {
-        const tops = towerTiers(o, ob, c.z0, span, n, (i) => centred(c, tierScale(c.T, i), cu, 0.215));
-        crowns.push({ q: centred(c, tierScale(c.T, n - 1), cu, 0.215), z: tops[n - 1] + 0.4 });
+        const tops = towerTiers(o, ob, c.z0, span, n, (i) => centred(c, S[i], cu, 0.215), c);
+        crowns.push({ q: centred(c, S[n - 1], cu, 0.215), z: tops[n - 1] + 0.4 });
       }
       const zb = c.z0 + spanB * c.R.uniform(0.5, 0.7);
       o.prism(ob, c.env(0.4, 0.6, 0.38, 0.62), zb, zb + 5, "glass");
-      return { crowns, terraces: [] };
+      return { crowns, terraces: c.terraces };
     },
   };
   // Crowns, by style.tower.crown: each draws on the shaft's top (q, z) and returns how far it rises, at most
@@ -2009,7 +2050,7 @@ const CityGen = (() => {
     if (span < 4 || !rect4) {  // too low for a shaft: the podium and a lip
       o.prism(ob, inset(pod, -0.4), podiumTop, podiumTop + 0.4, "lip");
       const t = rect4 ? env(0, 1, 0, 1) : foot;
-      return { base, top: podiumTop + 0.4, podiumTop, tower: t, crown: t, height: H, capped, plan: null, crownKind: null, podiumRoof: null, roofs: kinds };
+      return { base, top: podiumTop + 0.4, podiumTop, tower: t, crown: t, height: H, capped, plan: null, crownKind: null, podiumRoof: null, terraces: [], roofs: kinds };
     }
     o.prism(ob, inset(pod, -0.4), podiumTop, podiumTop + 1, "lip");
     // the podium's roof terrace in front of the tower
@@ -2017,15 +2058,16 @@ const CityGen = (() => {
     roofTop(o, ob, ter, sub(0.04, 0.96, 0.05, EV[0] - 0.04), podiumTop + 1.55, podiumRoof, R, ob.coll, `${ob.name}_podium`);
     kinds.push(podiumRoof);
     const plan = TOWER_FORMS[T.plan] ? T.plan : "setback";
-    const f = TOWER_FORMS[plan](o, ob, { env, at, z0: podiumTop + 1, span, T, R, ter, roofs: style.roofs || {} });
-    kinds.push(...f.terraces);
+    const f = TOWER_FORMS[plan](o, ob, { env, at, envW: dist(at(0, 0), at(1, 0)), envD: dist(at(0, 0), at(0, 1)), z0: podiumTop + 1, span, T, R, ter, roofs: style.roofs || {}, terraces: [] });
+    const terraces = f.terraces;
+    kinds.push(...terraces);
     const crownKind = TOWER_CROWNS[T.crown] ? T.crown : style.roof || "deco";
     let top = -Infinity;
     for (const c of f.crowns) {
       const extra = TOWER_CROWNS[T.crown] ? TOWER_CROWNS[T.crown](o, ob, ter, c.q, c.z, R) : roofTop(o, ob, ter, c.q, c.z, crownKind, R, ob.coll, ob.name);
       top = Math.max(top, c.z + extra);
     }
-    return { base, top, podiumTop, tower: env(0, 1, 0, 1), crown: f.crowns[0].q, height: H, capped, plan, crownKind, podiumRoof, roofs: kinds };
+    return { base, top, podiumTop, tower: env(0, 1, 0, 1), crown: f.crowns[0].q, height: H, capped, plan, crownKind, podiumRoof, terraces, roofs: kinds };
   }
 
   // The Lantern: the city's tallest tower at the exact centre. A slightly tapered shaft with a tall glazed

@@ -119,10 +119,38 @@ test("culture shows in block size and roofs", () => {
   const Q = CityGen.oldTownQuarters(p, core(p), CityGen.spokeAngles(p)).quarters;
   assert.ok(Q[0].block > Q[1].block, `works ${Q[0].block} vs gardens ${Q[1].block}`);
   assert.ok(Q[0].block >= 36 - 1e-9 && Q[1].block <= 33.5 + 1e-9);
-  const roofs = (k) => new Set(bandTowers(o).filter((l) => l.quarter === k).map((l) => l.podiumRoof));
-  const a = roofs(0), b = roofs(1);
-  assert.ok(a.size > 0 && b.size > 0, "no podium roofs");
-  assert.ok([...a].some((x) => !b.has(x)) || [...b].some((x) => !a.has(x)), `same roof kinds ${[...a]} / ${[...b]}`);
+});
+
+test("culture shows in podium roofs: each quarter's commonest is its culture's top roof, seeds 1–30", () => {
+  const roofsOf = (id) => plan.neighbourhoods.types.find((t) => t.id === id).style.roofs;
+  const topKind = (id) => Object.entries(roofsOf(id)).sort((a, b) => b[1] - a[1])[0][0];
+  assert.equal(topKind("works"), "farm"); assert.equal(topKind("gardens"), "garden");
+  for (let seed = 1; seed <= 30; seed++) {
+    const p = withCore((d) => { d.quarters.cultures = ["works", "gardens"]; d.quarters.seed = seed; }), o = CityGen.generate(p);
+    for (const [k, id] of [[0, "works"], [1, "gardens"]]) {
+      const n = {};
+      for (const l of o.lots) if (l.d === "core" && l.zone === "band" && l.quarter === k && l.podiumRoof) n[l.podiumRoof] = (n[l.podiumRoof] || 0) + 1;
+      const ranked = Object.entries(n).sort((a, b) => b[1] - a[1]);
+      assert.ok(ranked.length, `seed ${seed}: no podium roofs in the ${id} quarter`);
+      assert.equal(ranked[0][0], topKind(id), `seed ${seed}: ${id} podium roofs ${JSON.stringify(n)}`);
+      assert.ok(!ranked[1] || ranked[1][1] < ranked[0][1], `seed ${seed}: ${id} tie ${JSON.stringify(n)}`);
+    }
+  }
+});
+
+test("every multi-tier tower roofs a lower setback terrace from its culture's mix", () => {
+  const style = (id) => plan.neighbourhoods.types.find((t) => t.id === id).style;
+  const plans = new Set();
+  for (const o of [O, gen(withCore((d) => { d.lantern.height = 300; }))]) {
+    for (const l of towerLots(o)) {
+      const st = style(l.form);
+      if (!(st.tower.tiers > 1) || !l.plan) continue;
+      plans.add(l.plan);
+      assert.ok(l.terraces.length > 0, `${l.key} (${l.plan}, ${l.form}) has no roofed terrace`);
+      for (const k of l.terraces) assert.ok(st.roofs[k] > 0, `${l.key} terrace roof ${k} not in the ${l.form} mix`);
+    }
+  }
+  for (const pl of ["rect", "stepped", "round", "twin"]) assert.ok(plans.has(pl), `no multi-tier ${pl} tower`);
 });
 
 test("grid towers take a mix of culture forms", () => {
