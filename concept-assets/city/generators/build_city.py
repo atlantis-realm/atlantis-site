@@ -12,8 +12,12 @@ regrade()  puts the hand-built scene on the plan: first the scale, then the terr
                     the ground; temple: lifted with the plateau
            Every touched object keeps its original state (object prop / mesh attribute / curve prop),
            so rerunning with a different plan starts from the original scene.
-build()    rebuilds the generated collections. Trees are point clouds instanced by Geometry Nodes.
+build()    rebuilds the generated collections. Trees are point clouds instanced by Geometry Nodes, as
+           one ~16-tri distance tree per species (KIT_PlantD_*, in excluded KIT_PLANT_DISTANCE) for
+           viewport and render alike; the detailed asset_Plant_* kits stay untouched for hero trees.
 ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
+ground_palette()  basic colours: asphalt roads, sandstone pavers, and materials for the bare ground
+           rings (orchard grass-and-dirt for the college ring, meadow for the greenbelt, pavers outside).
 hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
 hide_centre_strays()  after the build, any other visible hand-built object reaching inside the first ring
            canal (bar its water, AP_inner_water, and bank, KIT_Terrace_island) is reported and hidden the same way.
@@ -422,6 +426,69 @@ def ensure_glow():
     return m
 
 
+# Basic ground colours (linear RGB). The shared kit materials are set here so a rebuild keeps them.
+ROAD_COLOR = (0.11, 0.11, 0.115, 1.0)      # MAT_AP_Grout: avenue and spoke carriageways, asphalt grey
+PAVER_COLOR = (0.50, 0.45, 0.37, 1.0)      # MAT_AP_Paver: streets, quays, plazas, warm sandstone
+GRASS_COLOR = (0.17, 0.33, 0.08, 1.0)
+DIRT_COLOR = (0.28, 0.18, 0.09, 1.0)
+# the hand-built ground rings had no material at all (rendered as bare grey)
+GROUND = {"AP_park": "MAT_AP_GroundOrchard", "AP_greenbelt": "MAT_AP_GroundMeadow", "AP_promenade": "MAT_AP_Paver"}
+
+
+def set_base_color(m, rgba):
+    m.use_nodes = True
+    bsdf = next((n for n in m.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is not None and not bsdf.inputs["Base Color"].is_linked:
+        bsdf.inputs["Base Color"].default_value = rgba
+    m.diffuse_color = rgba
+
+
+def ground_material(name, dirt):
+    """Grass with large soft patches of bare earth, mapped in world space so the patches keep their
+    size on any mesh; `dirt` is the share of bare ground (0-1). Rebuilt each run (idempotent)."""
+    m = get_mat(name)
+    m.use_nodes = True
+    N, L = m.node_tree.nodes, m.node_tree.links
+    N.clear()
+    out, bsdf = N.new("ShaderNodeOutputMaterial"), N.new("ShaderNodeBsdfPrincipled")
+    geo = N.new("ShaderNodeNewGeometry")
+    patch = N.new("ShaderNodeTexNoise"); patch.inputs["Scale"].default_value = 0.02; patch.inputs["Detail"].default_value = 3
+    tone = N.new("ShaderNodeTexNoise"); tone.inputs["Scale"].default_value = 0.15; tone.inputs["Detail"].default_value = 2
+    ramp = N.new("ShaderNodeValToRGB")
+    ramp.color_ramp.elements[0].position = max(0.0, 1.0 - dirt - 0.05)
+    ramp.color_ramp.elements[1].position = min(1.0, 1.0 - dirt + 0.05)
+    ramp.color_ramp.elements[0].color, ramp.color_ramp.elements[1].color = GRASS_COLOR, DIRT_COLOR
+    vary = N.new("ShaderNodeMix"); vary.data_type = "RGBA"; vary.blend_type = "MULTIPLY"
+    vary.inputs["Factor"].default_value = 0.25
+    L.new(geo.outputs["Position"], patch.inputs["Vector"])
+    L.new(geo.outputs["Position"], tone.inputs["Vector"])
+    L.new(patch.outputs["Fac"], ramp.inputs["Fac"])
+    L.new(ramp.outputs["Color"], vary.inputs["A"])
+    L.new(tone.outputs["Color"], vary.inputs["B"])
+    L.new(vary.outputs["Result"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 0.95
+    L.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    m.diffuse_color = GRASS_COLOR
+    return m
+
+
+def ground_palette():
+    """Basic colours for roads, paving and the bare ground rings. Idempotent."""
+    set_base_color(get_mat("MAT_AP_Grout"), ROAD_COLOR)
+    set_base_color(get_mat("MAT_AP_Paver"), PAVER_COLOR)
+    mats = {"MAT_AP_GroundOrchard": ground_material("MAT_AP_GroundOrchard", 0.45),
+            "MAT_AP_GroundMeadow": ground_material("MAT_AP_GroundMeadow", 0.12),
+            "MAT_AP_Paver": get_mat("MAT_AP_Paver")}
+    for oname, mname in GROUND.items():
+        o = bpy.data.objects.get(oname)
+        if o is None or o.type != "MESH":
+            continue
+        if o.data.materials:
+            o.data.materials[0] = mats[mname]
+        else:
+            o.data.materials.append(mats[mname])
+
+
 def hide_temple():
     """Old Town replaces the temple: exclude 05_TEMPLE and hide its kit parts. Idempotent and recoverable."""
     lc = bpy.context.view_layer.layer_collection.children.get("05_TEMPLE")
@@ -506,27 +573,95 @@ class MeshBuilder:
         return ob
 
 
+DISTANCE_SIDES = 5  # crown: a 5-sided double cone (10 tris); trunk: an open triangular prism (6 tris)
+
+
+def distance_tree(asset):
+    """One merged low-poly mesh per plant species for city-scale views: the species' trunk and crown
+    sized from its detailed kit parts (bounding boxes), about 16 tris instead of 36-164 in 2-3 objects.
+    The detailed kit collection is left untouched for close-up (hero) trees later."""
+    src = bpy.data.collections[asset]
+    trunk = crown = None
+    for o in src.all_objects:
+        if o.type != "MESH":
+            continue
+        if "trunk" in o.name:
+            trunk = o
+        elif "leaf" in o.name and (crown is None or o.dimensions.z * o.dimensions.x > crown.dimensions.z * crown.dimensions.x):
+            crown = o
+    if crown is None:
+        return None
+    name = f"KIT_PlantD_{asset[len('asset_Plant_'):]}"
+    me = bpy.data.meshes.get(name) or bpy.data.meshes.new(name)
+    me.clear_geometry()
+    me.materials.clear()
+    lo = [min(c[i] for c in crown.bound_box) for i in range(3)]
+    hi = [max(c[i] for c in crown.bound_box) for i in range(3)]
+    cx, cy = (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2
+    rx, ry = (hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2
+    zb, zt = lo[2], hi[2]
+    zm = zb + (zt - zb) * 0.4  # widest ring, a little below the middle like a broad crown
+    verts = [(cx + rx * math.cos(a), cy + ry * math.sin(a), zm) for a in (2 * math.pi * k / DISTANCE_SIDES for k in range(DISTANCE_SIDES))]
+    verts += [(cx, cy, zt), (cx, cy, zb)]
+    n = DISTANCE_SIDES
+    faces = [(k, (k + 1) % n, n) for k in range(n)] + [((k + 1) % n, k, n + 1) for k in range(n)]
+    mat_idx = [0] * len(faces)
+    mats = [crown.data.materials[0]]
+    if trunk is not None:
+        tr = max(trunk.dimensions.x, trunk.dimensions.y) / 2
+        tz = min(c[2] for c in trunk.bound_box)
+        b = len(verts)
+        verts += [(tr * math.cos(a), tr * math.sin(a), z) for z in (tz, zm) for a in (2 * math.pi * k / 3 for k in range(3))]
+        faces += [(b + k, b + (k + 1) % 3, b + 3 + (k + 1) % 3, b + 3 + k) for k in range(3)]
+        mat_idx += [1] * 3
+        mats.append(trunk.data.materials[0])
+    me.from_pydata(verts, [], faces)
+    for m in mats:
+        me.materials.append(m)
+    me.polygons.foreach_set("material_index", mat_idx)
+    me.update()
+    ob = bpy.data.objects.get(name) or bpy.data.objects.new(name, me)
+    ob.data = me
+    ob["citygen"] = True
+    far = bpy.data.collections.get("KIT_PLANT_DISTANCE") or bpy.data.collections.new("KIT_PLANT_DISTANCE")
+    if far.name not in bpy.context.scene.collection.children:
+        bpy.context.scene.collection.children.link(far)
+    if ob.name not in far.objects:
+        far.objects.link(ob)
+    lc = bpy.context.view_layer.layer_collection.children.get(far.name)
+    if lc:
+        lc.exclude = True  # source meshes only: seen through the scatter, never at the origin
+    return ob
+
+
 def scatter_group(asset):
-    """Geometry Nodes group that instances one plant collection on every point, using the points'
-    rot (Z, radians) and scale attributes."""
+    """Geometry Nodes group that instances one plant species on every point, using the points'
+    rot (Z, radians) and scale attributes. Uses the species' distance tree (one instance per point);
+    falls back to the detailed kit collection when the kit has no crown to size it from."""
     name = f"CITYGEN_scatter_{asset}"
-    ng = bpy.data.node_groups.get(name)
-    if ng:
-        return ng
-    ng = bpy.data.node_groups.new(name, "GeometryNodeTree")
-    ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
-    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    ng = bpy.data.node_groups.get(name) or bpy.data.node_groups.new(name, "GeometryNodeTree")
+    ng.nodes.clear()  # rebuilt every run, so a rebuild picks up the distance trees
+    if not ng.interface.items_tree:
+        ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+        ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
     N, L = ng.nodes, ng.links
     gi, go = N.new("NodeGroupInput"), N.new("NodeGroupOutput")
-    ci = N.new("GeometryNodeCollectionInfo")
-    ci.inputs["Collection"].default_value = bpy.data.collections[asset]
-    ci.inputs["Reset Children"].default_value = True
+    far = distance_tree(asset)
+    if far is not None:
+        ci = N.new("GeometryNodeObjectInfo")
+        ci.inputs["Object"].default_value = far
+        ci.inputs["As Instance"].default_value = True
+        ci.transform_space = "ORIGINAL"
+    else:
+        ci = N.new("GeometryNodeCollectionInfo")
+        ci.inputs["Collection"].default_value = bpy.data.collections[asset]
+        ci.inputs["Reset Children"].default_value = True
     iop = N.new("GeometryNodeInstanceOnPoints")
     rot = N.new("GeometryNodeInputNamedAttribute"); rot.data_type = "FLOAT"; rot.inputs["Name"].default_value = "rot"
     scl = N.new("GeometryNodeInputNamedAttribute"); scl.data_type = "FLOAT"; scl.inputs["Name"].default_value = "scale"
     comb = N.new("ShaderNodeCombineXYZ")
     L.new(gi.outputs[0], iop.inputs["Points"])
-    L.new(ci.outputs[0], iop.inputs["Instance"])
+    L.new(ci.outputs["Geometry"], iop.inputs["Instance"])
     L.new(rot.outputs["Attribute"], comb.inputs["Z"])
     L.new(comb.outputs[0], iop.inputs["Rotation"])
     L.new(scl.outputs["Attribute"], iop.inputs["Scale"])
@@ -685,6 +820,7 @@ def hide_centre_strays(dry_run=False):
 def main():
     global MATS
     ensure_glow()
+    ground_palette()
     MATS = [get_mat(MAT[k]) for k in MAT_KEYS]
     if globals().get("DO_REGRADE", True):
         regrade()
