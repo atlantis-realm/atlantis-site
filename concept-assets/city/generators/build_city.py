@@ -16,7 +16,7 @@ build()    rebuilds the generated collections. Trees are point clouds instanced 
            one ~16-tri distance tree per species (KIT_PlantD_*, in excluded KIT_PLANT_DISTANCE) for
            viewport and render alike; the detailed asset_Plant_* kits stay untouched for hero trees.
 ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
-ground_palette()  basic colours: asphalt roads, sandstone pavers, and materials for the bare ground
+ground_palette()  basic colours: asphalt roads, sandstone pavers, deep sea-teal water, and materials for the bare ground
            rings (orchard grass-and-dirt for the college ring, meadow for the greenbelt, pavers outside).
 hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
 hide_centre_strays()  after the build, any other visible hand-built object reaching inside the first ring
@@ -429,10 +429,13 @@ def ensure_glow():
 # Basic ground colours (linear RGB). The shared kit materials are set here so a rebuild keeps them.
 ROAD_COLOR = (0.11, 0.11, 0.115, 1.0)      # MAT_AP_Grout: avenue and spoke carriageways, asphalt grey
 PAVER_COLOR = (0.50, 0.45, 0.37, 1.0)      # MAT_AP_Paver: streets, quays, plazas, warm sandstone
+# MAT_AP_Water: was near-mirror (roughness 0.08) and mirrored the bright sky HDRI, so canals read white
+WATER = {"Base Color": (0.01, 0.10, 0.12, 1.0), "Roughness": 0.22, "Specular IOR Level": 0.35, "Transmission Weight": 0.0}
 GRASS_COLOR = (0.17, 0.33, 0.08, 1.0)
 DIRT_COLOR = (0.28, 0.18, 0.09, 1.0)
-# the hand-built ground rings had no material at all (rendered as bare grey)
-GROUND = {"AP_park": "MAT_AP_GroundOrchard", "AP_greenbelt": "MAT_AP_GroundMeadow", "AP_promenade": "MAT_AP_Paver"}
+# the hand-built ground and canal rings had no material at all (rendered as bare grey)
+GROUND = {"AP_park": "MAT_AP_GroundOrchard", "AP_greenbelt": "MAT_AP_GroundMeadow", "AP_promenade": "MAT_AP_Paver",
+          "AP_inner_water": "MAT_AP_Water", "AP_canal_2": "MAT_AP_Water"}
 
 
 def set_base_color(m, rgba):
@@ -476,9 +479,16 @@ def ground_palette():
     """Basic colours for roads, paving and the bare ground rings. Idempotent."""
     set_base_color(get_mat("MAT_AP_Grout"), ROAD_COLOR)
     set_base_color(get_mat("MAT_AP_Paver"), PAVER_COLOR)
+    water = get_mat("MAT_AP_Water")
+    set_base_color(water, WATER["Base Color"])
+    bsdf = next((n for n in water.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is not None:
+        for key, val in WATER.items():
+            if key != "Base Color":
+                bsdf.inputs[key].default_value = val
     mats = {"MAT_AP_GroundOrchard": ground_material("MAT_AP_GroundOrchard", 0.45),
             "MAT_AP_GroundMeadow": ground_material("MAT_AP_GroundMeadow", 0.12),
-            "MAT_AP_Paver": get_mat("MAT_AP_Paver")}
+            "MAT_AP_Paver": get_mat("MAT_AP_Paver"), "MAT_AP_Water": water}
     for oname, mname in GROUND.items():
         o = bpy.data.objects.get(oname)
         if o is None or o.type != "MESH":
