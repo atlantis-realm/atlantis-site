@@ -18,6 +18,7 @@ build()    rebuilds the generated collections. Trees are point clouds instanced 
 ensure_glow()  MAT_AP_Glow, the Lantern's emissive cyan heart (MAT_AP_Cyan is shared and stays non-emissive).
 ground_palette()  basic colours: asphalt roads, sandstone pavers, deep sea-teal water, and materials for the bare ground
            rings (orchard grass-and-dirt for the college ring, meadow for the greenbelt, pavers outside).
+college_palette()  colours for the colleges' materials (ashlar, verdigris, timber, brick, plasters, roof tile, canvas, dye).
 hide_temple()  the old temple (05_TEMPLE, KIT_PlantI_temple_*) is hidden, never deleted: Old Town replaces it.
 hide_centre_strays()  after the build, any other visible hand-built object reaching inside the first ring
            canal (bar its water, AP_inner_water, and bank, KIT_Terrace_island) is reported and hidden the same way.
@@ -42,7 +43,10 @@ COLL = {"outer": "20_NBHD_OUTER", "belt": "21_NBHD_BELT", "park": "22_NBHD_PARK"
 MAT = {"stone": "MAT_AP_Stone", "plinth": "MAT_AP_StoneWell", "lip": "MAT_AP_StoneLip", "roof": "MAT_AP_Grass",
        "paver": "MAT_AP_Paver", "water": "MAT_AP_Water", "road": "MAT_AP_Grout", "stair": "MAT_AP_StoneLip",
        "glass": "MAT_AP_Cyan", "tile": "MAT_AP_Bronze", "panel": "MAT_AP_Cyan", "fabric": "MAT_AP_StoneLip",
-       "glow": "MAT_AP_Glow", "gold": "MAT_AP_Gold"}  # new keys go at the END: the material index is the key's position
+       "glow": "MAT_AP_Glow", "gold": "MAT_AP_Gold",
+       "ashlar": "MAT_AP_Ashlar", "copper": "MAT_AP_Verdigris", "timber": "MAT_AP_Timber", "brick": "MAT_AP_Brick",
+       "plaster_a": "MAT_AP_PlasterOchre", "plaster_b": "MAT_AP_PlasterRose", "plaster_c": "MAT_AP_PlasterTeal",
+       "rooftile": "MAT_AP_RoofTile", "canvas": "MAT_AP_Canvas", "dye": "MAT_AP_DyeBed"}  # new keys go at the END: the material index is the key's position
 MAT_KEYS = list(MAT)
 
 
@@ -446,6 +450,21 @@ def set_base_color(m, rgba):
     m.diffuse_color = rgba
 
 
+# The colleges' materials (linear RGB): Alder's pale ashlar and verdigris, Saffron's timber, Indigo's brick,
+# plasters, roof tile, big-top canvas and dye beds. They're new, so their colours live here.
+COLLEGE_COLORS = {"MAT_AP_Ashlar": (0.78, 0.76, 0.70, 1.0), "MAT_AP_Verdigris": (0.30, 0.55, 0.47, 1.0),
+                  "MAT_AP_Timber": (0.42, 0.26, 0.13, 1.0), "MAT_AP_Brick": (0.45, 0.17, 0.10, 1.0),
+                  "MAT_AP_PlasterOchre": (0.80, 0.58, 0.25, 1.0), "MAT_AP_PlasterRose": (0.78, 0.42, 0.40, 1.0),
+                  "MAT_AP_PlasterTeal": (0.30, 0.55, 0.55, 1.0), "MAT_AP_RoofTile": (0.55, 0.20, 0.10, 1.0),
+                  "MAT_AP_Canvas": (0.85, 0.20, 0.18, 1.0), "MAT_AP_DyeBed": (0.35, 0.15, 0.55, 1.0)}
+
+
+def college_palette():
+    """Colours for the college materials. Creates or updates (idempotent)."""
+    for name, rgba in COLLEGE_COLORS.items():
+        set_base_color(get_mat(name), rgba)
+
+
 def ground_material(name, dirt):
     """Grass with large soft patches of bare earth, mapped in world space so the patches keep their
     size on any mesh; `dirt` is the share of bare ground (0-1). Rebuilt each run (idempotent)."""
@@ -831,6 +850,7 @@ def main():
     global MATS
     ensure_glow()
     ground_palette()
+    college_palette()
     MATS = [get_mat(MAT[k]) for k in MAT_KEYS]
     if globals().get("DO_REGRADE", True):
         regrade()

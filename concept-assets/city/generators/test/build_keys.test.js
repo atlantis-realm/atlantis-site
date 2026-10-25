@@ -22,6 +22,20 @@ test("every generated prim material is a MAT key and every object coll a COLL ke
   assert.deepEqual([...badC], [], "colls missing from COLL");
 });
 
-test("glow and gold are appended at the end of MAT, in that order", () => {
-  assert.deepEqual(keysOf("MAT").slice(-2), ["glow", "gold"]);
+const OLD_MAT = ["stone", "plinth", "lip", "roof", "paver", "water", "road", "stair", "glass", "tile", "panel", "fabric", "glow", "gold"];
+const COLLEGE_MAT = ["ashlar", "copper", "timber", "brick", "plaster_a", "plaster_b", "plaster_c", "rooftile", "canvas", "dye"];
+
+test("the first 14 MAT keys keep their old order", () => {
+  assert.deepEqual(keysOf("MAT").slice(0, 14), OLD_MAT);
+});
+
+test("the college materials are appended after gold, in order", () => {
+  assert.deepEqual(keysOf("MAT").slice(14), COLLEGE_MAT);
+});
+
+test("college_palette() is defined and called in main() before MATS is built", () => {
+  assert.match(src, /^def college_palette\(\):/m);
+  const main = src.slice(src.indexOf("def main():"));
+  const call = main.indexOf("college_palette()"), mats = main.indexOf("MATS = [");
+  assert.ok(call > 0 && call < mats, "college_palette() must run before MATS is built");
 });

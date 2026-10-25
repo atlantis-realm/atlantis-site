@@ -178,12 +178,14 @@ const CityGen = (() => {
   }
 
   // A building on level ground: plinth takes up the slope, floor sits at the uphill corner.
+  // opts.mats = {wall, lip, plinth} restyles it (a college palette); the defaults are stone, lip and plinth.
   function building(o, ob, ter, poly, h, kind, opts = {}) {
+    const M = opts.mats || {};
     const zs = poly.map(([x, y]) => ter.G(Math.hypot(x, y)));
     const zmax = Math.max(...zs), zmin = Math.min(...zs), base = zmax + 0.05, top = base + h;
-    if (zmax - zmin > 0.1) o.prism(ob, poly, zmin - 0.3, base, "plinth");
-    o.prism(ob, poly, base - (zmax - zmin > 0.1 ? 0 : 0.3), top, "stone");
-    if (opts.lip !== false) o.prism(ob, inset(poly, -0.35), top, top + 0.9, "lip");
+    if (zmax - zmin > 0.1) o.prism(ob, poly, zmin - 0.3, base, M.plinth || "plinth");
+    o.prism(ob, poly, base - (zmax - zmin > 0.1 ? 0 : 0.3), top, M.wall || "stone");
+    if (opts.lip !== false) o.prism(ob, inset(poly, -0.35), top, top + 0.9, M.lip || "lip");
     if (opts.roof !== false) o.prism(ob, inset(poly, 1.4), top + 0.9, top + 1.3, opts.roofMat || "roof");
     return { base, top: top + (opts.lip !== false ? 0.9 : 0), plinth: zmax - zmin };
   }
@@ -277,6 +279,7 @@ const CityGen = (() => {
   //   garden  a roof garden: soil beds, shrubs and small trees
   //   farm    a roof farm: rows of growing beds and a greenhouse
   // q is a footprint (rectangles get the full treatment), z the parapet top. Returns the extra height.
+  // pal = {wall, lip} (a college palette) restyles the crown, cornice, pergola and kiosk; the defaults are stone and lip.
   const ROOF_KINDS = ["deco", "open", "garden", "farm"];
   function pickRoof(mix, R) {
     const w = ROOF_KINDS.map((k) => Math.max(0, (mix || {})[k] ?? 0)), tot = w.reduce((a, b) => a + b, 0);
@@ -285,7 +288,8 @@ const CityGen = (() => {
     for (let i = 0; i < w.length; i++) { t -= w[i]; if (t <= 0) return ROOF_KINDS[i]; }
     return ROOF_KINDS[ROOF_KINDS.length - 1];
   }
-  function roofTop(o, ob, ter, q, z, kind, R, treeColl, name) {
+  function roofTop(o, ob, ter, q, z, kind, R, treeColl, name, pal) {
+    const WALL = (pal && pal.wall) || "stone", LIP = (pal && pal.lip) || "lip";
     const area = Math.abs(signedArea(q));
     if (area < 50) return 0;
     const rect = q.length === 4;
@@ -298,8 +302,8 @@ const CityGen = (() => {
     if (kind === "deco") {
       const ins = R.uniform(0.12, 0.22), hgt = clamp(Math.sqrt(area) * R.uniform(0.12, 0.25), 3, 12);
       const crown = sub(ins, 1 - ins, ins, 1 - ins);
-      o.prism(ob, crown, deck, z + hgt, "stone");
-      o.prism(ob, inset(crown, -0.4), z + hgt, z + hgt + 0.7, "lip");  // cornice
+      o.prism(ob, crown, deck, z + hgt, WALL);
+      o.prism(ob, inset(crown, -0.4), z + hgt, z + hgt + 0.7, LIP);  // cornice
       let extra = hgt + 0.7;
       const v = R.random();
       if (v < 0.4 && rect) {  // corner turrets
@@ -311,7 +315,7 @@ const CityGen = (() => {
         extra = Math.max(extra, th);
       } else if (v < 0.75) {  // a stepped finial on the crown
         const s1 = inset(crown, Math.sqrt(Math.abs(signedArea(crown))) * 0.22), s2 = inset(crown, Math.sqrt(Math.abs(signedArea(crown))) * 0.38), f = R.uniform(2, 5);
-        o.prism(ob, s1, z + hgt + 0.7, z + hgt + 0.7 + f, "stone");
+        o.prism(ob, s1, z + hgt + 0.7, z + hgt + 0.7 + f, WALL);
         o.prism(ob, s2, z + hgt + 0.7 + f, z + hgt + 0.7 + f * 1.8, "tile");
         extra = hgt + 0.7 + f * 1.8;
       }
@@ -324,11 +328,11 @@ const CityGen = (() => {
         const pu0 = R.uniform(0.45, 0.6), ph = 3.2, nu = Math.max(2, Math.round((1 - pu0) * lu / 4)), nv = Math.max(2, Math.round(lv / 4));
         for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) {
           const u = lerp(pu0, 0.92, i / nu), vv = lerp(0.08, 0.92, j / nv), c = P(u, vv);
-          o.prism(ob, [[c[0] - 0.15, c[1] - 0.15], [c[0] + 0.15, c[1] - 0.15], [c[0] + 0.15, c[1] + 0.15], [c[0] - 0.15, c[1] + 0.15]], deck, deck + ph, "lip");
+          o.prism(ob, [[c[0] - 0.15, c[1] - 0.15], [c[0] + 0.15, c[1] - 0.15], [c[0] + 0.15, c[1] + 0.15], [c[0] - 0.15, c[1] + 0.15]], deck, deck + ph, LIP);
         }
-        for (let i = 0; i <= nu * 2; i++) { const u = lerp(pu0, 0.92, i / (nu * 2)); o.prism(ob, sub(u - 0.004, u + 0.004 + m(lu, 0.12), 0.06, 0.94), deck + ph, deck + ph + 0.18, "lip"); }
+        for (let i = 0; i <= nu * 2; i++) { const u = lerp(pu0, 0.92, i / (nu * 2)); o.prism(ob, sub(u - 0.004, u + 0.004 + m(lu, 0.12), 0.06, 0.94), deck + ph, deck + ph + 0.18, LIP); }
         // stair and lift kiosk at the other end
-        o.prism(ob, sub(0.06, 0.06 + m(lu, 5), 0.1, 0.1 + m(lv, 4)), deck, deck + 3, "stone");
+        o.prism(ob, sub(0.06, 0.06 + m(lu, 5), 0.1, 0.1 + m(lv, 4)), deck, deck + 3, WALL);
       }
       return 3.4;
     }
@@ -465,6 +469,22 @@ const CityGen = (() => {
     if (!Number.isFinite(g)) return null;
     const cfg = collegeConfig(d), id = Object.keys(cfg).find((i) => cfg[i].group === g);
     return id ? { id, ...cfg[id] } : null;
+  }
+
+  // Each college style's palette, roofs and ground. It overrides the neighbourhood type's style for walls,
+  // roofs and ground (lot size and depth stay with the type). arts picks one plaster per building; its
+  // roofs mix is the fallback for footprints that aren't 4-gons (4-gons are gabled in gableMat).
+  const COLLEGE_STYLES = {
+    physics: { wall: "ashlar", lip: "lip", plinth: "plinth", roofs: { deco: 0.5, open: 0.5 }, ground: "paver" },
+    earth: { wall: "timber", lip: "timber", plinth: "plinth", roofs: { garden: 1 }, ground: "roof" },
+    arts: { walls: ["plaster_a", "plaster_b", "plaster_c"], lip: "lip", plinth: "brick", roof: "gable", gableMat: "rooftile", roofs: { deco: 0.4, open: 0.6 }, ground: "paver" },
+  };
+  // The college style for a park cell (by group id, or sector index when neighbourhoods are off), or null:
+  // outside the park, or for a college whose style isn't one of the three (it keeps today's look).
+  function collegeStyle(d, key) {
+    const col = collegeOf(d, key);
+    if (!col || !Object.prototype.hasOwnProperty.call(COLLEGE_STYLES, col.style)) return null;
+    return { college: col.id, ...COLLEGE_STYLES[col.style] };
   }
 
   // ---------------------------------------------------------------- Old Town settings
@@ -956,6 +976,10 @@ const CityGen = (() => {
     const nbS = Object.fromEntries(Object.entries(opts.nbStyle || {}).filter(([, v]) => v !== "" && v != null));
     const style = { gap: PL.gap, setback: PL.setback, height_var: PL.height_var, roof: PL.roof, ...nbS };
     style.gap = pair(style.gap, [0, 0]); if (style.lot) style.lot = pair(style.lot, T.lot || plan.skyline.lot);
+    // a college sector: the college's palette, roofs and ground win over the neighbourhood type's
+    const CS = collegeStyle(d, opts.nb != null ? opts.nb : cell.k);
+    if (CS) { style.roof = CS.roof; style.roofs = CS.roofs; }
+    const pave = CS ? CS.ground : "paver";
     // the plot's ground plate follows the slope corner to corner, so it meets the quays and streets
     const ground = (q, m) => { const top = q.map(([x, y]) => [x, y, ter.G(Math.hypot(x, y)) + 0.12]); o.solid(ob, top, top.map((t) => Math.min(...top.map((u) => u[2])) - 0.42), m); };
     if (use === "harbour" || use === "waterworks") return buildWaterCell(plan, d, ter, o, ob, use, cell, key, opts);
@@ -979,27 +1003,27 @@ const CityGen = (() => {
       return;
     }
     if (use === "industrial") {
-      ground(poly, "paver");  // yard
+      ground(poly, pave);  // yard
       const core = (byBldg && solidRect(insetEdges(poly, () => 4) || poly)) || insetEdges(poly, () => 4) || poly, [ex, ey] = longAxis(core);
       for (const q of strips(core, -ey, ex, T.bay || [26, 48], 6, R)) parts.push([q, R.randint(...(T.storeys || [1, 2])), T.storey || 7.5, "lip"]);
     } else if (use === "hydroponics") {
-      ground(poly, "paver");
+      ground(poly, pave);
       const core = (byBldg && solidRect(insetEdges(poly, () => 3) || poly)) || insetEdges(poly, () => 3) || poly, [ex, ey] = longAxis(core);
       for (const q of strips(core, -ey, ex, T.hall || [12, 16], 4, R)) parts.push([q, R.randint(...(T.storeys || [2, 4])), T.storey || 4.5, "glass"]);
     } else if (use === "entertainment") {
-      ground(poly, "paver");  // plaza round the venue
+      ground(poly, pave);  // plaza round the venue
       const vIn = insetEdges(poly, () => Math.max(6, Math.sqrt(Math.abs(signedArea(poly))) * 0.16)) || poly, venue = (byBldg && solidRect(vIn)) || vIn;
       parts.push([venue, R.randint(...(T.storeys || [3, 6])), T.storey || 6, "lip"]);
     } else if (use === "college") {
       const K = plan.skyline, lo = (d.storeys || [2, 6])[0], hi = (d.storeys || [2, 6])[1];
-      if (byBldg) ground(poly, "paver");
+      if (byBldg) ground(poly, pave);
       for (const q of byBldg ? plotBuildings(plan, poly, { depth: opts.wing || 13, ...style }, R) : cellLots(plan, poly, (opts.wing || 13), R)) parts.push([q, clamp(Math.round(R.uniform(lo, hi) * Math.exp(K.chaos * 0.6 * R.normal())), 1, hi + 3), plan.storey, "roof"]);
     } else {
       // residential and commercial: lots round a courtyard (commercial: bigger lots, deeper wings, taller)
       const lotPlan = T.lot ? { ...plan, skyline: { ...plan.skyline, lot: T.lot } } : plan;
       const C = d.canals || {}, reach = (C.width || 0) / 2 + (C.quay || 0) + (opts.gap || 6) + 3;
       const canalFront = (cell.canalPaths || []).length ? (a, b) => cell.canalPaths.some((pth) => distToPath((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, pth) < reach) : null;
-      if (byBldg) ground(poly, "paver");  // the plot: yards and courtyards round the buildings
+      if (byBldg) ground(poly, pave);  // the plot: yards and courtyards round the buildings
       const lots = byBldg ? plotBuildings(plan, poly, { lot: T.lot || plan.skyline.lot, depth: T.wing || opts.wing || 13, ...style }, R, canalFront) : cellLots(lotPlan, poly, T.wing || opts.wing, R, canalFront);
       for (const q of lots) parts.push([q, null, plan.storey, "roof"]);
     }
@@ -1014,25 +1038,30 @@ const CityGen = (() => {
       const st = st0 == null
         ? clamp(Math.round(byBldg ? cellSt * own : perCell ? cellSt : storeysAt(plan, qx, qy, LR, (d.height_scale || 1) * (T.height || 1) * (opts.nbHeight || 1))), plan.skyline.min, Math.round(plan.skyline.max * (T.height || 1)))
         : clamp(Math.round((perCell && cellFixed != null ? cellFixed : st0) * cloudM * (opts.nbHeight || 1)), 1, 60);
-      if (!byBldg && q.canal || (byBldg && style.roof === "gable" && q.length === 4)) {  // a canal house (or a gabled culture): its own height, a storey either side of the block, under a gable
-        const cs = clamp(st + LR.randint(-1, 1), plan.skyline.min, plan.skyline.max);
-        const bld = building(o, ob, ter, q, cs * sh, use, { roof: false, lip: false });
+      // a college building's palette: arts picks its plaster per building, by seed
+      const mats = CS ? { wall: CS.walls ? rng(`${key}|${li}|col|wall`).choice(CS.walls) : CS.wall, lip: CS.lip, plinth: CS.plinth } : undefined;
+      const gabled = CS ? CS.roof === "gable" && q.length === 4 : !byBldg && q.canal || (byBldg && style.roof === "gable" && q.length === 4);
+      if (gabled) {  // a canal house (or a gabled culture): its own height, a storey either side of the block, under a gable
+        const cs = clamp(st + LR.randint(-1, 1), plan.skyline.min, plan.skyline.max), gm = (CS && CS.gableMat) || "tile";
+        const bld = building(o, ob, ter, q, cs * sh, use, { roof: false, lip: false, mats });
         const top = bld.top, ridge = top + Math.min(8, dist(q[0], q[1]) * 0.75);
         const mf = [(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2], mb = [(q[2][0] + q[3][0]) / 2, (q[2][1] + q[3][1]) / 2];
         // two roof halves, ridge running from the canal back into the block, gable end facing the water
-        o.solid(ob, [[...q[0], top], [...mf, ridge], [...mb, ridge], [...q[3], top]], [top, top, top, top], "tile");
-        o.solid(ob, [[...mf, ridge], [...q[1], top], [...q[2], top], [...mb, ridge]], [top, top, top, top], "tile");
-        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: ridge, storeys: cs, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : (T.label || use) });
+        o.solid(ob, [[...q[0], top], [...mf, ridge], [...mb, ridge], [...q[3], top]], [top, top, top, top], gm);
+        o.solid(ob, [[...mf, ridge], [...q[1], top], [...q[2], top], [...mb, ridge]], [top, top, top, top], gm);
+        o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: ridge, storeys: cs, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : (T.label || use), ...(CS ? { college: CS.college, wall: mats.wall } : {}) });
         o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, ridge);
         summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, top);
         continue;
       }
       // plot buildings get a roof from the culture's mix (halls and greenhouses keep their plain roofs);
       // canal houses lean to decorative tops and terraces
-      const roofKind = byBldg && use !== "industrial" && use !== "hydroponics" ? pickRoof(q.canal ? { deco: 0.6, open: 0.3, garden: 0.1 } : style.roofs || PL.roofs, LR) : null;
-      const bld = building(o, ob, ter, q, (q.canal ? clamp(st + LR.randint(-1, 1), plan.skyline.min, plan.skyline.max) : st) * sh, use, { roofMat: roofM, roof: !roofKind });
-      const extra = roofKind ? roofTop(o, ob, ter, q, bld.top, roofKind, LR, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`) : 0;
-      o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: bld.top + extra, roofTop: bld.top, roof: roofKind, storeys: st, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : T.label || use });
+      // (in a college sector every building takes the college's roof mix, whatever its use or layout)
+      const roofKind = CS ? pickRoof(CS.roofs, LR)
+        : byBldg && use !== "industrial" && use !== "hydroponics" ? pickRoof(q.canal ? { deco: 0.6, open: 0.3, garden: 0.1 } : style.roofs || PL.roofs, LR) : null;
+      const bld = building(o, ob, ter, q, (q.canal ? clamp(st + LR.randint(-1, 1), plan.skyline.min, plan.skyline.max) : st) * sh, use, { roofMat: roofM, roof: !roofKind, mats });
+      const extra = roofKind ? roofTop(o, ob, ter, q, bld.top, roofKind, LR, d.id, `NBHD_${d.id}_${key.replace(/\|/g, "_")}_${li}`, mats) : 0;
+      o.lots.push({ d: d.id, use, nb: opts.nb, row: opts.row, key: `${key}|${li}`, poly: q, base: bld.base, top: bld.top + extra, roofTop: bld.top, roof: roofKind, storeys: st, plinth: bld.plinth, area: polyArea(q), label: q.canal ? "Canal house" : T.label || use, ...(CS ? { college: CS.college, wall: mats.wall } : {}) });
       o.band(`${d.id}|${opts.row}`, opts.band.r0, opts.band.r1, bld.base, bld.top);
       summary.base = Math.min(summary.base, bld.base); summary.top = Math.min(summary.top, bld.top);
     }

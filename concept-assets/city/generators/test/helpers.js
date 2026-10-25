@@ -28,9 +28,10 @@ function nonParkDigest(o) {
   const instances = o.instances.filter((i) => !skip(i.coll)).map(({ name, ...rest }) => rest);
   return require("crypto").createHash("sha256").update(JSON.stringify([lots, objects, instances])).digest("hex");
 }
-// park lots belonging to one college (by id: alder, indigo, saffron)
-function parkLots(o, collegeId) {
-  const c = CityGen.collegeConfig(loadPlan().districts.find((d) => d.id === "park"))[collegeId];
+// park lots belonging to one college (by id: alder, indigo, saffron); pass the plan that produced o
+// when it isn't plan.json
+function parkLots(o, collegeId, plan = loadPlan()) {
+  const c = CityGen.collegeConfig(plan.districts.find((d) => d.id === "park"))[collegeId];
   return o.lots.filter((l) => l.d === "park" && l.nb === `park-${c.group}`);
 }
 module.exports = { nonParkDigest, parkLots, CityGen, loadPlan, gen, core, ringR, primsOf, centre, primTop, assertUnderCap };
