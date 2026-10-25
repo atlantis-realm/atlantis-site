@@ -196,7 +196,7 @@ Each milestone works on its own, so the page is usable if later ones stall.
 
 - Commit locally per task. Don't push without asking.
 - `.blend` stays in LFS. Never touch the user's uncommitted `Atlantian_plaza_blockout-v01.blend`.
-- Work on a new branch `city-hero` cut from `city-generators` (PR #1).
+- Work on a new branch `city-hero` cut from `wip-city` (its installed `node_modules` match; the site's `@ladyofcode` packages need GitHub Packages auth to install). Before any PR, rebase onto the PR branch the way `city-generators` was prepared.
 - Match the site's existing code style (TypeScript, Svelte 5, the `DicePreviewScene` pattern).
 
 ## Done when
