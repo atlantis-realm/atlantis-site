@@ -156,15 +156,20 @@ Final budget, measured on `/city` with the whole page running (blimps, water, pe
 | What | Budget | Measured |
 |---|---|---|
 | `hero.glb` + `hero_props.json` | ≤ 10 MB | 5,203,440 + 8,928 bytes = 4.97 MiB |
-| Draw calls, main pass | ≤ 300 | 69 (frame 250) to 256 (frames 1–29), at 1280×720 and 390×844 |
-| Triangles, main pass | ≤ 1.5 M | 497,576 (frame 250) to 586,649; 539,095 at frame 1 (16:9) |
-| Sun shadow pass (desktop only) | | +109 calls, +528,509 triangles (112 casters near the plaza) |
-| `stats()` total, day (main + shadow) | | 178 (frame 250) to 365 calls, at most 1,115,158 triangles |
-| Night bloom path | | +18 calls |
-| Mobile (`pointer: coarse`: no shadows, 100 people) | | 78 calls / 503,020 triangles at frame 250, 256 / 577,049 at frame 1 |
+| `stats()` draw calls, whole frame, day | ≤ 300 | 69–71 (frame 250) to 258 (peak), at 1280×720 and 390×844 |
+| `stats()` draw calls, whole frame, night | ≤ 300 | 83–94 (frame 250) to 272 (peak) |
+| `stats()` triangles, whole frame | ≤ 1.5 M | 1,000,957 (frame 250) to 1,090,092 |
+| Main pass alone | | 67–69 (frame 250) to 256 calls; 497,576 to 586,649 triangles |
+| Sun shadow pass (desktop only) | | 2 calls: the merged caster proxy (484,229 triangles) and the people |
+| Night bloom path | | +14 calls |
+| Mobile (`pointer: coarse`: no shadows, 100 people) | ≤ 300 | 78 calls / 503,020 triangles at frame 250, 256 / 577,049 at frame 1 |
 
 `stats()` counts every pass of a frame, so on desktop it includes the shadow pass and, at night, the
-bloom passes.
+bloom passes. The sun shadow casters near the plaza (96 meshes and 16 instanced meshes, about 110
+shadow draw calls, which put the desktop frame at 365 by day and 383 by night) are merged at load into
+one position-only mesh, `ShadowProxy` (`src/lib/city/shadowProxy.ts`). It is on a layer the camera
+sees only while the shadow map renders, so the main pass never draws it. The rendered frames match
+the per-mesh casters (at most 0.002% of pixels differ by more than 8/255).
 
 ## Tests
 

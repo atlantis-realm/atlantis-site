@@ -33,6 +33,7 @@ import {
 	createPeople,
 	type People
 } from './people.ts';
+import { buildShadowProxy, installShadowLayer } from './shadowProxy.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -116,6 +117,9 @@ export class CityHeroScene {
 	private people: People | null = null;
 	/** The well's water material (water.ts), null when the glb has no props.well_water mesh. */
 	private water: THREE.Material | null = null;
+	/** Merged sun-shadow casters near the plaza (shadowProxy.ts), desktop only. */
+	private shadowProxy: THREE.Mesh | null = null;
+	private uninstallShadowLayer: (() => void) | null = null;
 	private camera: THREE.PerspectiveCamera;
 	private mixer: THREE.AnimationMixer | null = null;
 	private action: THREE.AnimationAction | null = null;
@@ -291,7 +295,6 @@ export class CityHeroScene {
 	private prepareMaterials(root: THREE.Object3D): void {
 		const castShadows = !this.opts.mobile;
 		const shadowSphere = new THREE.Sphere(this.plaza, SHADOW_HALF_SIZE * Math.SQRT2);
-		const bounds = new THREE.Sphere();
 		root.traverse((obj) => {
 			const mesh = obj as THREE.Mesh;
 			if (!mesh.isMesh) return;
@@ -305,19 +308,16 @@ export class CityHeroScene {
 			}
 			if (!castShadows) return;
 			mesh.receiveShadow = true;
-			// Only meshes near the plaza cast: the shadow map covers just that area,
-			// and every caster costs a draw call in the shadow pass.
-			const instanced = mesh as THREE.InstancedMesh;
-			// InstancedMesh bounds cover all instances; plain meshes use their geometry's.
-			if (instanced.isInstancedMesh) instanced.computeBoundingSphere();
-			else if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
-			const local = instanced.isInstancedMesh
-				? instanced.boundingSphere
-				: mesh.geometry.boundingSphere;
-			if (!local) return;
-			bounds.copy(local).applyMatrix4(mesh.matrixWorld);
-			mesh.castShadow = bounds.intersectsSphere(shadowSphere);
+			mesh.castShadow = false;
 		});
+		if (!castShadows) return;
+		// Only meshes near the plaza cast (the shadow map covers just that area),
+		// and they cast through one merged proxy: one shadow draw call instead of ~110.
+		const built = buildShadowProxy(root, shadowSphere);
+		if (!built) return;
+		this.shadowProxy = built.proxy;
+		this.scene.add(built.proxy);
+		this.uninstallShadowLayer = installShadowLayer(this.renderer);
 	}
 
 	/** The well (props.well_water) marks the plaza; fall back to the first walk path's centre. */
@@ -432,7 +432,8 @@ export class CityHeroScene {
 		if (this.water) setWaterTime(this.water, this.motionTime);
 		this.people?.update(this.motionTime);
 		const props = this.loadedProps;
-		if (this.blimps && props) updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
+		if (this.blimps && props)
+			updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
 	}
 
 	/** Environment map from a sky-only scene (reflections and ambient light). */
@@ -496,6 +497,8 @@ export class CityHeroScene {
 		if (this.loadedRoot) disposeObject(this.loadedRoot);
 		if (this.blimps) disposeObject(this.blimps);
 		if (this.people) disposeObject(this.people.mesh);
+		if (this.shadowProxy) disposeObject(this.shadowProxy);
+		this.uninstallShadowLayer?.();
 		this.sky.dispose();
 		this.envTarget?.dispose();
 		for (const pass of this.composer?.passes ?? []) pass.dispose();
