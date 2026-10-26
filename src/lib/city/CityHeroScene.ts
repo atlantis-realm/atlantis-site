@@ -1,7 +1,7 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
-// blimps (blimps.ts). Follows the
+// blimps (blimps.ts) and the well's water (water.ts). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -24,6 +24,7 @@ import { loadProps, type HeroProps } from './props.ts';
 import { createSky, setSkyMoon, setSkySun, type Sky } from './sky.ts';
 import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
 import { createBlimps, updateBlimps } from './blimps.ts';
+import { applyWater, setWaterLights, setWaterNight, setWaterTime, waterLights } from './water.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -104,6 +105,8 @@ export class CityHeroScene {
 	private composer: EffectComposer | null = null;
 	private bloomPass: UnrealBloomPass | null = null;
 	private blimps: THREE.InstancedMesh | null = null;
+	/** The well's water material (water.ts), null when the glb has no props.well_water mesh. */
+	private water: THREE.Material | null = null;
 	private camera: THREE.PerspectiveCamera;
 	private mixer: THREE.AnimationMixer | null = null;
 	private action: THREE.AnimationAction | null = null;
@@ -116,7 +119,7 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
-	/** Clock of the moving things (clouds, blimps); frozen with reducedMotion. */
+	/** Clock of the moving things (clouds, blimps, water); frozen with reducedMotion. */
 	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
 	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
@@ -195,6 +198,9 @@ export class CityHeroScene {
 		this.plazaCentre(gltf.scene, this.plaza);
 		this.prepareMaterials(gltf.scene);
 		this.nightMaterials = collectNightMaterials(gltf.scene);
+		// After prepareMaterials, so the water's clone keeps the vertex AO.
+		this.water = applyWater(gltf.scene, props.well_water);
+		if (this.water) setWaterLights(this.water, waterLights(gltf.scene, this.plaza.toArray()));
 
 		this.sunDir.set(...props.sun.dir).normalize();
 		setSkySun(this.sky, this.sunDir);
@@ -365,6 +371,7 @@ export class CityHeroScene {
 		}
 		this.sky.setMix(t);
 		this.renderer.toneMappingExposure = mix.exposure;
+		if (this.water) setWaterNight(this.water, mix.emissive);
 
 		const strength = mix.bloom * (this.opts.mobile ? BLOOM_MOBILE_SCALE : 1);
 		if (strength > 0) this.ensureComposer().strength = strength;
@@ -403,9 +410,10 @@ export class CityHeroScene {
 		}
 	}
 
-	/** Clouds and blimps at motionTime. */
+	/** Clouds, blimps and water at motionTime. */
 	private updateMotion(): void {
 		this.sky.update(this.motionTime);
+		if (this.water) setWaterTime(this.water, this.motionTime);
 		const props = this.loadedProps;
 		if (this.blimps && props) updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
 	}
