@@ -151,6 +151,21 @@ triangles. Tuned values: `NEAR_TILE, MID_TILE, FAR_TILE = 200, 200, 800` (100/10
 calls), `FAR_DECIMATE = 0.25`, `SUBDIV_NEAR, SUBDIV_MID = 4, 12`, trees unchanged. Result: 4.97 MB,
 562,709 triangles, about 265 draw calls.
 
+Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):
+
+| What | Budget | Measured |
+|---|---|---|
+| `hero.glb` + `hero_props.json` | ≤ 10 MB | 5,203,440 + 8,928 bytes = 4.97 MiB |
+| Draw calls, main pass | ≤ 300 | 69 (frame 250) to 256 (frames 1–29), at 1280×720 and 390×844 |
+| Triangles, main pass | ≤ 1.5 M | 497,576 (frame 250) to 586,649; 539,095 at frame 1 (16:9) |
+| Sun shadow pass (desktop only) | | +109 calls, +528,509 triangles (112 casters near the plaza) |
+| `stats()` total, day (main + shadow) | | 178 (frame 250) to 365 calls, at most 1,115,158 triangles |
+| Night bloom path | | +18 calls |
+| Mobile (`pointer: coarse`: no shadows, 100 people) | | 78 calls / 503,020 triangles at frame 250, 256 / 577,049 at frame 1 |
+
+`stats()` counts every pass of a frame, so on desktop it includes the shadow pass and, at night, the
+bloom passes.
+
 ## Tests
 
 ```sh
