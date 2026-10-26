@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { blogPosts, getPost } from '$lib/content/blogPosts';
+import { blogPosts, getPost } from '#lib/content/blogPosts.js';
 import type { PageLoad } from './$types';
 
 export const prerender = true;

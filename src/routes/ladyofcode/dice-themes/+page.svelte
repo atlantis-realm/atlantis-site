@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import ThemeCatalogSection from '$lib/components/dice/ThemeCatalogSection.svelte';
+	import ThemeCatalogSection from '#lib/components/dice/ThemeCatalogSection.svelte';
 	import {
 		DEFAULT_DIE_INDEX,
 		DICE_TYPES,
 		dieLabel,
 		type DiceLayoutMode
-	} from '$lib/dice/constants';
-	import { PUBLIC_THEMES, SUBSCRIBER_THEMES } from '$lib/dice/themeCatalog';
-	import type { DicePreviewScene } from '$lib/dice/DicePreviewScene';
+	} from '#lib/dice/constants.js';
+	import { PUBLIC_THEMES, SUBSCRIBER_THEMES } from '#lib/dice/themeCatalog.js';
+	import type { DicePreviewScene } from '#lib/dice/DicePreviewScene.js';
 	import { DEFAULT_THEME, getTheme } from '@ladyofcode/dice-themes';
 
 	const TABLET_MIN = 768;
@@ -59,7 +59,7 @@
 
 		let cleanup: (() => void) | undefined;
 
-		void import('$lib/dice/DicePreviewScene').then(({ DicePreviewScene }) => {
+		void import('#lib/dice/DicePreviewScene.js').then(({ DicePreviewScene }) => {
 			if (!canvas) return;
 
 			scene = new DicePreviewScene(canvas);
@@ -108,12 +108,12 @@
 		<header>
 			<h1>Dice Themes</h1>
 			<p class="lede">
-				Browse themes below and preview them on the dice set. During stream, use the chat command on each
-				card to set your theme.
+				Browse themes below and preview them on the dice set. During stream, use the chat command on
+				each card to set your theme.
 			</p>
 			<p class="policy-note">
-				You can only change your theme during stream once every 20 minutes. After we migrate to Grid,
-				you'll have your own settings page to pick your theme whenever.
+				You can only change your theme during stream once every 20 minutes. After we migrate to
+				Grid, you'll have your own settings page to pick your theme whenever.
 			</p>
 		</header>
 

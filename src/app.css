@@ -1,4 +1,15 @@
+:root{
+    --nav-color: hsl(45, 67%, 74%);
+    --nav-current-color: rgba(8, 107, 125, 0.666)
+}
+
 body {
     background-color: #2e4057;
     margin: 0;
+}
+
+/* Placeholder copy added during the content restructure — replace with real copy, then remove the class. */
+.added,
+.added * {
+    font-family: 'Times New Roman', Times, serif !important;
 }

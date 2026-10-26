@@ -1,6 +1,6 @@
 <script lang="ts">
-	import ThemeCard from '$lib/components/dice/ThemeCard.svelte';
-	import type { CatalogTheme } from '$lib/dice/themeCatalog';
+	import ThemeCard from '#lib/components/dice/ThemeCard.svelte';
+	import type { CatalogTheme } from '#lib/dice/themeCatalog.js';
 
 	interface Props {
 		title: string;

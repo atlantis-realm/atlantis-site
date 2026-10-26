@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { CityHeroMode, CityHeroScene } from '$lib/city/CityHeroScene';
+	import type { CityHeroMode, CityHeroScene } from '#lib/city/CityHeroScene.js';
 
 	const GLB_URL = '/city/hero.glb';
 	const PROPS_URL = '/city/hero_props.json';
@@ -61,7 +61,7 @@
 			scene = undefined;
 		};
 
-		void import('$lib/city/CityHeroScene')
+		void import('#lib/city/CityHeroScene.js')
 			.then(async ({ CityHeroScene }) => {
 				if (disposed || !canvas) return;
 				scene = new CityHeroScene(canvas, {

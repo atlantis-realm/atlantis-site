@@ -1,3 +1,5 @@
+import adapter from '@sveltejs/adapter-static';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { sveltekit } from '@sveltejs/kit/vite';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,10 +8,20 @@ import { defineConfig } from 'vite';
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [
+		sveltekit({
+			preprocess: vitePreprocess(),
+			adapter: adapter(),
+			// Absolute /_app/ asset URLs for nested routes like /ladyofcode/dice-themes.
+			paths: { relative: false }
+		})
+	],
 	resolve: {
 		alias: {
-			'@ladyofcode/dice-engine/engine': path.resolve(dir, 'node_modules/@ladyofcode/dice-engine/engine'),
+			'@ladyofcode/dice-engine/engine': path.resolve(
+				dir,
+				'node_modules/@ladyofcode/dice-engine/engine'
+			),
 			three: path.resolve(dir, 'node_modules/three')
 		},
 		dedupe: ['three']
