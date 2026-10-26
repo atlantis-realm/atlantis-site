@@ -40,7 +40,9 @@ Stages
                LAMP_RING_STEP_DEG round the plaza ring (clear of the camera), linked duplicates.
   camera       HeroCamera, no parent, world matrix keyed every frame 1-250 (linear), action `Hero`.
   props        sun (dir: from the scene toward the sun), Lantern, blimp orbit (radius searched for the
-               visible sky above the frontage), walk paths, well water node, night material names and
+               visible sky above the frontage), walk paths (the plaza ring and the avenue pavements,
+               cut where they pass within WALK_CAMERA_CLEARANCE of the camera path, so the ring is an
+               arc round the far side of the well), well water node, night material names and
                night_nodes (the nodes allowed NIGHT_MAT_AP_Cyan / NIGHT_WellRing). glTF space: (x, z, -y).
 
 Pure cull geometry lives in hero_geom.py (tested). Tuning knobs are the constants below.
@@ -121,6 +123,8 @@ LAMP_RING_STEP_DEG = 15.0
 LAMP_KERB_INSET = 0.5                   # m in from the kerb edge of each pavement
 LAMP_CAMERA_CLEARANCE = 10.0            # m: no lamp this close (horizontally) to the camera path
 PLAZA_LAMP_R, PLAZA_WALK_R = 11.3, 10.0 # m round the well centre, on the walkway deck
+WALK_CAMERA_CLEARANCE = 8.0             # m: walk path points this close to the camera path are dropped
+WALK_CHEST_H = 1.3                      # m above the ground: where a walker is measured from the camera
 WALK_RING_POINTS = 48
 AVENUE_START, AVENUE_LEN, AVENUE_STEP = 20.0, 600.0, 20.0   # m along the avenue from the well centre
 AVENUE_PROBE = 60.0                     # m along the avenue where the pavement is measured
@@ -187,7 +191,8 @@ def cam_space(mat, p):
 
 
 def safe_half_tans(scene, dg, mats, half16):
-    """f250: the Text bounds at frame 250. f1: the avenue frontage where it starts, seen from frame 1."""
+    """f250: the Text bounds at frame 250. f1: the avenue frontage where it first enters the 16:9 frame,
+    seen from frame 1 (both sides inside the frame's half-width)."""
     text = bpy.data.objects[TEXT_OBJECT]
     corners = [text.matrix_world @ Vector(c) for c in text.bound_box]
     f250 = max(abs(cam_space(mats[hg.FRAME_END], c)[0]) for c in corners)
@@ -204,8 +209,11 @@ def safe_half_tans(scene, dg, mats, half16):
             if h is not None:
                 hits.append(h[0])
         if len(hits) == 2:
-            f1 = max(abs(cam_space(m1, h)[0]) for h in hits)
-            break
+            # Where the frontage first enters the 16:9 frame: nearer, it is still out past the edges.
+            x = max(abs(cam_space(m1, h)[0]) for h in hits)
+            if x <= half16:
+                f1 = x
+                break
     return min(f250, half16), min(f1 if f1 is not None else half16, half16)
 
 
@@ -591,11 +599,12 @@ def lamp_mesh(mats):
     bm = bmesh.new()
     bmesh.ops.create_cone(bm, cap_ends=True, segments=8, radius1=LAMP_POLE_R, radius2=LAMP_POLE_R,
                           depth=LAMP_POLE_H, matrix=Matrix.Translation((0, 0, LAMP_POLE_H / 2)))
-    npole = len(bm.faces)
-    bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, LAMP_POLE_H + LAMP_HEAD_H / 2)) @
-                          Matrix.Diagonal((LAMP_HEAD_W, LAMP_HEAD_W, LAMP_HEAD_H, 1)))
-    for i, f in enumerate(bm.faces):
-        f.material_index = 0 if i < npole else 1
+    head = bmesh.ops.create_cube(bm, size=1.0, matrix=Matrix.Translation((0, 0, LAMP_POLE_H + LAMP_HEAD_H / 2)) @
+                                 Matrix.Diagonal((LAMP_HEAD_W, LAMP_HEAD_W, LAMP_HEAD_H, 1)))
+    # Tag the head by the cube's own verts: bm.faces is not ordered pole-then-head.
+    head_verts = set(head["verts"])
+    for f in bm.faces:
+        f.material_index = 1 if all(v in head_verts for v in f.verts) else 0
     me = tag(bpy.data.meshes.new("HERO_Lamp"))
     bm.to_mesh(me)
     bm.free()
@@ -893,23 +902,31 @@ def run():
             link(f"HERO_lamp_{n_lamps:03d}", lmesh, Matrix.Translation((q.x, q.y, z)))
             n_lamps += 1
 
-        def path(points):
-            out = []
+        # Walkers keep clear of the camera along the whole move (every frame, in 3D), so none fills
+        # the frame: the plaza ring passes under the camera, and is cut into an arc round the far side.
+        cam_path = [mats[f].translation for f in range(hg.FRAME_START, hg.FRAME_END + 1)]
+
+        def walk_clear(p):
+            chest = p + Vector((0, 0, WALK_CHEST_H))
+            return min((chest - c).length for c in cam_path) >= WALK_CAMERA_CLEARANCE
+
+        def paths(points, closed):
+            pts = []
             for q in points:
                 z = ground(occ, q.x, q.y)[0]
                 if z is not None:
-                    out.append(gl((q.x, q.y, z)))
-            return out
+                    pts.append(Vector((q.x, q.y, z)))
+            return [[gl(p) for p in run] for run in hg.clear_runs(pts, closed, walk_clear)]
 
-        ring_path = path([centre2 + Vector((math.cos(a), math.sin(a))) * PLAZA_WALK_R
-                          for a in np.linspace(0, 2 * math.pi, WALK_RING_POINTS, endpoint=False)])
-        walk_paths = [ring_path + ring_path[:1]]
+        walk_paths = paths([centre2 + Vector((math.cos(a), math.sin(a))) * PLAZA_WALK_R
+                            for a in np.linspace(0, 2 * math.pi, WALK_RING_POINTS, endpoint=False)], True)
         for sgn in (1, -1):
             a, b_ = pave[sgn]
             for f in (1 / 3, 2 / 3):
                 off = a + (b_ - a) * f
-                walk_paths.append(path([centre2 + fwd * float(s) + side * (sgn * off)
-                                        for s in np.arange(AVENUE_START, AVENUE_START + AVENUE_LEN + 0.1, AVENUE_STEP)]))
+                walk_paths += paths([centre2 + fwd * float(s) + side * (sgn * off)
+                                     for s in np.arange(AVENUE_START, AVENUE_START + AVENUE_LEN + 0.1, AVENUE_STEP)],
+                                    False)
         timing["props_geo"] = time.time() - t0
 
         # ---- AO bake

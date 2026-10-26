@@ -149,7 +149,14 @@ The tuning knobs (cull margin, bands, tiles, decimate ratio, subdivision, AO, la
 constants at the top of `export_hero.py`. Budget: glb + props ≤ 10 MB, ≤ 300 draw calls, ≤ 1.5 M
 triangles. Tuned values: `NEAR_TILE, MID_TILE, FAR_TILE = 200, 200, 800` (100/100/400 gave about 440 draw
 calls), `FAR_DECIMATE = 0.25`, `SUBDIV_NEAR, SUBDIV_MID = 4, 12`, trees unchanged. Result: 4.97 MB,
-562,709 triangles, about 265 draw calls.
+561,117 triangles, about 265 draw calls (after the branch review fixes: the frame-1 safe frame
+`f1` is now measured where the avenue frontage first enters the 16:9 frame, 0.4393, which culls
+the portrait view a little tighter).
+
+Walk paths keep `WALK_CAMERA_CLEARANCE` (8 m, measured from a walker's chest) from the camera at
+every frame 1–250, so the plaza ring, which passes under the camera, is exported as an open arc
+round the far side of the well (`hero_geom.clear_runs`). Lamp heads are tagged by the head cube's
+own vertices, so only the head carries `NIGHT_Lamp`; `test/hero_glb.test.js` checks both.
 
 Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):
 

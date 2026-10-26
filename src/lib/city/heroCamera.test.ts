@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { easeToward, frameToTime, safeFrameFov, scrollToFrame } from './heroCamera.ts';
+import { MIN_ASPECT, easeToward, frameToTime, safeFrameFov, scrollToFrame } from './heroCamera.ts';
 
 const DEG = Math.PI / 180;
 
@@ -38,6 +38,15 @@ test('safeFrameFov keeps the vertical FOV on wider-than-16:9 screens', () => {
 	const base = 33.4;
 	const safeHalfTan = Math.tan((base / 2) * DEG) * (16 / 9);
 	assert.equal(safeFrameFov(21 / 9, base, safeHalfTan), base);
+});
+
+test('safeFrameFov treats screens narrower than 9:19.5 as 9:19.5 (the narrowest culled view)', () => {
+	const base = 33.4;
+	const safeHalfTan = Math.tan((base / 2) * DEG) * (16 / 9);
+	assert.equal(MIN_ASPECT, 9 / 19.5);
+	const atMin = safeFrameFov(MIN_ASPECT, base, safeHalfTan);
+	assert.equal(safeFrameFov(9 / 21, base, safeHalfTan), atMin);
+	assert.equal(safeFrameFov(0.2, base, safeHalfTan), atMin);
 });
 
 test('easeToward snaps when close and holds with no time', () => {

@@ -117,11 +117,13 @@
 </button>
 
 <style>
-	/* Fixed behind the page: the layout's nav stays on top and clickable. */
+	/* Fixed behind the page: the layout's nav stays on top and clickable. The background
+	   continues the still's top and bottom edges where it doesn't fill a tall screen. */
 	.stage {
 		position: fixed;
 		inset: 0;
 		z-index: -1;
+		background: linear-gradient(#7f8e9d, #a3acb3);
 	}
 
 	canvas,
@@ -140,6 +142,25 @@
 
 	.still.hidden {
 		opacity: 0;
+	}
+
+	/*
+	 * Narrower than about 1:1 the live scene stops cropping the sides and keeps the
+	 * safe frame ("Welcome to Atlantis", hero_props safe_half_tan.f250 = 0.2998 of
+	 * the 16:9 half-width tan 0.5296) across the full screen width. Show the 16:9
+	 * still the same way, so the text isn't cut and the fade to live doesn't jump:
+	 * 0.5296 / 0.2998 = 1.766 screen widths wide, centred. 16:9 / 1.766 = 1.007.
+	 */
+	@media (max-aspect-ratio: 1007/1000) {
+		.still {
+			inset: auto;
+			top: 50%;
+			left: 50%;
+			width: 176.6%;
+			height: auto;
+			aspect-ratio: 16 / 9;
+			transform: translate(-50%, -50%);
+		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {

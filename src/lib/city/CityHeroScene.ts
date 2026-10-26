@@ -320,7 +320,7 @@ export class CityHeroScene {
 		this.uninstallShadowLayer = installShadowLayer(this.renderer);
 	}
 
-	/** The well (props.well_water) marks the plaza; fall back to the first walk path's centre. */
+	/** The well (props.well_water) marks the plaza; fall back to the first walk path's centre (the plaza ring arc: roughly). */
 	private plazaCentre(root: THREE.Object3D, centre: THREE.Vector3): THREE.Vector3 {
 		root.updateMatrixWorld(true);
 		centre.set(0, 0, 0);
@@ -501,11 +501,15 @@ export class CityHeroScene {
 		this.uninstallShadowLayer?.();
 		this.sky.dispose();
 		this.envTarget?.dispose();
+		// The light's shadow map render target.
+		this.sun.dispose();
 		for (const pass of this.composer?.passes ?? []) pass.dispose();
 		this.composer?.dispose();
 		this.scene.clear();
 		this.scene.environment = null;
 		this.renderer.dispose();
+		// Release the WebGL context now rather than at garbage collection, so repeat visits don't pile them up.
+		this.renderer.forceContextLoss();
 	}
 }
 

@@ -16,6 +16,13 @@ export const EASE_SNAP_FRAMES = 1e-3;
 const DEG = Math.PI / 180;
 
 /**
+ * The narrowest screen aspect the export culls for (9:19.5, a tall phone in
+ * portrait; MIN_ASPECT in hero_geom.py). Narrower screens use its FOV: they see
+ * a little less of the safe frame's width, but never past the culled geometry.
+ */
+export const MIN_ASPECT = 9 / 19.5;
+
+/**
  * Scroll progress 0→1 maps to frames 250→1: the page opens on the well and
  * scrolling down plays the hero move in reverse. Progress is clamped to [0,1].
  */
@@ -38,13 +45,14 @@ export function frameToTime(frame: number, fps = HERO_FPS, start = HERO_FRAME_ST
  *
  * `baseVFovDeg` is the Blender camera's vertical FOV at 16:9; `safeHalfTan` is
  * tan of half the horizontal angle that must stay visible. Narrow screens widen
- * the vertical FOV; 16:9 and wider keep `baseVFovDeg`.
+ * the vertical FOV; 16:9 and wider keep `baseVFovDeg`. Aspects narrower than
+ * MIN_ASPECT are treated as MIN_ASPECT.
  *
  * Same rule as `safe_vfov` in concept-assets/city/generators/hero_geom.py
  * (the export culls against it); keep the two formulas identical.
  */
 export function safeFrameFov(aspect: number, baseVFovDeg: number, safeHalfTan: number): number {
-	const neededDeg = (2 * Math.atan(safeHalfTan / aspect)) / DEG;
+	const neededDeg = (2 * Math.atan(safeHalfTan / Math.max(aspect, MIN_ASPECT))) / DEG;
 	return Math.max(baseVFovDeg, neededDeg);
 }
 

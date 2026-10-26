@@ -9,6 +9,7 @@ safe_vfov()        the safe-frame rule: narrow screens widen the vertical FOV to
                    frame's width in view. Same rule as safeFrameFov in src/lib/city/heroCamera.ts.
 cull_aspects()     the screen aspects the export culls for, with their safe-frame vfov.
 sample_frames()    the camera frames the cull samples.
+clear_runs()       split a walk path round the points it must avoid (near the camera).
 
 Tests: python3 -m unittest discover -s test -p "test_*.py"
 """
@@ -16,6 +17,9 @@ import math
 
 # Screen aspects the hero must work at: the Blender shot, ultrawide, and a tall phone in portrait.
 CULL_ASPECTS = (16 / 9, 21 / 9, 9 / 19.5)
+# The narrowest culled aspect. Narrower screens use its FOV (they see a little less width, never past
+# the culled frusta). Same as MIN_ASPECT in src/lib/city/heroCamera.ts.
+MIN_ASPECT = min(CULL_ASPECTS)
 # Hero camera move (Camera.001) and how often the cull samples it.
 FRAME_START, FRAME_END, FRAME_STEP = 1, 250, 5
 
@@ -94,8 +98,9 @@ def safe_vfov(aspect, base_vfov, safe_half_tan):
 
     Same rule as `safeFrameFov` in src/lib/city/heroCamera.ts (which works in degrees); the site
     uses that one at runtime, so keep the two formulas identical.
+    Aspects narrower than MIN_ASPECT are treated as MIN_ASPECT, so no screen sees past the culled frusta.
     """
-    return max(base_vfov, 2 * math.atan(safe_half_tan / aspect))
+    return max(base_vfov, 2 * math.atan(safe_half_tan / max(aspect, MIN_ASPECT)))
 
 
 def cull_aspects(base_vfov, safe_half_tan):
@@ -109,3 +114,30 @@ def sample_frames(start=FRAME_START, end=FRAME_END, step=FRAME_STEP):
     if frames[-1] != end:
         frames.append(end)
     return frames
+
+
+def clear_runs(points, closed, ok):
+    """The runs of consecutive points with ok(point) true, each at least 2 points long.
+
+    A closed path (the last segment joins the last point back to the first) with every point ok
+    comes back as one run with its first point repeated at the end, still a closed loop. With any
+    point dropped it is cut there and walked round from just after the cut, so the arc that
+    crosses the path's start stays in one piece. Runs are lists of the original points, in order.
+    """
+    flags = [bool(ok(p)) for p in points]
+    if all(flags):
+        return [list(points) + list(points[:1])] if closed and points else ([list(points)] if points else [])
+    if closed:
+        k = flags.index(False) + 1
+        points, flags = list(points[k:]) + list(points[:k]), flags[k:] + flags[:k]
+    runs, cur = [], []
+    for p, f in zip(points, flags):
+        if f:
+            cur.append(p)
+        else:
+            if len(cur) >= 2:
+                runs.append(cur)
+            cur = []
+    if len(cur) >= 2:
+        runs.append(cur)
+    return runs

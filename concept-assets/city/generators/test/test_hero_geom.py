@@ -10,7 +10,9 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from hero_geom import (  # noqa: E402
+    MIN_ASPECT,
     aabb_in_frustum,
+    clear_runs,
     cull_aspects,
     frustum_planes,
     safe_vfov,
@@ -90,6 +92,32 @@ class SafeFrameTest(unittest.TestCase):
         aspect = 9 / 19.5
         expected_deg = max(33.4, math.degrees(2 * math.atan(SAFE_HALF_TAN / aspect)))
         self.assertAlmostEqual(math.degrees(safe_vfov(aspect, VFOV, SAFE_HALF_TAN)), expected_deg, places=9)
+
+
+    def test_narrower_than_min_aspect_uses_min_aspect(self):
+        # A 9:21 phone or a split-screen window: no wider than the narrowest culled FOV.
+        self.assertAlmostEqual(MIN_ASPECT, 9 / 19.5)
+        at_min = safe_vfov(MIN_ASPECT, VFOV, SAFE_HALF_TAN)
+        self.assertAlmostEqual(safe_vfov(9 / 21, VFOV, SAFE_HALF_TAN), at_min, places=12)
+        self.assertAlmostEqual(safe_vfov(0.2, VFOV, SAFE_HALF_TAN), at_min, places=12)
+
+
+class ClearRunsTest(unittest.TestCase):
+    def test_all_clear_open(self):
+        self.assertEqual(clear_runs([1, 2, 3], False, lambda p: True), [[1, 2, 3]])
+
+    def test_all_clear_closed_repeats_first(self):
+        self.assertEqual(clear_runs([1, 2, 3], True, lambda p: True), [[1, 2, 3, 1]])
+
+    def test_open_split_and_short_runs_dropped(self):
+        self.assertEqual(clear_runs([1, 2, 3, 4, 5, 6, 7], False, lambda p: p not in (3, 5)), [[1, 2], [6, 7]])
+
+    def test_closed_cut_keeps_arc_across_start(self):
+        # Points 0..7 on a loop, 4 and 5 blocked: one arc 6, 7, 0, 1, 2, 3.
+        self.assertEqual(clear_runs(list(range(8)), True, lambda p: p not in (4, 5)), [[6, 7, 0, 1, 2, 3]])
+
+    def test_none_clear(self):
+        self.assertEqual(clear_runs([1, 2, 3], True, lambda p: False), [])
 
 
 class SamplingTest(unittest.TestCase):

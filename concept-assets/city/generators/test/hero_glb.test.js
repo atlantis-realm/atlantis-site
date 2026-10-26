@@ -13,6 +13,9 @@ const FPS = 24, FRAMES = [1, 250];
 const LANTERN_PREFIXES = ["KIT_Temple_lantern", "NBHD_core_lantern"]; // = LANTERN_PREFIXES in export_hero.py
 const NO_AO = ["HERO_tree_", "HERO_lamp_"];
 const INSTANCING = "EXT_mesh_gpu_instancing";
+// = LAMP_POLE_H, LAMP_HEAD_H in export_hero.py; WALK_CAMERA_CLEARANCE, WALK_CHEST_H likewise.
+const LAMP_POLE_H = 5.0, LAMP_HEAD_H = 0.6;
+const WALK_CAMERA_CLEARANCE = 8.0, WALK_CHEST_H = 1.3;
 const PROPS_KEYS = {
   "": ["version", "fps", "frames", "base_vfov_deg", "safe_half_tan", "sun", "lantern", "blimps", "walk_paths",
     "well_water", "night", "night_nodes"],
@@ -112,4 +115,47 @@ test("hero_props.json has the Task 3 schema", { skip: SKIP }, async () => {
   }
   assert.ok(props.blimps.count >= 1);
   assert.ok(props.walk_paths.length >= 3);
+});
+
+// y range of a primitive's POSITION in its mesh's local space (quantized or not: same scale per mesh).
+function yRange(prim) {
+  const pos = prim.getAttribute("POSITION"), el = [];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pos.getCount(); i++) {
+    const y = pos.getElement(i, el)[1];
+    lo = Math.min(lo, y); hi = Math.max(hi, y);
+  }
+  return [lo, hi];
+}
+
+test("lamp heads (NIGHT_Lamp) sit on top of the pole, every vertex at y >= LAMP_POLE_H", { skip: SKIP }, async () => {
+  const { root } = await load();
+  const lamps = root.listMeshes().filter((m) => m.listPrimitives().some((p) => p.getMaterial()?.getName() === "NIGHT_Lamp"));
+  assert.ok(lamps.length > 0, "no lamp mesh");
+  for (const mesh of lamps) {
+    const prims = mesh.listPrimitives();
+    const head = yRange(prims.find((p) => p.getMaterial()?.getName() === "NIGHT_Lamp"));
+    const all = prims.map(yRange);
+    const lo = Math.min(...all.map((r) => r[0])), hi = Math.max(...all.map((r) => r[1]));
+    // Local units may be quantized: measure in metres from the lamp's full height.
+    const m = (y) => ((y - lo) / (hi - lo)) * (LAMP_POLE_H + LAMP_HEAD_H);
+    assert.ok(m(head[0]) >= LAMP_POLE_H - 1e-2, `${mesh.getName()}: head starts at ${m(head[0]).toFixed(3)} m`);
+    const pole = prims.find((p) => p.getMaterial()?.getName() === "HERO_LampPole");
+    if (pole) assert.ok(m(yRange(pole)[1]) <= LAMP_POLE_H + 1e-2, `${mesh.getName()}: pole reaches ${m(yRange(pole)[1]).toFixed(3)} m`);
+  }
+});
+
+test("walk paths keep WALK_CAMERA_CLEARANCE from the camera over the whole move", { skip: SKIP }, async () => {
+  const { root, props } = await load();
+  const anim = root.listAnimations().find((a) => a.getName() === "Hero");
+  const ch = anim.listChannels().find((c) => c.getTargetPath() === "translation");
+  const out = ch.getSampler().getOutput(), cams = [], el = [];
+  for (let i = 0; i < out.getCount(); i++) cams.push([...out.getElement(i, el)]);
+  for (const [k, path] of props.walk_paths.entries()) {
+    assert.ok(path.length >= 2, `path ${k} has ${path.length} points`);
+    for (const [x, y, z] of path) {
+      const d = Math.min(...cams.map(([cx, cy, cz]) => Math.hypot(x - cx, y + WALK_CHEST_H - cy, z - cz)));
+      assert.ok(d >= WALK_CAMERA_CLEARANCE - 0.05, `path ${k} point ${[x, y, z]} is ${d.toFixed(2)} m from the camera`);
+    }
+  }
 });
