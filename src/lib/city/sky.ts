@@ -11,6 +11,12 @@ export const SKY_WIND: [number, number] = [0.012, 0.005];
 export const SKY_CLOUD_COVER: [number, number] = [0.48, 0.78];
 /** Scale of the cloud pattern on its plane (higher = smaller clouds). */
 export const SKY_CLOUD_SCALE = 1.6;
+/**
+ * Where setSkyMoon() puts the moon for the shot: this many degrees left of the
+ * city direction and above the horizon, inside the avenue view's sky (frame 1).
+ */
+export const SKY_MOON_AZIMUTH_DEG = 8;
+export const SKY_MOON_ELEVATION_DEG = 17;
 
 /** Day palette (linear RGB). */
 const DAY_ZENITH = new THREE.Color(0.06, 0.2, 0.62);
@@ -221,6 +227,19 @@ export function createSky(
 			material.dispose();
 		}
 	};
+}
+
+/**
+ * Put the moon in the visible sky: SKY_MOON_AZIMUTH_DEG left of `cityDir` (the
+ * camera's horizontal view toward the Lantern) and SKY_MOON_ELEVATION_DEG up.
+ * The default (opposite the sun) is behind the hero camera in every frame.
+ */
+export function setSkyMoon(sky: Sky, cityDir: THREE.Vector3): void {
+	const flat = new THREE.Vector3(cityDir.x, 0, cityDir.z);
+	if (flat.lengthSq() < 1e-6) flat.set(0, 0, -1);
+	flat.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(SKY_MOON_AZIMUTH_DEG));
+	const el = THREE.MathUtils.degToRad(SKY_MOON_ELEVATION_DEG);
+	sky.uniforms.uMoonDir.value.set(flat.x * Math.cos(el), Math.sin(el), flat.z * Math.cos(el));
 }
 
 /** Point the sky's sun (and the moon opposite it) along `sunDir`. */

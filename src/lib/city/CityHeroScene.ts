@@ -1,11 +1,16 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
-// sky. Follows the DicePreviewScene pattern (class owning renderer, scene,
-// timer and RAF loop, torn down by destroy()).
+// sky and the day/night cross-fade (night.ts) with bloom. Follows the
+// DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
+// torn down by destroy()).
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import {
 	HERO_FRAME_END,
 	HERO_FRAME_START,
@@ -15,7 +20,8 @@ import {
 	scrollToFrame
 } from './heroCamera.ts';
 import { loadProps, type HeroProps } from './props.ts';
-import { createSky, setSkySun, type Sky } from './sky.ts';
+import { createSky, setSkyMoon, setSkySun, type Sky } from './sky.ts';
+import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -23,11 +29,20 @@ export const MAX_PIXEL_RATIO = 1.5;
 export const HERO_CAMERA_NODE = 'HeroCamera';
 export const HERO_CLIP = 'Hero';
 
-/** Sun light (day). */
+/** Sun light (day). mixMode's sun level is scaled so that day gives exactly this. */
 const SUN_COLOR = 0xfff1dc;
 const SUN_INTENSITY = 2.6;
+/** The same light at night is the moon: cool, from the sky's uMoonDir (setSkyMoon). */
+const MOON_COLOR = 0xb4c4ff;
 /** Environment (PMREM of the sky) strength on the city's materials. */
 const ENV_INTENSITY = 1.0;
+/**
+ * The night sky's PMREM is ~30-45x darker than the day one (sky.ts palettes:
+ * horizon luminance 0.70 vs 0.024, zenith 0.20 vs 0.0043). mixMode's ambient is a
+ * level relative to day, so a night bake is scaled back up by this gain; the
+ * env keeps the night sky's colour while ambient 0.15 means 15% of day.
+ */
+const NIGHT_ENV_GAIN = 30;
 /** Shadows: a square this many metres either side of the plaza, desktop only. */
 const SHADOW_HALF_SIZE = 150;
 const SHADOW_MAP_SIZE = 2048;
@@ -35,6 +50,24 @@ const SHADOW_MAP_SIZE = 2048;
 const SHADOW_LIGHT_DISTANCE = 600;
 const SHADOW_BIAS = -0.0004;
 const SHADOW_NORMAL_BIAS = 0.05;
+/**
+ * UnrealBloomPass: strength comes from mixMode (halved on mobile). Its high pass
+ * keeps whole texels above the threshold (linear, before exposure), so 2.0 sits
+ * above the windows (~1.6) and bands (~1.4) and below the lamps (~2.6) and the
+ * Lantern / well ring cyan (~3.1): bloom stays mild instead of hazing every facade.
+ * Radius 0 weights the small mips, so the well ring at frame 250 (most of the
+ * screen) glows without washing out "Welcome to Atlantis".
+ */
+const BLOOM_RADIUS = 0;
+const BLOOM_THRESHOLD = 2.0;
+const BLOOM_MOBILE_SCALE = 0.5;
+/** MSAA samples of the bloom path's render target (desktop; the canvas is antialiased there too). */
+const BLOOM_SAMPLES = 4;
+
+type NightMaterial = {
+	material: THREE.MeshStandardMaterial;
+	emissive: [number, number, number, number];
+};
 
 export type CityHeroOptions = {
 	reducedMotion: boolean;
@@ -61,10 +94,19 @@ export class CityHeroScene {
 	private readonly timer = new THREE.Timer();
 	private readonly sky: Sky;
 	private readonly sun: THREE.DirectionalLight;
+	private readonly sunColor = new THREE.Color(SUN_COLOR);
+	private readonly moonColor = new THREE.Color(MOON_COLOR);
+	private readonly sunDir = new THREE.Vector3(0, 1, 0);
+	private readonly plaza = new THREE.Vector3();
+	private nightMaterials: NightMaterial[] = [];
+	private composer: EffectComposer | null = null;
+	private bloomPass: UnrealBloomPass | null = null;
 	private camera: THREE.PerspectiveCamera;
 	private mixer: THREE.AnimationMixer | null = null;
 	private action: THREE.AnimationAction | null = null;
 	private envTarget: THREE.WebGLRenderTarget | null = null;
+	/** Gain of the current env bake (1 for day, NIGHT_ENV_GAIN for night), see applyMix(). */
+	private envGain = 1;
 	private animationFrameId: number | null = null;
 	private destroyed = false;
 
@@ -73,6 +115,9 @@ export class CityHeroScene {
 	private targetFrame = HERO_FRAME_END;
 	private skyTime = 0;
 	private mode: CityHeroMode = 'day';
+	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
+	private night = 0;
+	private nightTarget = 0;
 
 	private loadedProps: HeroProps | null = null;
 	private loadedRoot: THREE.Group | null = null;
@@ -87,6 +132,8 @@ export class CityHeroScene {
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.renderer.shadowMap.enabled = !opts.mobile;
 		this.renderer.shadowMap.type = THREE.PCFShadowMap;
+		// Reset per frame in draw(), so stats() counts every pass of the bloom path.
+		this.renderer.info.autoReset = false;
 
 		// Placeholder until the glb's HeroCamera arrives.
 		this.camera = new THREE.PerspectiveCamera(33, this.aspect, 0.2, 8000);
@@ -141,13 +188,17 @@ export class CityHeroScene {
 		this.action.play();
 		this.action.paused = true;
 
+		this.plazaCentre(gltf.scene, this.plaza);
 		this.prepareMaterials(gltf.scene);
+		this.nightMaterials = collectNightMaterials(gltf.scene);
 
-		const sunDir = new THREE.Vector3(...props.sun.dir).normalize();
-		setSkySun(this.sky, sunDir);
+		this.sunDir.set(...props.sun.dir).normalize();
+		setSkySun(this.sky, this.sunDir);
 		this.setFrameTime(this.frame);
 		this.sky.uniforms.uCityDir.value.copy(this.cityDirection(props));
-		this.placeSun(sunDir, gltf.scene);
+		setSkyMoon(this.sky, this.sky.uniforms.uCityDir.value);
+		this.setupShadows();
+		this.applyMix();
 		this.bakeEnvironment();
 		this.resize(this.canvas.clientWidth || 1, this.canvas.clientHeight || 1);
 	}
@@ -161,12 +212,18 @@ export class CityHeroScene {
 		if (w <= 0 || h <= 0) return;
 		this.aspect = w / h;
 		this.renderer.setSize(w, h, false);
+		this.composer?.setSize(w, h);
 		this.updateProjection();
 	}
 
-	/** Day only for now; Task 7 adds the night mode. */
+	/**
+	 * Switch day/night: a cross-fade over FADE_S, instant with reducedMotion or
+	 * before load. The environment map is re-baked from the sky once the fade ends.
+	 */
 	setMode(mode: CityHeroMode): void {
 		this.mode = mode;
+		this.nightTarget = mode === 'night' ? 1 : 0;
+		if (this.opts.reducedMotion || !this.loadedRoot) this.stepNight(Infinity);
 	}
 
 	getMode(): CityHeroMode {
@@ -204,8 +261,7 @@ export class CityHeroScene {
 	/** COLOR_0 carries the baked AO; make sure every material that has it uses it. */
 	private prepareMaterials(root: THREE.Object3D): void {
 		const castShadows = !this.opts.mobile;
-		const plaza = this.plazaCentre(root);
-		const shadowSphere = new THREE.Sphere(plaza, SHADOW_HALF_SIZE * Math.SQRT2);
+		const shadowSphere = new THREE.Sphere(this.plaza, SHADOW_HALF_SIZE * Math.SQRT2);
 		const bounds = new THREE.Sphere();
 		root.traverse((obj) => {
 			const mesh = obj as THREE.Mesh;
@@ -236,9 +292,9 @@ export class CityHeroScene {
 	}
 
 	/** The well (props.well_water) marks the plaza; fall back to the first walk path's centre. */
-	private plazaCentre(root: THREE.Object3D): THREE.Vector3 {
+	private plazaCentre(root: THREE.Object3D, centre: THREE.Vector3): THREE.Vector3 {
 		root.updateMatrixWorld(true);
-		const centre = new THREE.Vector3();
+		centre.set(0, 0, 0);
 		const water = this.loadedProps && root.getObjectByName(this.loadedProps.well_water);
 		if (water) return new THREE.Box3().setFromObject(water).getCenter(centre);
 		const ring = this.loadedProps?.walk_paths[0] ?? [];
@@ -254,11 +310,14 @@ export class CityHeroScene {
 		return dir.lengthSq() > 1e-6 ? dir.normalize() : new THREE.Vector3(0, 0, -1);
 	}
 
-	private placeSun(sunDir: THREE.Vector3, root: THREE.Object3D): void {
-		const centre = this.plazaCentre(root);
-		this.sun.position.copy(centre).addScaledVector(sunDir, SHADOW_LIGHT_DISTANCE);
-		this.sun.target.position.copy(centre);
+	/** Aim the light at the plaza from `dir` (sun by day, moon by night). */
+	private placeLight(dir: THREE.Vector3): void {
+		this.sun.position.copy(this.plaza).addScaledVector(dir, SHADOW_LIGHT_DISTANCE);
+		this.sun.target.position.copy(this.plaza);
 		this.sun.target.updateMatrixWorld();
+	}
+
+	private setupShadows(): void {
 		if (this.opts.mobile) return;
 
 		this.sun.castShadow = true;
@@ -274,6 +333,69 @@ export class CityHeroScene {
 		cam.updateProjectionMatrix();
 	}
 
+	/** Advance the day/night fade by `delta` seconds; re-bake the environment when it lands. */
+	private stepNight(delta: number): void {
+		if (this.night === this.nightTarget) return;
+		this.night = fadeToward(this.night, this.nightTarget, delta);
+		this.applyMix();
+		if (this.night === this.nightTarget && this.loadedRoot) this.bakeEnvironment();
+	}
+
+	/** Apply mixMode(night) to the light, environment, night list, sky, exposure and bloom. */
+	private applyMix(): void {
+		const t = this.night;
+		const mix = mixMode(t);
+
+		this.sun.intensity = (SUN_INTENSITY * mix.sun) / DAY_MIX.sun;
+		this.sun.color.lerpColors(this.sunColor, this.moonColor, t);
+		const dir = new THREE.Vector3().lerpVectors(this.sunDir, this.sky.uniforms.uMoonDir.value, t);
+		this.placeLight(dir.lengthSq() > 1e-6 ? dir.normalize() : this.sunDir);
+
+		this.updateEnvIntensity(mix.ambient);
+		for (const { material, emissive } of this.nightMaterials) {
+			material.emissive.setRGB(emissive[0], emissive[1], emissive[2]);
+			material.emissiveIntensity = emissive[3] * mix.emissive;
+		}
+		this.sky.setMix(t);
+		this.renderer.toneMappingExposure = mix.exposure;
+
+		const strength = mix.bloom * (this.opts.mobile ? BLOOM_MOBILE_SCALE : 1);
+		if (strength > 0) this.ensureComposer().strength = strength;
+		else if (this.bloomPass) this.bloomPass.strength = 0;
+	}
+
+	/** Bloom path, built on first use: scene → bloom → output (tone mapping + sRGB). */
+	private ensureComposer(): UnrealBloomPass {
+		if (this.bloomPass) return this.bloomPass;
+		const size = this.renderer.getSize(new THREE.Vector2());
+		const ratio = this.renderer.getPixelRatio();
+		const target = new THREE.WebGLRenderTarget(size.x * ratio, size.y * ratio, {
+			type: THREE.HalfFloatType,
+			samples: this.opts.mobile ? 0 : BLOOM_SAMPLES
+		});
+		const composer = new EffectComposer(this.renderer, target);
+		composer.setPixelRatio(ratio);
+		composer.setSize(size.x, size.y);
+		const bloom = new UnrealBloomPass(size.clone(), 0, BLOOM_RADIUS, BLOOM_THRESHOLD);
+		composer.addPass(new RenderPass(this.scene, this.camera));
+		composer.addPass(bloom);
+		composer.addPass(new OutputPass());
+		this.composer = composer;
+		this.bloomPass = bloom;
+		return bloom;
+	}
+
+	private draw(delta: number): void {
+		this.renderer.info.reset();
+		if (this.composer && this.bloomPass && this.bloomPass.strength > 0) {
+			// The camera can be swapped by load(); keep the render pass on the current one.
+			(this.composer.passes[0] as RenderPass).camera = this.camera;
+			this.composer.render(delta);
+		} else {
+			this.renderer.render(this.scene, this.camera);
+		}
+	}
+
 	/** Environment map from a sky-only scene (reflections and ambient light). */
 	private bakeEnvironment(): void {
 		const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -284,7 +406,13 @@ export class CityHeroScene {
 		this.envTarget?.dispose();
 		this.envTarget = target;
 		this.scene.environment = target.texture;
-		this.scene.environmentIntensity = ENV_INTENSITY;
+		this.envGain = THREE.MathUtils.lerp(1, NIGHT_ENV_GAIN, this.night);
+		this.updateEnvIntensity(mixMode(this.night).ambient);
+	}
+
+	/** Env strength: mixMode's ambient level (relative to day) times the current bake's gain. */
+	private updateEnvIntensity(ambient: number): void {
+		this.scene.environmentIntensity = ENV_INTENSITY * ambient * this.envGain;
 	}
 
 	private tick = (timestamp: number): void => {
@@ -304,8 +432,9 @@ export class CityHeroScene {
 
 		if (!this.opts.reducedMotion) this.skyTime += delta;
 		this.sky.update(this.skyTime);
+		this.stepNight(delta);
 
-		this.renderer.render(this.scene, this.camera);
+		this.draw(delta);
 		this.animationFrameId = requestAnimationFrame(this.tick);
 	};
 
@@ -328,6 +457,8 @@ export class CityHeroScene {
 		if (this.loadedRoot) disposeObject(this.loadedRoot);
 		this.sky.dispose();
 		this.envTarget?.dispose();
+		for (const pass of this.composer?.passes ?? []) pass.dispose();
+		this.composer?.dispose();
 		this.scene.clear();
 		this.scene.environment = null;
 		this.renderer.dispose();
@@ -342,6 +473,21 @@ function findCamera(node: THREE.Object3D | undefined): THREE.PerspectiveCamera |
 		}
 	});
 	return found;
+}
+
+/** Every distinct NIGHT_ standard material under `root`, with its night emissive. */
+function collectNightMaterials(root: THREE.Object3D): NightMaterial[] {
+	const found = new Map<THREE.Material, NightMaterial>();
+	root.traverse((obj) => {
+		const mesh = obj as THREE.Mesh;
+		if (!mesh.isMesh) return;
+		for (const m of materialsOf(mesh)) {
+			if (found.has(m) || !(m as THREE.MeshStandardMaterial).isMeshStandardMaterial) continue;
+			const emissive = nightEmissive(m);
+			if (emissive) found.set(m, { material: m as THREE.MeshStandardMaterial, emissive });
+		}
+	});
+	return [...found.values()];
 }
 
 function materialsOf(mesh: THREE.Mesh): THREE.Material[] {

@@ -1,15 +1,42 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { CityHeroScene } from '$lib/city/CityHeroScene';
+	import type { CityHeroMode, CityHeroScene } from '$lib/city/CityHeroScene';
 
 	const GLB_URL = '/city/hero.glb';
 	const PROPS_URL = '/city/hero_props.json';
 	const STILL_URL = '/city/hero-still.webp';
+	/** localStorage key remembering the visitor's day/night choice. */
+	const MODE_KEY = 'city-mode';
+
+	/** The saved mode; day when nothing (or nothing readable) is stored. */
+	function readMode(): CityHeroMode {
+		try {
+			return localStorage.getItem(MODE_KEY) === 'night' ? 'night' : 'day';
+		} catch {
+			return 'day';
+		}
+	}
+
+	function saveMode(value: CityHeroMode): void {
+		try {
+			localStorage.setItem(MODE_KEY, value);
+		} catch {
+			// Storage blocked (private window, disabled site data): the choice just isn't remembered.
+		}
+	}
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let track: HTMLDivElement | undefined = $state();
 	/** True once the live scene has loaded; the still then fades out. */
 	let live = $state(false);
+	let mode: CityHeroMode = $state('day');
+	let scene: CityHeroScene | undefined;
+
+	function toggleMode(): void {
+		mode = mode === 'night' ? 'day' : 'night';
+		saveMode(mode);
+		scene?.setMode(mode);
+	}
 
 	/** Scroll progress 0..1 over the track (scrollToFrame clamps). */
 	function scrollProgress(): number {
@@ -18,7 +45,7 @@
 	}
 
 	onMount(() => {
-		let scene: CityHeroScene | undefined;
+		mode = readMode();
 		let disposed = false;
 
 		const onScroll = (): void => scene?.setScroll(scrollProgress());
@@ -41,6 +68,7 @@
 					reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 					mobile: window.matchMedia('(pointer: coarse)').matches
 				});
+				scene.setMode(mode);
 				if (import.meta.env.DEV) {
 					(window as unknown as { __cityHero?: CityHeroScene }).__cityHero = scene;
 				}
@@ -78,6 +106,15 @@
 	/>
 </div>
 <div class="track" bind:this={track}></div>
+<button
+	type="button"
+	class="mode"
+	class:night={mode === 'night'}
+	aria-pressed={mode === 'night'}
+	onclick={toggleMode}
+>
+	Night
+</button>
 
 <style>
 	/* Fixed behind the page: the layout's nav stays on top and clickable. */
@@ -113,5 +150,31 @@
 
 	.track {
 		height: 400vh;
+	}
+
+	/* Day/night toggle, bottom-right corner, above the fixed stage. */
+	.mode {
+		position: fixed;
+		right: 1rem;
+		bottom: 1rem;
+		z-index: 1;
+		padding: 0.5rem 1rem;
+		border: 1px solid rgb(255 255 255 / 0.6);
+		border-radius: 999px;
+		background: rgb(20 30 50 / 0.55);
+		color: #fff;
+		font: inherit;
+		cursor: pointer;
+		backdrop-filter: blur(4px);
+	}
+
+	.mode.night {
+		background: rgb(255 214 150 / 0.85);
+		color: #1a1a2e;
+	}
+
+	.mode:focus-visible {
+		outline: 2px solid #fff;
+		outline-offset: 2px;
 	}
 </style>
