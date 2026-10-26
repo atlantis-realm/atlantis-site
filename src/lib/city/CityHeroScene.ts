@@ -1,6 +1,7 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
-// sky and the day/night cross-fade (night.ts) with bloom. Follows the
+// sky, the day/night cross-fade (night.ts) with bloom, and the circling
+// blimps (blimps.ts). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -22,6 +23,7 @@ import {
 import { loadProps, type HeroProps } from './props.ts';
 import { createSky, setSkyMoon, setSkySun, type Sky } from './sky.ts';
 import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
+import { createBlimps, updateBlimps } from './blimps.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -101,6 +103,7 @@ export class CityHeroScene {
 	private nightMaterials: NightMaterial[] = [];
 	private composer: EffectComposer | null = null;
 	private bloomPass: UnrealBloomPass | null = null;
+	private blimps: THREE.InstancedMesh | null = null;
 	private camera: THREE.PerspectiveCamera;
 	private mixer: THREE.AnimationMixer | null = null;
 	private action: THREE.AnimationAction | null = null;
@@ -113,7 +116,8 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
-	private skyTime = 0;
+	/** Clock of the moving things (clouds, blimps); frozen with reducedMotion. */
+	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
 	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
 	private night = 0;
@@ -198,6 +202,9 @@ export class CityHeroScene {
 		this.sky.uniforms.uCityDir.value.copy(this.cityDirection(props));
 		setSkyMoon(this.sky, this.sky.uniforms.uCityDir.value);
 		this.setupShadows();
+		this.blimps = createBlimps(props.blimps);
+		this.scene.add(this.blimps);
+		this.updateMotion();
 		this.applyMix();
 		this.bakeEnvironment();
 		this.resize(this.canvas.clientWidth || 1, this.canvas.clientHeight || 1);
@@ -396,6 +403,13 @@ export class CityHeroScene {
 		}
 	}
 
+	/** Clouds and blimps at motionTime. */
+	private updateMotion(): void {
+		this.sky.update(this.motionTime);
+		const props = this.loadedProps;
+		if (this.blimps && props) updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
+	}
+
 	/** Environment map from a sky-only scene (reflections and ambient light). */
 	private bakeEnvironment(): void {
 		const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -430,8 +444,8 @@ export class CityHeroScene {
 			this.updateProjection();
 		}
 
-		if (!this.opts.reducedMotion) this.skyTime += delta;
-		this.sky.update(this.skyTime);
+		if (!this.opts.reducedMotion) this.motionTime += delta;
+		this.updateMotion();
 		this.stepNight(delta);
 
 		this.draw(delta);
@@ -455,6 +469,7 @@ export class CityHeroScene {
 		this.timer.disconnect();
 		this.mixer?.stopAllAction();
 		if (this.loadedRoot) disposeObject(this.loadedRoot);
+		if (this.blimps) disposeObject(this.blimps);
 		this.sky.dispose();
 		this.envTarget?.dispose();
 		for (const pass of this.composer?.passes ?? []) pass.dispose();
