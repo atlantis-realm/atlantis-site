@@ -1,7 +1,8 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
-// blimps (blimps.ts) and the well's water (water.ts). Follows the
+// blimps (blimps.ts), the well's water (water.ts) and walking people
+// (people.ts). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -25,6 +26,13 @@ import { createSky, setSkyMoon, setSkySun, type Sky } from './sky.ts';
 import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
 import { createBlimps, updateBlimps } from './blimps.ts';
 import { applyWater, setWaterLights, setWaterNight, setWaterTime, waterLights } from './water.ts';
+import {
+	PEOPLE_PER_PATH,
+	PEOPLE_PER_PATH_MOBILE,
+	WALK_SPEED,
+	createPeople,
+	type People
+} from './people.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -105,6 +113,7 @@ export class CityHeroScene {
 	private composer: EffectComposer | null = null;
 	private bloomPass: UnrealBloomPass | null = null;
 	private blimps: THREE.InstancedMesh | null = null;
+	private people: People | null = null;
 	/** The well's water material (water.ts), null when the glb has no props.well_water mesh. */
 	private water: THREE.Material | null = null;
 	private camera: THREE.PerspectiveCamera;
@@ -119,7 +128,7 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
-	/** Clock of the moving things (clouds, blimps, water); frozen with reducedMotion. */
+	/** Clock of the moving things (clouds, blimps, water, people); frozen with reducedMotion. */
 	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
 	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
@@ -210,6 +219,13 @@ export class CityHeroScene {
 		this.setupShadows();
 		this.blimps = createBlimps(props.blimps);
 		this.scene.add(this.blimps);
+		this.people = createPeople(props.walk_paths, {
+			perPath: this.opts.mobile ? PEOPLE_PER_PATH_MOBILE : PEOPLE_PER_PATH,
+			speed: WALK_SPEED
+		});
+		// Small casters near the camera; the shadow map only covers the plaza anyway.
+		this.people.mesh.castShadow = this.people.mesh.receiveShadow = !this.opts.mobile;
+		this.scene.add(this.people.mesh);
 		this.updateMotion();
 		this.applyMix();
 		this.bakeEnvironment();
@@ -410,10 +426,11 @@ export class CityHeroScene {
 		}
 	}
 
-	/** Clouds, blimps and water at motionTime. */
+	/** Clouds, blimps, water and people at motionTime. */
 	private updateMotion(): void {
 		this.sky.update(this.motionTime);
 		if (this.water) setWaterTime(this.water, this.motionTime);
+		this.people?.update(this.motionTime);
 		const props = this.loadedProps;
 		if (this.blimps && props) updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
 	}
@@ -478,6 +495,7 @@ export class CityHeroScene {
 		this.mixer?.stopAllAction();
 		if (this.loadedRoot) disposeObject(this.loadedRoot);
 		if (this.blimps) disposeObject(this.blimps);
+		if (this.people) disposeObject(this.people.mesh);
 		this.sky.dispose();
 		this.envTarget?.dispose();
 		for (const pass of this.composer?.passes ?? []) pass.dispose();
