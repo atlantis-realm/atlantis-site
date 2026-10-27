@@ -287,7 +287,7 @@ Final budget, measured on `/city` with the whole page running (blimps, water, pe
 
 | What | Budget | Measured |
 |---|---|---|
-| `hero.glb` + `hero_props.json` | ≤ 10 MB | 5,203,440 + 8,928 bytes = 4.97 MiB |
+| `hero.glb` + `hero_props.json` | ≤ 10 MB | 4,032,916 + 41,705 bytes = 3.89 MiB |
 | `stats()` draw calls, whole frame, day | ≤ 300 | 69–71 (frame 250) to 258 (peak), at 1280×720 and 390×844 |
 | `stats()` draw calls, whole frame, night | ≤ 300 | 83–94 (frame 250) to 272 (peak) |
 | `stats()` triangles, whole frame | ≤ 1.5 M | 1,000,957 (frame 250) to 1,090,092 |
@@ -466,7 +466,7 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
 
   | Variant | Main set | Swapped | Attachments | Triangles |
   |---|---|---|---|---|
-  | `ROBOT_V0` | `Base(A)_M_` | | jetpack, module 02 on the thighs | 4,452 |
+  | `ROBOT_V0` | `Base(A)_M_` | | jetpack, module 02 on the shoulders | 4,452 |
   | `ROBOT_V1` | `Base_S_` | | jetpack, module 00 on the thighs | 3,428 |
   | `ROBOT_V2` | `Base(A)_L_` | torso `Base(A)_M_`, leg `Base_S_` | armour 02 on the elbows | 3,388 |
   | `ROBOT_V3` | `Base(A)_S_` | | armour 02 on the elbows | 3,430 |
@@ -514,11 +514,15 @@ give the same bytes.
 
 On the page (`src/lib/city/robot.ts`) `ROBOT_COUNT` (2; set it to 1 for a single robot) robots cross the
 view on the export's `robot_routes` (see "Robot routes"; none without them). Each is a skeleton clone of the
-glb with its own material (the palette offset) showing one variant mesh at a time. A pass: pick a route no
-other robot is on, preferring one the camera sees at the current frame (a `view` sample within
-`ROUTE_VIEW_SLACK` 5 frames, `pickRoute`), a direction (its points as stored, screen left to right, or
-reversed), a variant and a palette (`pickIndex`: not its own last ones nor the other robot's), all from
-`mulberry32(ROBOT_SEED + i)`; then it walks the route from end to end (both ends are hidden) at the variant's
+glb with its own material (the palette offset) showing one variant mesh at a time. A pass: a variant and a
+palette (`pickIndex`: not its own last ones nor the other robot's), a direction (its points as stored, screen
+left to right, or reversed) and a free route, preferring one the camera sees at the current frame (a `view`
+sample within `ROUTE_VIEW_SLACK` 5 frames) and weighted by nearness to the camera (`routeWeight`: 1 / d² of
+its nearest point, `ROUTE_NEAR_POWER` 2, so `street_57` beats each far route about 30 to 1; `pickRoute`), all
+from `mulberry32(ROBOT_SEED + i)`. A route the other robot is on is free when, setting off then or after a
+hidden wait of up to `ROBOT_FOLLOW_WAIT` (12 s, in 0.5 s steps), this one stays `ROBOT_FOLLOW_GAP` (12 m)
+from it all along (`passesApart`: following it the same way, or on only once it is off for the other way);
+then it walks the route from end to end (both ends are hidden) at the variant's
 `walk_cycle_m / walk_duration_s`, on the polyline's ground (riding the 0.6 m kerb on `street_57`), its
 heading the chord ±`ROBOT_TURN_LOOK` 1.5 m so it turns smoothly round the ring arcs (`routePose`). The paused
 `walk` clip's time follows the distance walked at the variant's stride (`robotWalkTime`), driven by the
@@ -527,9 +531,14 @@ scene clock like the people (frozen with reduced motion). Off the far end it is 
 the two don't set off together. At night the palette glows at `ROBOT_NIGHT_GLOW` 0.15 so it reads against
 the dark trees. Without `robot.glb` or a version-2 `robot_meta.json` there is no robot (`loadRobotAsset`,
 tested). Each robot adds 2 draw calls (main + shadow) and up to 4,452 triangles each; with both at 2893×1271
-(desktop, shadows) the page peaks at 253 draw calls by day, 269 by night, and 1.458 M triangles. In v05 a
+(desktop, shadows) the page peaks at 253 draw calls by day, 269 by night, and 1.458 M triangles (with both
+on `street_57` at frame 53, 2908×1215: 254 / 268 calls, 1.432 M triangles). In v05 a
 pass takes 18–23 s; `street_57` passes about 70 m from the camera (a robot about 70 px tall at 720p), the
-other four 370–420 m out (about 12 px).
+other four 370–420 m out (about 12 px, too small to tell the variants apart), hence the weighting: simulated
+over 100 min at a frame that sees all five, 71% of the robots shown are on `street_57`, both robots are on it
+together 29% of the time and neither 7%, and passes go either way about equally. No route is in view before
+frame 96 (the first ~60% of the scroll), where the camera looks down into the well and at its stepped rim:
+there is no avenue or street in the frame to cross.
 
 The pack's licence allows its use in projects but not redistributing it as a standalone asset. Like the
 people, `robot.glb` and `robot_meta.json` are git-ignored until the user approves the look.

@@ -136,6 +136,8 @@ export class CityHeroScene {
 	private readonly moonColor = new THREE.Color(MOON_COLOR);
 	private readonly sunDir = new THREE.Vector3(0, 1, 0);
 	private readonly plaza = new THREE.Vector3();
+	/** The camera's world position, for the robots' route weights. */
+	private readonly eye = new THREE.Vector3();
 	private nightMaterials: NightMaterial[] = [];
 	private composer: EffectComposer | null = null;
 	private bloomPass: UnrealBloomPass | null = null;
@@ -497,12 +499,18 @@ export class CityHeroScene {
 		}
 	}
 
-	/** Clouds, blimps, water, people and the robots at motionTime (new robot routes picked in view at the frame). */
+	/**
+	 * Clouds, blimps, water, people and the robots at motionTime (new robot
+	 * routes picked in view at the frame, the near ones most).
+	 */
 	private updateMotion(): void {
 		this.sky.update(this.motionTime);
 		if (this.water) setWaterTime(this.water, this.motionTime);
 		this.people?.update(this.motionTime);
-		this.robot?.update(this.motionTime, this.frame);
+		if (this.robot) {
+			const eye = this.camera.getWorldPosition(this.eye);
+			this.robot.update(this.motionTime, this.frame, [eye.x, eye.y, eye.z]);
+		}
 		const props = this.loadedProps;
 		if (this.blimps && props)
 			updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);

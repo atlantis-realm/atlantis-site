@@ -3,14 +3,16 @@
 // strip of palettes) walking across the view on the export's robot routes
 // (hero_props.json `robot_routes`: the ring avenue and cross streets that cross
 // the hero avenue, hidden at both ends). Each pass a robot picks a free route,
-// one the camera sees at the current frame if it can, walks it end to end, screen
-// left to right or back, then is hidden for a moment (ROBOT_RESPAWN_GAP) and
-// comes back as a freshly rolled robot: another variant mesh and palette. The
-// picks are seeded per robot (mulberry32), so a given scroll history replays the
-// same. Unlike the people's stepped morph walk, its walk is played smoothly: the
-// clip time follows the distance walked at the variant's stride, so its feet
-// don't skate. At night its palette glows faintly (ROBOT_NIGHT_GLOW), so it
-// doesn't sink into the dark trees behind it.
+// one the camera sees at the current frame if it can, the near ones far more
+// often (routeWeight: the far crossings are specks), walks it end to end, screen
+// left to right or back (two may share a route, ROBOT_FOLLOW_GAP apart, one
+// waiting hidden a little if need be), then is hidden for a moment
+// (ROBOT_RESPAWN_GAP) and comes back as a freshly rolled robot: another variant
+// mesh and palette. The picks are seeded per robot (mulberry32), so a given
+// scroll history replays the same. Unlike the people's stepped morph walk, its
+// walk is played smoothly: the clip time follows the distance walked at the
+// variant's stride, so its feet don't skate. At night its palette glows faintly
+// (ROBOT_NIGHT_GLOW), so it doesn't sink into the dark trees behind it.
 
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
@@ -23,6 +25,19 @@ export const ROBOT_COUNT = 2;
 export const ROBOT_SEED = 0x60b07;
 /** A route is in view when one of its `view` sample frames is within this many frames (the export samples every 5). */
 export const ROUTE_VIEW_SLACK = 5;
+/** Route weight falls off as the distance (m) from the camera to its nearest point to this power (2: screen area). */
+export const ROUTE_NEAR_POWER = 2;
+/** Distances (m) below this weigh as this (the camera never stands on a route). */
+export const ROUTE_NEAR_MIN = 10;
+/** Two robots may share a route walking the same way at least this far (m) apart all along. */
+export const ROBOT_FOLLOW_GAP = 12;
+/**
+ * A robot may wait hidden up to this long (s) for a route another robot is on
+ * to clear (ROBOT_FOLLOW_GAP behind it, or off it before a head-on), tried in
+ * steps of ROBOT_FOLLOW_WAIT_STEP; past that the route counts as busy.
+ */
+export const ROBOT_FOLLOW_WAIT = 12;
+export const ROBOT_FOLLOW_WAIT_STEP = 0.5;
 /** Hidden pause (s) between a robot leaving a route and the next robot coming in: [min, max]. */
 export const ROBOT_RESPAWN_GAP: [number, number] = [0.5, 3];
 /** The heading is the chord from this far (m) behind to this far ahead, so it turns smoothly round the ring arcs. */
@@ -74,10 +89,14 @@ export type RobotState = {
 	distance: number;
 };
 
-/** update(t, frame) walks every robot to time t (s), picking new routes in view at camera frame `frame`. */
+/**
+ * update(t, frame, eye) walks every robot to time t (s), picking new routes in
+ * view at camera frame `frame`, weighted by nearness to `eye` (the camera's
+ * world position; without it every route weighs the same).
+ */
 export type Robots = {
 	object: THREE.Group;
-	update(t: number, frame: number): void;
+	update(t: number, frame: number, eye?: Vec3): void;
 	state(): RobotState[];
 	setNight(level: number): void;
 	dispose(): void;
@@ -116,20 +135,57 @@ export function routeInView(route: RobotRoute, frame: number): boolean {
 }
 
 /**
+ * How strongly to prefer `route` seen from `eye`: 1 / d^ROUTE_NEAR_POWER, d the
+ * distance to its nearest point (at least ROUTE_NEAR_MIN), so a crossing 70 m
+ * out beats one 380 m out about 30 to 1, as its robot covers ~30x the screen.
+ */
+export function routeWeight(route: RobotRoute, eye: Vec3): number {
+	const d = Math.min(...route.points.map((p) => dist(p, eye)));
+	return Math.max(d, ROUTE_NEAR_MIN) ** -ROUTE_NEAR_POWER;
+}
+
+/**
  * A random route index: among the routes not `busy` (all of them if every one
- * is), the ones in view at `frame` if any.
+ * is), the ones in view at `frame` if any; weighted by routeWeight from `eye`
+ * when given, else evenly.
  */
 export function pickRoute(
 	routes: RobotRoute[],
 	frame: number,
 	rand: () => number,
-	busy: Set<number>
+	busy: Set<number>,
+	eye?: Vec3
 ): number {
 	let free = routes.map((_, k) => k).filter((k) => !busy.has(k));
 	if (!free.length) free = routes.map((_, k) => k);
 	const seen = free.filter((k) => routeInView(routes[k], frame));
 	const pool = seen.length ? seen : free;
-	return pool[Math.floor(rand() * pool.length)];
+	const weights = pool.map((k) => (eye ? routeWeight(routes[k], eye) : 1));
+	let r = rand() * weights.reduce((a, b) => a + b, 0);
+	for (let k = 0; k < pool.length; k++) if ((r -= weights[k]) < 0) return pool[k];
+	return pool[pool.length - 1];
+}
+
+/** A pass's timing on its route: set off at `start` (s) at `speed` (m/s), `length` m, reversed or not. */
+export type PassSlot = { start: number; speed: number; length: number; reversed: boolean };
+
+/**
+ * Whether two passes of the same route stay at least `gap` m apart while both
+ * are on it (either way round, so a head-on pair fails unless one is off before
+ * the other is on). Their separation is linear in time, so its two ends decide.
+ */
+export function passesApart(a: PassSlot, b: PassSlot, gap: number): boolean {
+	const end = (p: PassSlot): number => p.start + p.length / p.speed;
+	const at = (p: PassSlot, t: number): number => {
+		const s = (t - p.start) * p.speed;
+		return p.reversed ? p.length - s : s;
+	};
+	const lo = Math.max(a.start, b.start);
+	const hi = Math.min(end(a), end(b));
+	if (lo > hi) return true;
+	const d0 = at(a, lo) - at(b, lo);
+	const d1 = at(a, hi) - at(b, hi);
+	return Math.sign(d0) === Math.sign(d1) && Math.min(Math.abs(d0), Math.abs(d1)) >= gap;
 }
 
 /** A random index in [0, n), not one of `avoid` unless that leaves none. */
@@ -179,17 +235,13 @@ export async function loadRobotAsset(
 	}
 }
 
-/** A route walked one way: its points in walking order and length. */
-type Pass = {
+/** A route walked one way: its points in walking order and length; `start` (s) it sets off from the first point. */
+type Pass = PassSlot & {
 	route: number;
-	reversed: boolean;
 	points: Vec3[];
-	length: number;
 	variant: number;
 	palette: number;
-	speed: number;
-	/** Time (s) it sets off from the first point, and reaches the last. */
-	start: number;
+	/** Time (s) it reaches the last point. */
 	end: number;
 };
 
@@ -269,12 +321,20 @@ export function createRobots(
 		});
 	}
 
-	/** Robot i's next pass, setting off at `start` (the first: `lead` of the way along already). */
-	const plan = (i: number, start: number, frame: number, lead = 0): Pass => {
+	const lengths = routes.map((r) => {
+		let length = 0;
+		for (let k = 1; k < r.points.length; k++) length += dist(r.points[k - 1], r.points[k]);
+		return length;
+	});
+	/**
+	 * Robot i's next pass, setting off at `start` (the first: `lead` of the way
+	 * along already) in a random direction. A route another robot is on is free
+	 * if, setting off then or after a hidden wait of up to ROBOT_FOLLOW_WAIT, it
+	 * keeps ROBOT_FOLLOW_GAP from it all along (passesApart).
+	 */
+	const plan = (i: number, start: number, frame: number, eye?: Vec3, lead = 0): Pass => {
 		const w = walkers[i];
 		const others = walkers.filter((x, k) => k !== i && x.pass).map((x) => x.pass!);
-		const route = pickRoute(routes, frame, w.rand, new Set(others.map((p) => p.route)));
-		const reversed = w.rand() < 0.5;
 		const variant = pickIndex(variants.length, w.rand, [
 			...(w.pass ? [w.pass.variant] : []),
 			...others.map((p) => p.variant)
@@ -283,11 +343,27 @@ export function createRobots(
 			...(w.pass ? [w.pass.palette] : []),
 			...others.map((p) => p.palette)
 		]);
-		const points = reversed ? [...routes[route].points].reverse() : routes[route].points;
-		let length = 0;
-		for (let k = 1; k < points.length; k++) length += dist(points[k - 1], points[k]);
 		const speed = variants[variant].walk_cycle_m / meta.walk_duration_s;
-		const begin = start - (lead * length) / speed;
+		const reversed = w.rand() < 0.5;
+		const slot = (k: number, wait: number): PassSlot => ({
+			start: start + wait - (lead * lengths[k]) / speed,
+			speed,
+			length: lengths[k],
+			reversed
+		});
+		const clear = (k: number, wait: number): boolean =>
+			others.every((o) => o.route !== k || passesApart(o, slot(k, wait), ROBOT_FOLLOW_GAP));
+		// Per route, the shortest hidden wait that keeps clear of the robots on it (-1: none within ROBOT_FOLLOW_WAIT).
+		const waits = routes.map((_, k) => {
+			for (let wait = 0; wait <= ROBOT_FOLLOW_WAIT; wait += ROBOT_FOLLOW_WAIT_STEP)
+				if (clear(k, wait)) return wait;
+			return -1;
+		});
+		const busy = new Set(routes.map((_, k) => k).filter((k) => waits[k] < 0));
+		const route = pickRoute(routes, frame, w.rand, busy, eye);
+		const points = reversed ? [...routes[route].points].reverse() : routes[route].points;
+		const length = lengths[route];
+		const begin = slot(route, Math.max(waits[route], 0)).start;
 		return {
 			route,
 			reversed,
@@ -304,16 +380,18 @@ export function createRobots(
 		ROBOT_RESPAWN_GAP[0] + w.rand() * (ROBOT_RESPAWN_GAP[1] - ROBOT_RESPAWN_GAP[0]);
 
 	let last = -Infinity;
-	const update = (t: number, frame: number): void => {
+	const update = (t: number, frame: number, eye?: Vec3): void => {
 		if (t < last) for (const w of walkers) w.pass = null; // the clock went back: start afresh
 		last = t;
 		walkers.forEach((w, i) => {
 			// The first pass starts part of the way along, so the robots don't all set off together.
-			if (!w.pass) w.pass = plan(i, t, frame, w.rand());
+			if (!w.pass) w.pass = plan(i, t, frame, eye, w.rand());
 			let n = 0;
 			while (t >= w.pass.end) {
 				w.pass =
-					++n > MAX_PASSES_PER_UPDATE ? plan(i, t, frame) : plan(i, w.pass.end + gap(w), frame);
+					++n > MAX_PASSES_PER_UPDATE
+						? plan(i, t, frame, eye)
+						: plan(i, w.pass.end + gap(w), frame, eye);
 			}
 			const p = w.pass;
 			const shown = t >= p.start;

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
 	ROBOT_COUNT,
+	ROBOT_FOLLOW_GAP,
+	ROBOT_FOLLOW_WAIT,
 	ROBOT_NIGHT_GLOW,
 	ROBOT_RESPAWN_GAP,
 	ROBOT_TURN_LOOK,
@@ -11,8 +13,10 @@ import {
 	loadRobotAsset,
 	parseRobotMeta,
 	pickIndex,
+	passesApart,
 	pickRoute,
 	routeInView,
+	routeWeight,
 	routePose,
 	robotWalkTime,
 	type RobotMeta
@@ -124,6 +128,53 @@ test('pickRoute prefers routes in view, never a busy one while another is free',
 	assert.ok([0, 1, 2].includes(pickRoute(ROUTES, 70, rand, new Set([0, 1, 2]))));
 });
 
+test("routeWeight: nearer routes weigh more, by the square of their nearest point's distance", () => {
+	const [a, , c] = ROUTES; // nearest points 50 m and 320 m from the origin
+	const eye: Vec3 = [0, 0, 0];
+	assert.ok(Math.abs(routeWeight(a, eye) / routeWeight(c, eye) - (320 / 50) ** 2) < 1e-3);
+	// Measured to the nearest point, not the middle: 30 m along x from the end of street_a.
+	assert.ok(Math.abs(routeWeight(a, [50, 0.6, -50]) / routeWeight(a, [20, 0.6, -20]) - 1) < 1e-9);
+	// Standing on a route doesn't weigh it infinitely.
+	assert.ok(Number.isFinite(routeWeight(a, [0, 0, -50])));
+});
+
+test('pickRoute with an eye picks the near routes in view most, the far ones now and then', () => {
+	const counts = [0, 0, 0];
+	const rand = mulberry32(3);
+	for (let i = 0; i < 2000; i++) counts[pickRoute(ROUTES, 70, rand, new Set(), [0, 0, 0])]++;
+	// street_b is out of view at frame 70; street_a is 6.4x nearer than street_c: ~41x the weight.
+	assert.equal(counts[1], 0);
+	assert.ok(counts[0] > 1850 && counts[2] > 10, `${counts}`);
+	// A busy near route still leaves the far one; out of view (frame 200) the near one is still favoured.
+	for (let i = 0; i < 50; i++)
+		assert.equal(pickRoute(ROUTES, 70, rand, new Set([0]), [0, 0, 0]), 2);
+	const far = [0, 0, 0];
+	for (let i = 0; i < 500; i++) far[pickRoute(ROUTES, 200, rand, new Set(), [0, 0, 0])]++;
+	assert.ok(far[0] > far[1] && far[0] > far[2] && far[1] + far[2] > 0, `${far}`);
+});
+
+test('passesApart: two passes of one route keep ROBOT_FOLLOW_GAP between them while both are on it', () => {
+	const pass = (start: number, speed: number, reversed = false) => ({
+		start,
+		speed,
+		reversed,
+		length: 60
+	});
+	const G = ROBOT_FOLLOW_GAP;
+	// Same way, same speed: apart when the follower sets off once the leader is G on.
+	assert.ok(passesApart(pass(0, 3), pass(G / 3, 3), G));
+	assert.ok(passesApart(pass(G / 3 + 1, 3), pass(0, 3), G)); // either order
+	assert.ok(!passesApart(pass(0, 3), pass(G / 3 - 0.1, 3), G));
+	// A faster follower closes in before the leader is off the end.
+	assert.ok(!passesApart(pass(0, 2), pass(G / 2 + 1, 4), G));
+	// ... but not if the leader is off first: 60 m at 3 m/s ends at 20 s, the follower is 12 m back then.
+	assert.ok(passesApart(pass(0, 3), pass(10, 4.5), G));
+	// The other way they meet head on, unless one is off the route before the other is on.
+	assert.ok(!passesApart(pass(0, 3), pass(5, 3, true), G));
+	assert.ok(passesApart(pass(0, 3), pass(25, 3, true), G));
+	assert.ok(passesApart(pass(30, 3, true), pass(0, 3), G));
+});
+
 test('pickIndex avoids the given indices while it can', () => {
 	const rand = mulberry32(2);
 	const seen = new Set<number>();
@@ -214,8 +265,11 @@ test('createRobots: ROBOT_COUNT robots crossing on different routes, re-rolled e
 		const states = robots.state();
 		assert.equal(states.length, ROBOT_COUNT);
 		const live = states.filter((s) => s.visible);
-		// Two at once are never on the same route.
-		if (live.length === 2) assert.notEqual(live[0].route, live[1].route);
+		// Two at once on one route walk the same way, at least ROBOT_FOLLOW_GAP apart.
+		if (live.length === 2 && live[0].route === live[1].route) {
+			assert.equal(live[0].reversed, live[1].reversed);
+			assert.ok(Math.abs(live[0].distance - live[1].distance) >= ROBOT_FOLLOW_GAP - 1e-9);
+		}
 		states.forEach((s, i) => {
 			const clone = robots.object.children[i];
 			assert.equal(clone.visible, s.visible);
@@ -256,6 +310,33 @@ test('createRobots: ROBOT_COUNT robots crossing on different routes, re-rolled e
 		// A new pass never repeats the last pass's palette.
 		for (let k = 1; k < list.length; k++) assert.notEqual(list[k].palette, list[k - 1].palette);
 	}
+	robots.dispose();
+});
+
+test('createRobots with the eye: mostly on the near route, both ways, the two often on it at once, never too close', () => {
+	const { scene, animations } = fakeRobot();
+	const robots = createRobots(scene, animations, META, ROUTES, { shadows: false })!;
+	const ways = new Set<boolean>();
+	let near = 0;
+	let shown = 0;
+	let both = 0;
+	for (let t = 0; t < 1200; t += 0.5) {
+		robots.update(t, 70, [0, 0, 0]);
+		const live = robots.state().filter((s) => s.visible);
+		shown += live.length;
+		near += live.filter((s) => s.route === 'street_a').length;
+		for (const s of live) if (s.route === 'street_a') ways.add(s.reversed);
+		if (live.length === 2 && live.every((s) => s.route === 'street_a')) {
+			both++;
+			assert.equal(live[0].reversed, live[1].reversed);
+			assert.ok(Math.abs(live[0].distance - live[1].distance) >= ROBOT_FOLLOW_GAP - 1e-9);
+		}
+	}
+	// Far passes last longer here (street_c is 50 m, street_a 40 m), so the near share is a little lower than its picks.
+	assert.ok(near > 0.6 * shown, `${near} of ${shown} robot-steps on the near route`);
+	assert.ok(both > 200, `both on the near route for ${both} steps`);
+	// A robot waits hidden for the other rather than following it the same way every time.
+	assert.deepEqual([...ways].sort(), [false, true]);
 	robots.dispose();
 });
 
@@ -358,6 +439,10 @@ test('loadRobotAsset: no robot.glb or robot_meta.json, no robot (null, one warni
 	} finally {
 		console.warn = warn;
 	}
+});
+
+test('ROBOT_FOLLOW_WAIT is a short wait, under a near pass (56 m at ~3.2 m/s)', () => {
+	assert.ok(ROBOT_FOLLOW_WAIT > 0 && ROBOT_FOLLOW_WAIT < 56 / 3.2);
 });
 
 test('ROBOT_RESPAWN_GAP is a short hidden pause', () => {
