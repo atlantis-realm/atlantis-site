@@ -14,11 +14,14 @@ from people_cast import (  # noqa: E402
     ATLAS_ROWS,
     PEOPLE_VARIANTS,
     UNIFORM_SLOTS,
+    POSE_KEYS,
     WALK_KEYS,
     allowed,
     atlas_uv,
     key_phases,
     pick_variants,
+    solve_increasing,
+    two_bone,
     uniform_kind,
     walk_pose,
 )
@@ -98,6 +101,35 @@ class WalkTest(unittest.TestCase):
         for p in (4 / 6, 5 / 6):
             pose = walk_pose(p)
             self.assertGreater(pose["L"]["knee"], pose["R"]["knee"] + 15)
+
+
+class PoseTest(unittest.TestCase):
+    def test_pose_keys_follow_the_walk(self):
+        self.assertEqual(POSE_KEYS, ("sit", "lean"))
+
+    def test_two_bone_reaches_with_bone_lengths(self):
+        root, target, pole = (0.0, 0.0, 1.0), (0.3, 0.1, 0.6), (-1.0, 0.0, 0.0)
+        mid = two_bone(root, target, 0.3, 0.25, pole)
+        self.assertAlmostEqual(math.dist(root, mid), 0.3, places=9)
+        self.assertAlmostEqual(math.dist(mid, target), 0.25, places=9)
+
+    def test_two_bone_bends_toward_pole(self):
+        root, target = (0.0, 0.0, 1.0), (0.0, 0.0, 0.6)
+        for pole in ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+            mid = two_bone(root, target, 0.3, 0.25, pole)
+            self.assertGreater(sum(m * p for m, p in zip(mid, pole)), 0.1, (pole, mid))
+
+    def test_two_bone_out_of_reach_goes_straight(self):
+        root, target = (0.0, 0.0, 0.0), (0.0, 0.0, -2.0)
+        mid = two_bone(root, target, 0.3, 0.25, (1.0, 0.0, 0.0))
+        self.assertAlmostEqual(mid[2], -0.3, places=3)
+        self.assertLess(abs(mid[0]), 0.02)
+
+    def test_solve_increasing(self):
+        x = solve_increasing(lambda t: t * t, 0.0, 2.0, 2.0)
+        self.assertAlmostEqual(x, math.sqrt(2), places=4)
+        self.assertEqual(solve_increasing(lambda t: t, 0.0, 1.0, 5.0), 1.0)   # clamps to the range
+        self.assertEqual(solve_increasing(lambda t: t, 0.0, 1.0, -5.0), 0.0)
 
 
 class AtlasTest(unittest.TestCase):

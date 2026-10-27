@@ -189,6 +189,9 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
   -- "$PWD/build/people"                      # [out_dir] [assets=/run/media/.../Assets/People]
 node people_glb.mjs        # [in=build/people/people_raw.glb] [out=../../../static/city/people.glb]
 node --test test/people_glb.test.js   # skip when static/city/people.glb is absent
+# contact sheets of the sit and lean poses against a ledge and a wall (build/people/check_poses.py, git-ignored):
+flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/build/people/check_poses.py" \
+  -- "$PWD/build/people/people_raw.glb" "$PWD/build/people/people_meta.json" "$PWD/build/people/sheets"
 ```
 
 - **Cast** (`people_cast.py`, tested): `PEOPLE_VARIANTS = 12` from `Models/Rig` and `Extras_Rig`
@@ -204,18 +207,35 @@ node --test test/people_glb.test.js   # skip when static/city/people.glb is abse
   `KNEE_LOAD` 24° in early stance, feet kept level, arms ±`ARM_SWING` (18°) with a 12–26° elbow bend,
   hips/chest twist ±`SPINE_TWIST` (6°). Each key is grounded on its lowest vertex, so the hips bob
   0.7–3.3 cm, lowest at contact. The armature is deleted: the glb holds plain meshes with morph targets.
+- **Idle poses**: two static keys after the walk, `sit` (target 6) and `lean` (target 7), held still on
+  the page (`POSE_KEYS`). Limbs are placed with two-bone IK (`two_bone`, tested) on the rig. **Sit**: on a
+  ledge edge, thighs level, shins down, back `SIT_SPINE_FWD` (6°) forward, hands palm down on the thighs;
+  the thighs droop up to 15° to bring the seat contact to `SIT_SEAT_H` (0.45 m) above the soles, and the
+  short legs that can't reach it sit lower (0.37–0.45 m over the cast). The ledge edge is
+  `SIT_EDGE_CLEAR` (3 cm) behind the shins and feet (vertices weighted to them), the seat the lowest
+  point behind it, so nothing dips into the ledge. **Lean**: back to a wall, body tilted `LEAN_TILT` (7°)
+  back, the left foot flat, the right foot's sole flat on the wall with the ankle `LEAN_FOOT_H` (0.42 m)
+  up, hands in the front pockets (the wrist just inside the thigh's front, measured on the mesh). The
+  wall plane is the rearmost point of the upper body (head, back, buttocks).
 - **Atlas**: the 12 pack textures (`Textures/<image>.png`, 512 px, opaque, colours untouched) in a 4×3
   grid (2048×1536), UVs inset `ATLAS_INSET_PX` (4 px) per tile; saved as JPEG (`ATLAS_JPEG_QUALITY` 90:
   a PNG atlas alone is 3.4 MB). One material `PEOPLE_Atlas` (roughness 0.85, metallic 0).
 - **Outputs** (`build/people/`): `people_raw.glb` (meshes `PEOPLE_<file>`, facing glTF +Z, feet on
-  y = 0), `people_atlas.jpg`, `people_meta.json` `{version, keys, cycle_m, variants: [{name, height,
-  gender, kind, tile, cycle_m}]}`. `cycle_m` is metres per walk cycle (2 steps, twice the heel-to-heel
-  stride at contact): 1.12–1.52 per person, mean 1.327 (≈1.4 for a 1.75 m person). Two runs give
-  byte-identical files.
+  y = 0, origin under the rest hips; morph targets `walk_0`…`walk_5`, `sit`, `lean`), `people_atlas.jpg`,
+  `people_meta.json` `{version: 2, keys: 6, poses: {sit: 6, lean: 7}, cycle_m, variants: [{name, height,
+  gender, kind, tile, cycle_m, sit_seat_h, sit_edge, sit_reach, lean_back}]}`. `keys` counts the walk
+  keys only; `poses` gives each static pose's morph target index. `cycle_m` is metres per walk cycle (2
+  steps, twice the heel-to-heel stride at contact): 1.12–1.52 per person, mean 1.327 (≈1.4 for a 1.75 m
+  person). The pose measures are metres in the character's frame (forward = its facing):
+  `sit_seat_h` the seat contact above the soles (0.37–0.45), `sit_edge` the ledge edge forward of the
+  origin (0.25–0.35), `sit_reach` the feet/knees forward of that edge (0.28–0.33), `lean_back` the wall
+  behind the origin (0.15–0.23). To sit someone on a ledge whose front edge is at P (facing out over the
+  drop): origin = P − facing · `sit_edge`, y = ledge top − `sit_seat_h`; to lean someone on a wall whose
+  foot is at P (facing away): origin = P + facing · `lean_back`. Two runs give byte-identical files.
 
 `people_glb.mjs` runs `prune`, `quantize` (morph targets included) and `meshopt`, writes
-`static/city/people.glb` and copies `people_meta.json` beside it: 1.58 MB, 14,583 triangles for one of
-each person (about 1,200 each).
+`static/city/people.glb` and copies `people_meta.json` beside it: 1.83 MB (8 morph targets), 14,583
+triangles for one of each person (about 1,200 each).
 
 On the page (`src/lib/city/people.ts`) each variant is one InstancedMesh with the shared atlas material;
 walkers pick a variant by a seeded weighted draw (uniforms at `UNIFORM_WEIGHT` 0.5 against a civilian's 1)

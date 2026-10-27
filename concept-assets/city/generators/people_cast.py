@@ -5,6 +5,8 @@ uniform_kind()   Police, Firefighter, Doctor, HM (hazmat), Sheriff, or None for 
 pick_variants()  the PEOPLE_VARIANTS cast from the pack's rigged files, a fixed stride rule (no randomness),
                  so reruns pick the same people whatever order the folders list in.
 walk_pose()      joint angles (degrees) at a walk phase 0..1; key_phases() are the WALK_KEYS baked phases.
+two_bone()       the elbow/knee point of a two-bone limb reaching a target (the sit and lean poses).
+solve_increasing() bisection for the input of an increasing function that gives a target value.
 atlas_uv()       a variant's UV moved into its tile of the shared atlas, inset so mips don't bleed.
 
 Tests: python3 -m unittest discover -s test -p "test_*.py"
@@ -29,6 +31,23 @@ ARM_SWING = 18.0        # deg: arms counter-swing +-this (forward +)
 ELBOW_BASE = 12.0       # deg: elbow flex at all times
 ELBOW_SWING = 14.0      # deg: extra elbow flex with the arm forward
 SPINE_TWIST = 6.0       # deg: shoulders turn against the hips (about the vertical)
+
+# Static poses, baked as morph targets after the walk keys (walk_0..walk_5, then these): POSE_KEYS[i] is
+# target WALK_KEYS + i. The page holds them still (one key at 1), like the walk with no blending.
+POSE_KEYS = ("sit", "lean")
+# Sit: on a ledge edge, thighs level (knees SIT_KNEE_SPREAD m apart each side of the hips' line), shins
+# down, tilted forward as needed so the seat lands SIT_SEAT_H above the soles; back SIT_SPINE_FWD forward.
+SIT_SEAT_H = 0.45       # m: target seat contact above the feet (short people get what vertical shins give)
+SIT_SHIN_MAX = 35.0     # deg: most the shins tilt forward of vertical to bring the seat down
+SIT_KNEE_SPREAD = 0.04  # m: each knee out from its hip's line
+SIT_SPINE_FWD = 6.0     # deg: upper body forward of upright
+SIT_HAND_ALONG = 0.6    # hands on the thighs, this far from hip to knee
+SIT_EDGE_CLEAR = 0.03   # m: the ledge edge this far behind the calves (so the shins clear its face)
+# Lean: back to a wall, body tilted LEAN_TILT back, the right foot flat against the wall at LEAN_FOOT_H,
+# hands in the front pockets.
+LEAN_TILT = 7.0         # deg: whole body back from vertical, pivoting on the standing foot
+LEAN_FOOT_H = 0.42      # m: the raised (right) ankle above the ground
+LEAN_POCKET = (0.03, 0.04, 0.08)    # m: wrist inside the thigh's front, out from the hip joint, below it
 
 # Atlas: one 512 px tile per variant.
 TILE_PX = 512
@@ -92,6 +111,40 @@ def walk_pose(phase):
     pelvis yaw toward the forward leg (the chest takes -2x it, so the shoulders turn the other way)."""
     p = phase % 1.0
     return {"L": _side(p), "R": _side((p + 0.5) % 1.0), "twist": SPINE_TWIST * math.cos(2 * math.pi * p)}
+
+
+def _sub(a, b):
+    return tuple(x - y for x, y in zip(a, b))
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def two_bone(root, target, l1, l2, pole):
+    """Joint point (elbow or knee) of a limb root -> joint -> end with segment lengths l1, l2 whose end
+    reaches target, bending toward the pole direction. Out of reach, the limb points straight at target."""
+    d_vec = _sub(target, root)
+    d = math.sqrt(_dot(d_vec, d_vec))
+    u = tuple(x / d for x in d_vec)
+    d = min(max(d, abs(l1 - l2) + 1e-6), l1 + l2 - 1e-6)
+    a = (l1 * l1 - l2 * l2 + d * d) / (2 * d)
+    h = math.sqrt(max(0.0, l1 * l1 - a * a))
+    w = _sub(pole, tuple(x * _dot(pole, u) for x in u))   # the pole without its along-limb part
+    n = math.sqrt(_dot(w, w)) or 1.0
+    return tuple(r + a * ui + h * wi / n for r, ui, wi in zip(root, u, w))
+
+
+def solve_increasing(f, lo, hi, target, steps=40):
+    """x in [lo, hi] with f(x) = target for an increasing f, clamped to the ends."""
+    if f(lo) >= target:
+        return lo
+    if f(hi) <= target:
+        return hi
+    for _ in range(steps):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if f(mid) < target else (lo, mid)
+    return (lo + hi) / 2
 
 
 def _fold(t):

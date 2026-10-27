@@ -9,7 +9,10 @@ const SKIP = fs.existsSync(GLB) ? false : `no ${path.relative(process.cwd(), GLB
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const VARIANTS = 12, WALK_KEYS = 6;   // = PEOPLE_VARIANTS, WALK_KEYS in people_cast.py
+const POSES = { sit: 6, lean: 7 };    // POSE_KEYS in people_cast.py, morph targets after the walk keys
+const TARGETS = [...Array.from({ length: WALK_KEYS }, (_, i) => `walk_${i}`), "sit", "lean"];
 const HEIGHT = [1.4, 2.0];            // m
+const SIT_SEAT_H = 0.45;              // m, people_cast.py: the seat aimed for (short people sit lower)
 const EXCLUDED = /Killer|Monster|Exotic/i;
 
 let loaded;
@@ -54,17 +57,19 @@ test("12 PEOPLE_ meshes, none of them a Killer, Monster or Exotic_dancer", { ski
   }
 });
 
-test("every mesh has exactly WALK_KEYS morph targets (positions + normals)", { skip: SKIP }, async () => {
+test("every mesh has the walk keys then sit and lean as morph targets (positions + normals)", { skip: SKIP }, async () => {
   const { root } = await load();
-  for (const n of meshNodes(root))
+  for (const n of meshNodes(root)) {
+    assert.deepEqual(n.getMesh().getExtras().targetNames, TARGETS, n.getName());
     for (const p of n.getMesh().listPrimitives()) {
       const targets = p.listTargets();
-      assert.equal(targets.length, WALK_KEYS, n.getName());
+      assert.equal(targets.length, TARGETS.length, n.getName());
       for (const t of targets) {
         assert.ok(t.getAttribute("POSITION"), `${n.getName()} target lacks POSITION`);
         assert.ok(t.getAttribute("NORMAL"), `${n.getName()} target lacks NORMAL`);
       }
     }
+  }
 });
 
 test("one shared material with a baseColorTexture", { skip: SKIP }, async () => {
@@ -76,14 +81,16 @@ test("one shared material with a baseColorTexture", { skip: SKIP }, async () => 
   assert.equal(root.listTextures().length, 1);
 });
 
-test("each person 1.4-2.0 m tall with feet on y = 0, in every walk key", { skip: SKIP }, async () => {
+test("each person 1.4-2.0 m tall with feet on y = 0, in every walk key; lower when sitting", { skip: SKIP }, async () => {
   const { root } = await load();
   for (const n of meshNodes(root)) {
     const [prim] = n.getMesh().listPrimitives();
-    for (const t of [null, ...prim.listTargets()]) {
+    const targets = prim.listTargets();
+    for (const t of [null, ...targets]) {
       const [lo, hi] = worldY(n, prim, t);
       assert.ok(Math.abs(lo) <= 0.01, `${n.getName()}: feet at ${lo.toFixed(3)}`);
-      assert.ok(hi - lo >= HEIGHT[0] && hi - lo <= HEIGHT[1], `${n.getName()}: ${(hi - lo).toFixed(3)} m`);
+      if (t === targets[POSES.sit]) assert.ok(hi - lo >= 0.9 && hi - lo <= 1.6, `${n.getName()} sitting: ${(hi - lo).toFixed(3)} m`);
+      else assert.ok(hi - lo >= HEIGHT[0] && hi - lo <= HEIGHT[1], `${n.getName()}: ${(hi - lo).toFixed(3)} m`);
     }
   }
 });
@@ -94,4 +101,17 @@ test("people_meta.json matches the glb", { skip: SKIP }, async () => {
   assert.ok(meta.cycle_m > 1 && meta.cycle_m < 2, `cycle_m ${meta.cycle_m}`);
   assert.deepEqual(meta.variants.map((v) => "PEOPLE_" + v.name).sort(), meshNodes(root).map((n) => n.getName()).sort());
   for (const v of meta.variants) assert.ok(v.height >= HEIGHT[0] && v.height <= HEIGHT[1], `${v.name} ${v.height}`);
+});
+
+test("people_meta.json gives the pose keys and each variant's sit and lean measures", { skip: SKIP }, async () => {
+  const { meta } = await load();
+  assert.deepEqual(meta.poses, POSES);
+  for (const v of meta.variants) {
+    // Seat contact at or a little under SIT_SEAT_H above the soles; the edge ahead of the hips, the feet
+    // or knees past it; the wall a hand's breadth or two behind.
+    assert.ok(v.sit_seat_h >= 0.33 && v.sit_seat_h <= SIT_SEAT_H + 0.005, `${v.name} sit_seat_h ${v.sit_seat_h}`);
+    assert.ok(v.sit_edge >= 0.1 && v.sit_edge <= 0.5, `${v.name} sit_edge ${v.sit_edge}`);
+    assert.ok(v.sit_reach >= 0.15 && v.sit_reach <= 0.6, `${v.name} sit_reach ${v.sit_reach}`);
+    assert.ok(v.lean_back >= 0.08 && v.lean_back <= 0.35, `${v.name} lean_back ${v.lean_back}`);
+  }
 });
