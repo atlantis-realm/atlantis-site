@@ -174,16 +174,23 @@ level ground only if its surface is exported, level, not water and not a facade,
   surface, a wall or a railing's handrail; nothing at leg or shoulder height may stick out past it, and the
   ground `LEAN_FRONT` in front must be level and free (`hero_geom.lean_profile`). `pos` is on the ground at
   the wall foot, `heading` faces away from the wall.
+- **both**: the body must have room to either side (`IdleProbes.sides_clear`): rays `IDLE_SIDE_D` (0.3 m)
+  left and right, square to the facing (`hero_geom.side_dirs`), at `LEAN_SIDE_HS` (0.5, 1.0, 1.5 m) from
+  `LEAN_BODY_D` out of the wall, or at `SIT_SIDE_HS` (0.15, 0.5, 0.9 m above the seat) from `SIT_SEAT_IN`
+  behind the edge, must run free, and the ground (lean) or seat (sit) `IDLE_SIDE_D` to either side
+  (`hero_geom.side_points`) must be at the same level. This keeps leaners out of inside corners, where a
+  wall square to theirs would bury half the body.
 
 Kept spots are clear of the camera (`WALK_CAMERA_CLEARANCE` at the chest, every frame, as the walk paths),
-`IDLE_PATH_CLEARANCE` (1.2 m) from every walk path line, within `IDLE_LEVEL` (3 m) of the nearest walk
+`IDLE_PATH_CLEARANCE` (1.2 m) from every walk path line (both `pos` and the point `IDLE_BODY_REACH`, 0.4 m,
+out along the facing: a leaner's origin, a sitter's feet), within `IDLE_LEVEL` (3 m) of the nearest walk
 path's height (no roofs), in a cull frustum and seen from at least one sample camera, and `IDLE_SPACING`
 (1 m) apart (`hero_geom.thin_spots`, in position order), at most `IDLE_MAX_SPOTS` (400, stride-picked per
 pose). Each is `{pose, pos, heading, drop (sit only), area}` in glTF space; `heading` is walkerPose's yaw
 (`hero_geom.gl_heading`), `area` is `well` (within `WELL_AREA_R`, 20 m: the walkway round it), `avenue` or
 `other`. `export_report.json` has the counts.
 
-v05 result: 147 spots, 33 sit (all on the avenue: the outer pavement edge drops 0.41–0.59 m to the side
+v05 result: 146 spots, 32 sit (all on the avenue: the outer pavement edge drops 0.41–0.59 m to the side
 streets between the buildings, so they sit facing out over the side street) and 114 lean (26 on the
 walkway railings round the well, 88 against the avenue facades). v05 has no stepped rings round the well
 (its deck is level, the rings are 2–9 cm inlays), no planter edges (the planting strips are flush) and no

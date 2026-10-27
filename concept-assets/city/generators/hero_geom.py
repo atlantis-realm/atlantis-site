@@ -215,3 +215,14 @@ def sit_profile(top, behind, front, drop_range, tol):
 def lean_profile(ground_z, front, tol):
     """True if every ground probe in front of a wall (None = no hit) is within `tol` of `ground_z`."""
     return all(z is not None and abs(z - ground_z) <= tol for z in front)
+
+
+def side_dirs(fx, fy):
+    """The two horizontal unit directions square to the facing (fx, fy): its left, then its right."""
+    n = math.hypot(fx, fy)
+    return (-fy / n, fx / n), (fy / n, -fx / n)
+
+
+def side_points(p, face, off):
+    """The points `off` to the left and right of p (x, y), square to the facing `face` (x, y)."""
+    return [(p[0] + sx * off, p[1] + sy * off) for sx, sy in side_dirs(*face)]

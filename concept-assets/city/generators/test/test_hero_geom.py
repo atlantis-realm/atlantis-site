@@ -20,6 +20,8 @@ from hero_geom import (  # noqa: E402
     polyline_dist,
     safe_vfov,
     sample_frames,
+    side_dirs,
+    side_points,
     sit_profile,
     stride_pick,
     thin_spots,
@@ -232,6 +234,31 @@ class LeanProfileTest(unittest.TestCase):
     def test_step_or_hole_in_front(self):
         self.assertFalse(lean_profile(2.0, [2.0, 1.7], 0.05))
         self.assertFalse(lean_profile(2.0, [2.0, None], 0.05))
+
+
+class SideTest(unittest.TestCase):
+    def test_dirs_square_to_the_facing(self):
+        (lx, ly), (rx, ry) = side_dirs(0.0, 2.0)   # facing +y (not unit): left is -x, right +x
+        self.assertAlmostEqual(lx, -1.0)
+        self.assertAlmostEqual(ly, 0.0)
+        self.assertAlmostEqual(rx, 1.0)
+        self.assertAlmostEqual(ry, 0.0)
+        for fx, fy in ((1.0, 0.0), (0.6, -0.8)):
+            for sx, sy in side_dirs(fx, fy):
+                self.assertAlmostEqual(sx * fx + sy * fy, 0.0)
+                self.assertAlmostEqual(math.hypot(sx, sy), 1.0)
+
+    def test_points_either_side(self):
+        (a, b) = side_points((-24.0, 10.0), (0.0, -1.0), 0.3)
+        self.assertAlmostEqual(a[0], -23.7)   # facing -y: left is +x (into a facade at x = -23.945)
+        self.assertAlmostEqual(b[0], -24.3)
+        self.assertAlmostEqual(a[1], 10.0)
+        self.assertAlmostEqual(b[1], 10.0)
+
+    def test_corner_spot_rejected_by_the_level_check(self):
+        # a building (no level ground: None) 0.3 m to one side fails lean_profile on the side points
+        self.assertFalse(lean_profile(9.0, [9.0, None], 0.04))
+        self.assertTrue(lean_profile(9.0, [9.0, 9.01], 0.04))
 
 
 if __name__ == "__main__":

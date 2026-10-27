@@ -16,8 +16,9 @@ const INSTANCING = "EXT_mesh_gpu_instancing";
 // = LAMP_POLE_H, LAMP_HEAD_H in export_hero.py; WALK_CAMERA_CLEARANCE, WALK_CHEST_H likewise.
 const LAMP_POLE_H = 5.0, LAMP_HEAD_H = 0.6;
 const WALK_CAMERA_CLEARANCE = 8.0, WALK_CHEST_H = 1.3;
-// = SIT_DROP, IDLE_PATH_CLEARANCE, IDLE_SPACING, IDLE_MAX_SPOTS in export_hero.py.
+// = SIT_DROP, IDLE_PATH_CLEARANCE, IDLE_SPACING, IDLE_MAX_SPOTS, IDLE_LEVEL, IDLE_BODY_REACH in export_hero.py.
 const SIT_DROP = [0.35, 0.6], IDLE_PATH_CLEARANCE = 1.2, IDLE_SPACING = 1.0, IDLE_MAX_SPOTS = 400, IDLE_LEVEL = 3.0;
+const IDLE_BODY_REACH = 0.4;
 const PROPS_KEYS = {
   "": ["version", "fps", "frames", "base_vfov_deg", "safe_half_tan", "sun", "lantern", "blimps", "walk_paths",
     "well_water", "night", "night_nodes", "idle_spots"],
@@ -197,13 +198,17 @@ test("idle_spots keep clear of the camera, the walk paths and each other, at str
     assert.ok(Math.abs(feet - street[1]) <= IDLE_LEVEL + 1e-3, `spot ${k} feet at ${feet}, street at ${street[1]}`);
     const d = Math.min(...cams.map(([cx, cy, cz]) => Math.hypot(x - cx, feet + WALK_CHEST_H - cy, z - cz)));
     assert.ok(d >= WALK_CAMERA_CLEARANCE - 0.05, `spot ${k} is ${d.toFixed(2)} m from the camera`);
+    // the spot and the body IDLE_BODY_REACH out along the facing (a leaner's origin, a sitter's feet)
+    const reach = [x + Math.sin(s.heading) * IDLE_BODY_REACH, z + Math.cos(s.heading) * IDLE_BODY_REACH];
     for (const path of props.walk_paths)
       for (let i = 0; i + 1 < path.length; i++) {
         const [ax, , az] = path[i], [bx, , bz] = path[i + 1];
         const dx = bx - ax, dz = bz - az, ll = dx * dx + dz * dz;
-        const t = ll ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / ll)) : 0;
-        const e = Math.hypot(x - ax - t * dx, z - az - t * dz);
-        assert.ok(e >= IDLE_PATH_CLEARANCE - 0.01, `spot ${k} is ${e.toFixed(2)} m from a walk path`);
+        for (const [qx, qz] of [[x, z], reach]) {
+          const t = ll ? Math.max(0, Math.min(1, ((qx - ax) * dx + (qz - az) * dz) / ll)) : 0;
+          const e = Math.hypot(qx - ax - t * dx, qz - az - t * dz);
+          assert.ok(e >= IDLE_PATH_CLEARANCE - 0.01, `spot ${k} is ${e.toFixed(2)} m from a walk path`);
+        }
       }
     for (let j = 0; j < k; j++) {
       const o = spots[j].pos;

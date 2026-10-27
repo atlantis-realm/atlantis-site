@@ -13,7 +13,7 @@ export type IdleSpot = {
 	heading: number;
 	/** sit only: ledge top minus the ground in front, in metres. */
 	drop?: number;
-	/** Which part of the scene: 'well' (the stepped rings round it), 'avenue' or 'other'. */
+	/** Which part of the scene: 'well' (within WELL_AREA_R of the well: the walkway round it), 'avenue' or 'other'. */
 	area?: string;
 };
 

@@ -160,6 +160,11 @@ LEAN_STICK_OUT = 0.05                   # m
 LEAN_FRONT = (0.3, 0.6, 1.0)            # m in front of the wall probed for level standing ground
 LEAN_CLEAR_HS, LEAN_CLEAR_D = (0.3, 1.0, 1.6), 1.0   # heights (m) of the rays that must run free out from the wall
 LEAN_BODY_H, LEAN_BODY_D = 1.5, 0.3     # at shoulder height nothing sticks out past the contact either
+IDLE_SIDE_D = 0.3                       # m either side of the body that must be free (rays) and level (seat, ground)
+LEAN_SIDE_HS = (0.5, 1.0, 1.5)          # m above the ground: sideways rays from LEAN_BODY_D out of the wall
+SIT_SIDE_HS = (0.15, 0.5, 0.9)          # m above the seat: sideways rays from SIT_SEAT_IN behind the edge
+SIT_SEAT_IN = 0.15                      # m behind the edge: where the seat is probed sideways
+IDLE_BODY_REACH = 0.4                   # m out along the facing: the body point also kept off the walk paths
 IDLE_PATH_CLEARANCE = 1.2               # m from every walk path line
 IDLE_LEVEL = 3.0                        # m: feet within this of the nearest walk path point's height (no roofs)
 IDLE_SPACING = 1.0                      # m between spots at least
@@ -671,6 +676,15 @@ class IdleProbes:
     def free(self, o, d, dist):
         return probe(self.occ, o, d, dist) is None
 
+    def sides_clear(self, base, z0, face, hs):
+        """Room for a body at `base` (x, y) on the level `z0`: rays IDLE_SIDE_D to the left and right of `face`
+        at heights `hs` above z0 run free, and the level IDLE_SIDE_D to either side is z0 (hero_geom.side_points)."""
+        for sx, sy in hg.side_dirs(face.x, face.y):
+            d = Vector((sx, sy, 0))
+            if not all(self.free(Vector((base.x, base.y, z0 + h)), d, IDLE_SIDE_D) for h in hs):
+                return False
+        return hg.lean_profile(z0, [self.z(Vector(q)) for q in hg.side_points(base, face, IDLE_SIDE_D)], IDLE_TOL)
+
 
 def idle_height_map(pr, cam_xy):
     """Grid (IDLE_GRID, world-aligned) of the first surface below each point within IDLE_RANGE (in x, y) of the
@@ -716,6 +730,8 @@ def sit_spot(pr, top_z, low_xy, d):
             and pr.free(e3 - f3 * 0.15 + Vector((0, 0, 0.05)), Vector((0, 0, 1)), SIT_HEAD_CLEAR)
             and pr.free(e3 + Vector((0, 0, SIT_BACK_H)), -f3, SIT_BACK_CLEAR)):
         return None
+    if not pr.sides_clear(edge - face * SIT_SEAT_IN, top, face, SIT_SIDE_HS):
+        return None
     return e3, face, drop
 
 
@@ -751,6 +767,8 @@ def lean_spot(pr, ground_z, xy, d):
         return None
     body = probe(occ, foot + f3 * LEAN_BODY_D + Vector((0, 0, LEAN_BODY_H)), -f3, LEAN_BODY_D)
     if body is not None and (body[0] - foot).to_2d().length > LEAN_STICK_OUT:
+        return None
+    if not pr.sides_clear(foot2 + face * LEAN_BODY_D, gz, face, LEAN_SIDE_HS):
         return None
     return foot, face
 
@@ -802,7 +820,9 @@ def idle_spots(occ, kept_ids, cam_path, samples, frusta, walk_lines, well_c, fwd
         dist = np.linalg.norm(cams - chest, axis=1)
         if dist.min() < WALK_CAMERA_CLEARANCE or np.linalg.norm(cams - np.array(p), axis=1).min() > IDLE_RANGE:
             continue
-        if any(hg.polyline_dist((p.x, p.y), line) < IDLE_PATH_CLEARANCE for line in walk_lines):
+        reach = p.to_2d() + face * IDLE_BODY_REACH
+        if any(min(hg.polyline_dist((p.x, p.y), line), hg.polyline_dist((reach.x, reach.y), line)) < IDLE_PATH_CLEARANCE
+               for line in walk_lines):
             continue
         street = walk_pts[np.argmin(np.sum((walk_pts[:, :2] - (p.x, p.y)) ** 2, axis=1)), 2]
         if abs(feet_z - street) > IDLE_LEVEL:
