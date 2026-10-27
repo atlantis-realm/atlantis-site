@@ -349,6 +349,15 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
 gives within 1e-4; walk 9,159 → 1,763 keys, idle 10,449 → 1,021), `quantize` and `meshopt`, writes
 `static/city/robot.glb` and copies `robot_meta.json` beside it: 134.5 KB (137,740 bytes).
 
+On the page (`src/lib/city/robot.ts`) the one robot walks a loop down the middle of the avenue, clear of the
+pavement walkers: round the avenue axis (the pointwise mean of the walk paths, on their ground), legs
+`ROBOT_LANE.halfGap` 7 m either side of it from 10 m to 170 m up the avenue, joined by half circles, its heading
+the chord ±`ROBOT_TURN_LOOK` 1.5 m so it turns smoothly. It moves at `walk_cycle_m / walk_duration_s` and the
+paused `walk` clip's time follows the distance walked, driven by the scene clock like the people (frozen with
+reduced motion). At night its palette glows at `ROBOT_NIGHT_GLOW` 0.15 so it reads against the dark trees.
+Without `robot.glb` or `robot_meta.json` there is no robot. It adds 2 draw calls (main + shadow) and 2,694
+triangles each.
+
 The pack's licence allows its use in projects but not redistributing it as a standalone asset. Like the
 people, `robot.glb` and `robot_meta.json` are git-ignored until the user approves the look.
 

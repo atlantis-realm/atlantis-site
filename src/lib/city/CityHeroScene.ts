@@ -1,8 +1,9 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
-// blimps (blimps.ts), the well's water (water.ts) and walking, sitting and leaning people
-// (people.ts: the baked characters of people.glb, or walking capsules without it). Follows the
+// blimps (blimps.ts), the well's water (water.ts), walking, sitting and leaning people
+// (people.ts: the baked characters of people.glb, or walking capsules without it) and the
+// robot walking down the avenue (robot.ts, robot.glb; none without it). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -41,6 +42,7 @@ import {
 	type PeopleCast
 } from './people.ts';
 import { buildShadowProxy, installShadowLayer } from './shadowProxy.ts';
+import { createRobot, parseRobotMeta, type Robot, type RobotMeta } from './robot.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -50,6 +52,9 @@ export const HERO_CLIP = 'Hero';
 /** The baked walkers (export_people.py, people_glb.mjs); optional, capsules without them. */
 export const PEOPLE_GLB_URL = '/city/people.glb';
 export const PEOPLE_META_URL = '/city/people_meta.json';
+/** The baked robot (export_robot.py, robot_glb.mjs); optional, no robot without it. */
+export const ROBOT_GLB_URL = '/city/robot.glb';
+export const ROBOT_META_URL = '/city/robot_meta.json';
 /**
  * Opening framing: the baked frame-250 shot has "Welcome to Atlantis" above the
  * middle of the screen, so the camera tilts up by this much at frame 250. The
@@ -94,6 +99,8 @@ const BLOOM_MOBILE_SCALE = 0.5;
 /** MSAA samples of the bloom path's render target (desktop; the canvas is antialiased there too). */
 const BLOOM_SAMPLES = 4;
 
+type RobotAsset = { scene: THREE.Group; animations: THREE.AnimationClip[]; meta: RobotMeta };
+
 type NightMaterial = {
 	material: THREE.MeshStandardMaterial;
 	emissive: [number, number, number, number];
@@ -133,6 +140,7 @@ export class CityHeroScene {
 	private bloomPass: UnrealBloomPass | null = null;
 	private blimps: THREE.InstancedMesh | null = null;
 	private people: People | null = null;
+	private robot: Robot | null = null;
 	/** The well's water material (water.ts), null when the glb has no props.well_water mesh. */
 	private water: THREE.Material | null = null;
 	/** Merged sun-shadow casters near the plaza (shadowProxy.ts), desktop only. */
@@ -150,7 +158,7 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
-	/** Clock of the moving things (clouds, blimps, water, people); frozen with reducedMotion. */
+	/** Clock of the moving things (clouds, blimps, water, people, robot); frozen with reducedMotion. */
 	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
 	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
@@ -203,18 +211,22 @@ export class CityHeroScene {
 		glbUrl: string,
 		propsUrl: string,
 		peopleUrl = PEOPLE_GLB_URL,
-		peopleMetaUrl = PEOPLE_META_URL
+		peopleMetaUrl = PEOPLE_META_URL,
+		robotUrl = ROBOT_GLB_URL,
+		robotMetaUrl = ROBOT_META_URL
 	): Promise<void> {
 		const loader = new GLTFLoader();
 		loader.setMeshoptDecoder(MeshoptDecoder);
-		const [props, gltf, cast] = await Promise.all([
+		const [props, gltf, cast, robot] = await Promise.all([
 			loadProps(propsUrl),
 			loader.loadAsync(glbUrl),
-			loadCast(loader, peopleUrl, peopleMetaUrl)
+			loadCast(loader, peopleUrl, peopleMetaUrl),
+			loadRobot(loader, robotUrl, robotMetaUrl)
 		]);
 		if (this.destroyed) {
 			disposeObject(gltf.scene);
 			if (cast) disposeCast(cast);
+			if (robot) disposeObject(robot.scene);
 			return;
 		}
 
@@ -265,6 +277,13 @@ export class CityHeroScene {
 			// Small casters near the camera; the shadow map only covers the plaza anyway.
 			mesh.castShadow = mesh.receiveShadow = !this.opts.mobile;
 			this.scene.add(mesh);
+		}
+		if (robot) {
+			this.robot = createRobot(robot.scene, robot.animations, robot.meta, props.walk_paths, {
+				shadows: !this.opts.mobile
+			});
+			if (this.robot) this.scene.add(this.robot.object);
+			else disposeObject(robot.scene);
 		}
 		this.updateMotion();
 		this.applyMix();
@@ -428,6 +447,7 @@ export class CityHeroScene {
 		this.sky.setMix(t);
 		this.renderer.toneMappingExposure = mix.exposure;
 		if (this.water) setWaterNight(this.water, mix.emissive);
+		this.robot?.setNight(mix.emissive);
 
 		const strength = mix.bloom * (this.opts.mobile ? BLOOM_MOBILE_SCALE : 1);
 		if (strength > 0) this.ensureComposer().strength = strength;
@@ -466,11 +486,12 @@ export class CityHeroScene {
 		}
 	}
 
-	/** Clouds, blimps, water and people at motionTime. */
+	/** Clouds, blimps, water, people and the robot at motionTime. */
 	private updateMotion(): void {
 		this.sky.update(this.motionTime);
 		if (this.water) setWaterTime(this.water, this.motionTime);
 		this.people?.update(this.motionTime);
+		this.robot?.update(this.motionTime);
 		const props = this.loadedProps;
 		if (this.blimps && props)
 			updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
@@ -537,6 +558,7 @@ export class CityHeroScene {
 		if (this.loadedRoot) disposeObject(this.loadedRoot);
 		if (this.blimps) disposeObject(this.blimps);
 		this.people?.dispose();
+		this.robot?.dispose();
 		if (this.shadowProxy) disposeObject(this.shadowProxy);
 		this.uninstallShadowLayer?.();
 		this.sky.dispose();
@@ -573,6 +595,27 @@ async function loadCast(
 	} catch (err) {
 		if (root) disposeObject(root);
 		console.warn('City hero: no baked people, walking capsules instead.', err);
+		return null;
+	}
+}
+
+/** robot.glb + robot_meta.json, or null (with one warning) when either fails. */
+async function loadRobot(
+	loader: GLTFLoader,
+	glbUrl: string,
+	metaUrl: string
+): Promise<RobotAsset | null> {
+	try {
+		const [meta, gltf] = await Promise.all([
+			fetch(metaUrl).then((res) => {
+				if (!res.ok) throw new Error(`${metaUrl}: HTTP ${res.status}`);
+				return res.json().then(parseRobotMeta);
+			}),
+			loader.loadAsync(glbUrl)
+		]);
+		return { scene: gltf.scene, animations: gltf.animations, meta };
+	} catch (err) {
+		console.warn('City hero: no robot.', err);
 		return null;
 	}
 }
