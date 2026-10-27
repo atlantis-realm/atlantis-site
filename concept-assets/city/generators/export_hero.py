@@ -37,7 +37,8 @@ Stages
   night        NIGHT_* materials carry custom property night_emissive -> glTF extras. The Lantern's
                MAT_AP_Cyan and MAT_AP_Glow (its cyan heart) faces both go to NIGHT_MAT_AP_Cyan.
   lamps        lamp posts every LAMP_AVENUE_SPACING m on both avenue pavements and every
-               LAMP_RING_STEP_DEG round the plaza ring (clear of the camera), linked duplicates.
+               LAMP_RING_STEP_DEG round the plaza ring (clear of the camera and of the avenue mouth),
+               linked duplicates.
   camera       HeroCamera, no parent, world matrix keyed every frame 1-250 (linear), action `Hero`.
   props        sun (dir: from the scene toward the sun), Lantern, blimp orbit (radius searched for the
                visible sky above the frontage), walk paths (the avenue pavements, cut where they pass
@@ -1191,7 +1192,11 @@ def run():
                          for s in np.arange(AVENUE_START, AVENUE_START + AVENUE_LEN + 0.1, LAMP_AVENUE_SPACING)]
         for k in range(int(round(360 / LAMP_RING_STEP_DEG))):
             a = math.radians(k * LAMP_RING_STEP_DEG)
-            lamp_pts.append(centre2 + Vector((math.cos(a), math.sin(a))) * PLAZA_LAMP_R)
+            d = Vector((math.cos(a), math.sin(a))) * PLAZA_LAMP_R
+            # None across the avenue mouth: between the two pavements, on the avenue side.
+            if d.dot(fwd) > 0 and abs(d.dot(side)) < min(pave[1][0], pave[-1][0]):
+                continue
+            lamp_pts.append(centre2 + d)
         lmesh = None
         n_lamps = 0
         for q in lamp_pts:
