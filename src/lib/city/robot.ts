@@ -1,218 +1,376 @@
-// The robot for the /city hero: one mech from robot.glb (export_robot.py,
-// robot_glb.mjs: a skinned mesh with a 'walk' clip) walking a loop down the
-// middle of the avenue, clear of the walkers on the pavements. The loop runs
-// round the avenue's axis (the mean of the walk paths): out along one side,
-// round a half circle, back along the other and round again, so it never has
-// to turn on the spot. Unlike the people's stepped morph walk, its walk is
-// played smoothly: the clip time follows the distance walked, so its feet
-// don't skate. At night its palette glows faintly (ROBOT_NIGHT_GLOW), so the
-// green mech doesn't sink into the dark trees behind it.
+// The robots for the /city hero: ROBOT_COUNT mechs from robot.glb (export_robot.py,
+// robot_glb.mjs: VARIANTS skinned meshes on one rig with a 'walk' clip, and a
+// strip of palettes) walking across the view on the export's robot routes
+// (hero_props.json `robot_routes`: the ring avenue and cross streets that cross
+// the hero avenue, hidden at both ends). Each pass a robot picks a free route,
+// one the camera sees at the current frame if it can, walks it end to end, screen
+// left to right or back, then is hidden for a moment (ROBOT_RESPAWN_GAP) and
+// comes back as a freshly rolled robot: another variant mesh and palette. The
+// picks are seeded per robot (mulberry32), so a given scroll history replays the
+// same. Unlike the people's stepped morph walk, its walk is played smoothly: the
+// clip time follows the distance walked at the variant's stride, so its feet
+// don't skate. At night its palette glows faintly (ROBOT_NIGHT_GLOW), so it
+// doesn't sink into the dark trees behind it.
 
 import * as THREE from 'three';
-import { walkerPose, type WalkerPose } from './people.ts';
-import type { Vec3 } from './props.ts';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { mulberry32, walkerPose, type WalkerPose } from './people.ts';
+import type { RobotRoute, Vec3 } from './props.ts';
 
-/**
- * The lane round the avenue axis (m): it starts `start` up the axis from its
- * near (plaza) end, its legs are `length` long and `halfGap` either side of the
- * axis (the end arcs' radius), resampled every `step`. The robot starts `lead`
- * before the end of the back leg, walking toward the plaza.
- */
-export const ROBOT_LANE = { start: 10, length: 160, halfGap: 7, step: 20, lead: 12 };
-/** Segments of each end arc (half circle). */
-export const ROBOT_ARC_SEGMENTS = 16;
-/** The heading is the chord from this far (m) behind to this far ahead, so it turns smoothly round the arcs. */
+/** Robots walking at once, each on its own route (1 for a single robot). */
+export const ROBOT_COUNT = 2;
+/** Robot i draws its picks from mulberry32(ROBOT_SEED + i). */
+export const ROBOT_SEED = 0x60b07;
+/** A route is in view when one of its `view` sample frames is within this many frames (the export samples every 5). */
+export const ROUTE_VIEW_SLACK = 5;
+/** Hidden pause (s) between a robot leaving a route and the next robot coming in: [min, max]. */
+export const ROBOT_RESPAWN_GAP: [number, number] = [0.5, 3];
+/** The heading is the chord from this far (m) behind to this far ahead, so it turns smoothly round the ring arcs. */
 export const ROBOT_TURN_LOOK = 1.5;
 /** Emissive strength of the palette (its own colours) at full night, scaled by mixMode's emissive level. */
 export const ROBOT_NIGHT_GLOW = 0.15;
-/** Name of the robot's walk clip in robot.glb. */
+/** Name of the robots' walk clip in robot.glb. */
 export const ROBOT_WALK_CLIP = 'walk';
-/** First and last point of a path closer than this (m) make it a loop, as in people.ts. */
-const CLOSED_EPS = 1e-3;
+/** Passes planned in one update before giving up and starting afresh (a long-hidden tab). */
+const MAX_PASSES_PER_UPDATE = 100;
 
-/** robot_meta.json, written by export_robot.py beside robot.glb. */
-export type RobotMeta = {
-	version: number;
+/** One baked variant: its mesh node in robot.glb and its measures. */
+export type RobotVariant = {
+	name: string;
 	/** Bind pose height (m). */
 	height: number;
 	/** Ground distance covered per loop of the walk clip (m). */
 	walk_cycle_m: number;
-	walk_duration_s: number;
-	idle_duration_s?: number;
+	tris?: number;
 };
 
-/** `s0`: distance along the loop at t = 0; update(t) walks it to time t (s); setNight(level) sets the glow (mixMode's emissive, 0 by day). */
-export type Robot = {
+/** robot_meta.json (version 2), written by export_robot.py beside robot.glb. */
+export type RobotMeta = {
+	version: number;
+	/** Variant 0's height and walk_cycle_m. */
+	height: number;
+	walk_cycle_m: number;
+	walk_duration_s: number;
+	idle_duration_s?: number;
+	/** The palette strip's palettes, left to right (the variants' UVs sit in the first). */
+	palettes: string[];
+	variants: RobotVariant[];
+};
+
+/** What robot.glb + robot_meta.json load to. */
+export type RobotAsset = {
+	scene: THREE.Object3D;
+	animations: THREE.AnimationClip[];
+	meta: RobotMeta;
+};
+
+/** One robot's current pass, for tests and debugging; `distance` (m) along its route, which runs reversed or not. */
+export type RobotState = {
+	visible: boolean;
+	route: string;
+	reversed: boolean;
+	variant: number;
+	palette: number;
+	distance: number;
+};
+
+/** update(t, frame) walks every robot to time t (s), picking new routes in view at camera frame `frame`. */
+export type Robots = {
 	object: THREE.Group;
-	s0: number;
-	update(t: number): void;
+	update(t: number, frame: number): void;
+	state(): RobotState[];
 	setNight(level: number): void;
 	dispose(): void;
 };
 
-/** Check robot_meta.json's shape (a stale or wrong file fails loudly). */
+/** Check robot_meta.json's shape (a stale version 1 or wrong file fails loudly). */
 export function parseRobotMeta(json: unknown): RobotMeta {
 	const m = json as RobotMeta;
-	if (!m || !(m.height > 0) || !(m.walk_cycle_m > 0) || !(m.walk_duration_s > 0))
-		throw new Error('robot_meta.json: needs height, walk_cycle_m and walk_duration_s');
+	const ok =
+		!!m &&
+		m.height > 0 &&
+		m.walk_cycle_m > 0 &&
+		m.walk_duration_s > 0 &&
+		Array.isArray(m.palettes) &&
+		m.palettes.length > 0 &&
+		m.palettes.every((p) => typeof p === 'string') &&
+		Array.isArray(m.variants) &&
+		m.variants.length > 0 &&
+		m.variants.every((v) => typeof v?.name === 'string' && v.height > 0 && v.walk_cycle_m > 0);
+	if (!ok)
+		throw new Error(
+			'robot_meta.json: needs height, walk_cycle_m, walk_duration_s, palettes and variants (version 2)'
+		);
 	return m;
 }
 
-/** Walk clip time (s, in [0, duration)) after `distance` m walked: one clip loop per walk_cycle_m. */
-export function robotWalkTime(
-	distance: number,
-	meta: RobotMeta,
-	duration = meta.walk_duration_s
-): number {
-	const phase = (((distance / meta.walk_cycle_m) % 1) + 1) % 1;
+/** Walk clip time (s, in [0, duration)) after `distance` m walked: one clip loop per `cycle_m`. */
+export function robotWalkTime(distance: number, cycle_m: number, duration: number): number {
+	const phase = (((distance / cycle_m) % 1) + 1) % 1;
 	return phase * duration;
 }
 
-/**
- * The robot's loop (closed: first point == last), or null without at least
- * two open walk paths of the same point count. The avenue axis is their
- * pointwise mean (the export samples every pavement line at the same steps
- * from the plaza), so the lane sits between the pavements, on their ground.
- * Out leg on the axis's right (walkerPose's right, (cos h, 0, −sin h)), far
- * arc, back leg on its left, near arc.
- */
-export function robotLoop(paths: Vec3[][]): Vec3[] | null {
-	const n = paths[0]?.length ?? 0;
-	if (paths.length < 2 || n < 2 || paths.some((p) => p.length !== n || isClosed(p))) return null;
-	const axis = Array.from(
-		{ length: n },
-		(_, k) => [0, 1, 2].map((c) => paths.reduce((a, p) => a + p[k][c], 0) / paths.length) as Vec3
-	);
-	let axisLength = 0;
-	for (let k = 1; k < n; k++) axisLength += dist(axis[k - 1], axis[k]);
-	const { start, halfGap, step } = ROBOT_LANE;
-	const length = Math.min(ROBOT_LANE.length, axisLength - start);
-	if (length < step) return null;
-
-	// The axis every `step` along the lane, with its right-hand side.
-	const count = Math.round(length / step) + 1;
-	const stations = Array.from({ length: count }, (_, k) => {
-		const { position, heading } = walkerPose(axis, start + (length * k) / (count - 1));
-		return { c: position, h: heading };
-	});
-	const at = (c: Vec3, h: number, right: number, ahead: number): Vec3 => [
-		c[0] + right * Math.cos(h) + ahead * Math.sin(h),
-		c[1],
-		c[2] - right * Math.sin(h) + ahead * Math.cos(h)
-	];
-	// Half circle round station `st` from its right (θ = 0) through `sweep` (ahead +1, behind −1) to its left.
-	const arc = (st: { c: Vec3; h: number }, sweep: 1 | -1): Vec3[] =>
-		Array.from({ length: ROBOT_ARC_SEGMENTS - 1 }, (_, k) => {
-			const theta = (Math.PI * (k + 1)) / ROBOT_ARC_SEGMENTS;
-			return at(st.c, st.h, halfGap * Math.cos(theta) * sweep, halfGap * Math.sin(theta) * sweep);
-		});
-	const near = stations[0];
-	const far = stations[count - 1];
-	return [
-		...stations.map((st) => at(st.c, st.h, halfGap, 0)),
-		...arc(far, 1),
-		...[...stations].reverse().map((st) => at(st.c, st.h, -halfGap, 0)),
-		// Round the near end from the left side back to the right: the same half circle, swept behind.
-		...arc(near, -1),
-		at(near.c, near.h, halfGap, 0)
-	];
+/** Whether camera frame `frame` sees some of `route`: a `view` sample within ROUTE_VIEW_SLACK frames. */
+export function routeInView(route: RobotRoute, frame: number): boolean {
+	return route.view.some(([f]) => Math.abs(f - frame) <= ROUTE_VIEW_SLACK);
 }
 
 /**
- * The robot at distance `s` (m) round `loop` (walkerPose wraps a closed path):
- * walkerPose's position, and the heading of the chord from ROBOT_TURN_LOOK
- * behind to ROBOT_TURN_LOOK ahead, so it turns smoothly at the polygon's
- * corners instead of snapping.
+ * A random route index: among the routes not `busy` (all of them if every one
+ * is), the ones in view at `frame` if any.
  */
-export function robotPose(loop: Vec3[], s: number): WalkerPose {
-	const { position } = walkerPose(loop, s);
-	const a = walkerPose(loop, s - ROBOT_TURN_LOOK).position;
-	const b = walkerPose(loop, s + ROBOT_TURN_LOOK).position;
+export function pickRoute(
+	routes: RobotRoute[],
+	frame: number,
+	rand: () => number,
+	busy: Set<number>
+): number {
+	let free = routes.map((_, k) => k).filter((k) => !busy.has(k));
+	if (!free.length) free = routes.map((_, k) => k);
+	const seen = free.filter((k) => routeInView(routes[k], frame));
+	const pool = seen.length ? seen : free;
+	return pool[Math.floor(rand() * pool.length)];
+}
+
+/** A random index in [0, n), not one of `avoid` unless that leaves none. */
+export function pickIndex(n: number, rand: () => number, avoid: number[]): number {
+	let pool = Array.from({ length: n }, (_, k) => k).filter((k) => !avoid.includes(k));
+	if (!pool.length) pool = Array.from({ length: n }, (_, k) => k);
+	return pool[Math.floor(rand() * pool.length)];
+}
+
+/**
+ * The robot at distance `s` (m) along the open polyline `points`, clamped to
+ * its ends: walkerPose's position (its height interpolated between points, so
+ * it rides kerbs), and the heading of the chord from ROBOT_TURN_LOOK behind to
+ * ROBOT_TURN_LOOK ahead (clamped too), so it turns smoothly round the arcs.
+ */
+export function routePose(points: Vec3[], s: number): WalkerPose {
+	let length = 0;
+	for (let k = 1; k < points.length; k++) length += dist(points[k - 1], points[k]);
+	const at = (d: number): Vec3 => walkerPose(points, Math.min(Math.max(d, 0), length)).position;
+	const position = at(s);
+	const a = at(s - ROBOT_TURN_LOOK);
+	const b = at(s + ROBOT_TURN_LOOK);
 	return { position, heading: Math.atan2(b[0] - a[0], b[2] - a[2]) };
 }
 
+/** robot.glb + robot_meta.json, or null (with one warning) when either fails. */
+export async function loadRobotAsset(
+	loader: {
+		loadAsync(url: string): Promise<{ scene: THREE.Object3D; animations: THREE.AnimationClip[] }>;
+	},
+	glbUrl: string,
+	metaUrl: string,
+	fetchFn: (url: string) => Promise<Response> = fetch
+): Promise<RobotAsset | null> {
+	try {
+		const [meta, gltf] = await Promise.all([
+			fetchFn(metaUrl).then((res) => {
+				if (!res.ok) throw new Error(`${metaUrl}: HTTP ${res.status}`);
+				return res.json().then(parseRobotMeta);
+			}),
+			loader.loadAsync(glbUrl)
+		]);
+		return { scene: gltf.scene, animations: gltf.animations, meta };
+	} catch (err) {
+		console.warn('City hero: no robot.', err);
+		return null;
+	}
+}
+
+/** A route walked one way: its points in walking order and length. */
+type Pass = {
+	route: number;
+	reversed: boolean;
+	points: Vec3[];
+	length: number;
+	variant: number;
+	palette: number;
+	speed: number;
+	/** Time (s) it sets off from the first point, and reaches the last. */
+	start: number;
+	end: number;
+};
+
+/** One robot: its own clone of the rig and variant meshes, material (palette offset), mixer and picks. */
+type Walker = {
+	holder: THREE.Group;
+	meshes: THREE.Object3D[];
+	material: THREE.MeshStandardMaterial;
+	mixer: THREE.AnimationMixer;
+	action: THREE.AnimationAction;
+	rand: () => number;
+	pass: Pass | null;
+};
+
 /**
- * The robot from robot.glb's `scene` and `animations`, walking the loop of
- * `paths` at walk_cycle_m / walk_duration_s, or null without a walk clip or a
- * loop. The clip is paused and time-driven: update(t) sets its time from the
- * distance walked, so it is as smooth as the frames and freezes with t.
+ * ROBOT_COUNT robots from robot.glb's `scene` and `animations`, crossing on
+ * `routes`, or null without a walk clip, a route or any of the meta's variant
+ * meshes. Each robot is a skeleton clone of the scene showing one variant mesh
+ * at a time; its walk clip is paused and time-driven: update(t) sets the clip
+ * time from the distance walked, so it is as smooth as the frames and freezes
+ * with t.
  */
-export function createRobot(
+export function createRobots(
 	scene: THREE.Object3D,
 	animations: THREE.AnimationClip[],
 	meta: RobotMeta,
-	paths: Vec3[][],
-	opts: { shadows: boolean }
-): Robot | null {
+	routes: RobotRoute[] | undefined,
+	opts: { shadows: boolean; count?: number }
+): Robots | null {
 	const clip = THREE.AnimationClip.findByName(animations, ROBOT_WALK_CLIP);
-	const loop = clip && robotLoop(paths);
-	if (!clip || !loop) return null;
+	const variants = meta.variants.filter((v) => scene.getObjectByName(v.name));
+	if (!clip || !routes?.length || !variants.length) return null;
+	const palettes = meta.palettes.length;
 
 	const object = new THREE.Group();
-	object.name = 'Robot';
-	object.add(scene);
-	const materials = new Set<THREE.MeshStandardMaterial>();
-	scene.traverse((obj) => {
-		const mesh = obj as THREE.Mesh;
-		if (!mesh.isMesh) return;
-		mesh.castShadow = mesh.receiveShadow = opts.shadows;
-		for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material])
-			if ((m as THREE.MeshStandardMaterial).isMeshStandardMaterial)
-				materials.add(m as THREE.MeshStandardMaterial);
-	});
-	// The palette as its own glow, off by day: set up once, so night only changes the strength.
-	for (const m of materials) {
-		m.emissiveMap = m.map;
-		m.emissive.setRGB(1, 1, 1);
-		m.emissiveIntensity = 0;
+	object.name = 'Robots';
+	const walkers: Walker[] = [];
+	for (let i = 0; i < (opts.count ?? ROBOT_COUNT); i++) {
+		const root = cloneSkinned(scene);
+		const meshes = variants.map((v) => root.getObjectByName(v.name)!);
+		// One material per robot, so each has its own palette offset; the map shares the image.
+		const source = (meshes[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+		const material = source.clone();
+		if (source.map) {
+			material.map = source.map.clone();
+			material.map.magFilter = material.map.minFilter = THREE.NearestFilter;
+			material.map.generateMipmaps = false;
+		}
+		// The palette as its own glow, off by day: set up once, so night only changes the strength.
+		material.emissiveMap = material.map;
+		material.emissive.setRGB(1, 1, 1);
+		material.emissiveIntensity = 0;
+		root.traverse((obj) => {
+			const mesh = obj as THREE.Mesh;
+			if (!mesh.isMesh) return;
+			mesh.material = material;
+			mesh.castShadow = mesh.receiveShadow = opts.shadows;
+			mesh.visible = false;
+		});
+		const holder = new THREE.Group();
+		holder.name = `Robot${i}`;
+		holder.visible = false;
+		holder.add(root);
+		object.add(holder);
+		const mixer = new THREE.AnimationMixer(root);
+		const action = mixer.clipAction(clip);
+		action.play();
+		action.paused = true;
+		walkers.push({
+			holder,
+			meshes,
+			material,
+			mixer,
+			action,
+			rand: mulberry32(ROBOT_SEED + i),
+			pass: null
+		});
 	}
-	const mixer = new THREE.AnimationMixer(scene);
-	const action = mixer.clipAction(clip);
-	action.play();
-	action.paused = true;
 
-	let perimeter = 0;
-	for (let k = 1; k < loop.length; k++) perimeter += dist(loop[k - 1], loop[k]);
-	const { halfGap, lead } = ROBOT_LANE;
-	// The near arc is the loop's last stretch; start `lead` before it, on the back leg.
-	const s0 = perimeter - Math.PI * halfGap - lead;
-	const speed = meta.walk_cycle_m / meta.walk_duration_s;
-
-	const update = (t: number): void => {
-		const s = s0 + speed * t;
-		const { position, heading } = robotPose(loop, s);
-		object.position.set(...position);
-		object.rotation.y = heading;
-		action.time = robotWalkTime(s, meta, clip.duration);
-		mixer.update(0);
+	/** Robot i's next pass, setting off at `start` (the first: `lead` of the way along already). */
+	const plan = (i: number, start: number, frame: number, lead = 0): Pass => {
+		const w = walkers[i];
+		const others = walkers.filter((x, k) => k !== i && x.pass).map((x) => x.pass!);
+		const route = pickRoute(routes, frame, w.rand, new Set(others.map((p) => p.route)));
+		const reversed = w.rand() < 0.5;
+		const variant = pickIndex(variants.length, w.rand, [
+			...(w.pass ? [w.pass.variant] : []),
+			...others.map((p) => p.variant)
+		]);
+		const palette = pickIndex(palettes, w.rand, [
+			...(w.pass ? [w.pass.palette] : []),
+			...others.map((p) => p.palette)
+		]);
+		const points = reversed ? [...routes[route].points].reverse() : routes[route].points;
+		let length = 0;
+		for (let k = 1; k < points.length; k++) length += dist(points[k - 1], points[k]);
+		const speed = variants[variant].walk_cycle_m / meta.walk_duration_s;
+		const begin = start - (lead * length) / speed;
+		return {
+			route,
+			reversed,
+			points,
+			length,
+			variant,
+			palette,
+			speed,
+			start: begin,
+			end: begin + length / speed
+		};
 	};
-	update(0);
+	const gap = (w: Walker): number =>
+		ROBOT_RESPAWN_GAP[0] + w.rand() * (ROBOT_RESPAWN_GAP[1] - ROBOT_RESPAWN_GAP[0]);
+
+	let last = -Infinity;
+	const update = (t: number, frame: number): void => {
+		if (t < last) for (const w of walkers) w.pass = null; // the clock went back: start afresh
+		last = t;
+		walkers.forEach((w, i) => {
+			// The first pass starts part of the way along, so the robots don't all set off together.
+			if (!w.pass) w.pass = plan(i, t, frame, w.rand());
+			let n = 0;
+			while (t >= w.pass.end) {
+				w.pass =
+					++n > MAX_PASSES_PER_UPDATE ? plan(i, t, frame) : plan(i, w.pass.end + gap(w), frame);
+			}
+			const p = w.pass;
+			const shown = t >= p.start;
+			w.holder.visible = shown;
+			if (!shown) return;
+			w.meshes.forEach((m, k) => (m.visible = k === p.variant));
+			if (w.material.map) w.material.map.offset.x = p.palette / palettes;
+			const s = (t - p.start) * p.speed;
+			const { position, heading } = routePose(p.points, s);
+			w.holder.position.set(...position);
+			w.holder.rotation.y = heading;
+			w.action.time = robotWalkTime(s, variants[p.variant].walk_cycle_m, clip.duration);
+			w.mixer.update(0);
+		});
+	};
+	const state = (): RobotState[] =>
+		walkers.map((w) => {
+			const p = w.pass;
+			return {
+				visible: w.holder.visible,
+				route: p ? routes[p.route].name : '',
+				reversed: p?.reversed ?? false,
+				variant: p?.variant ?? 0,
+				palette: p?.palette ?? 0,
+				distance: p ? Math.max(0, (last - p.start) * p.speed) : 0
+			};
+		});
 	const setNight = (level: number): void => {
-		for (const m of materials) m.emissiveIntensity = ROBOT_NIGHT_GLOW * level;
+		for (const w of walkers) w.material.emissiveIntensity = ROBOT_NIGHT_GLOW * level;
 	};
 	const dispose = (): void => {
-		mixer.stopAllAction();
-		mixer.uncacheRoot(scene);
+		for (const w of walkers) {
+			w.mixer.stopAllAction();
+			w.mixer.uncacheRoot(w.mixer.getRoot());
+			w.holder.traverse((obj) => {
+				const mesh = obj as THREE.SkinnedMesh;
+				if (mesh.isSkinnedMesh) mesh.skeleton.dispose();
+			});
+			// emissiveMap is the same texture.
+			w.material.map?.dispose();
+			w.material.dispose();
+		}
+		// The clones share the scene's geometry.
 		scene.traverse((obj) => {
-			const mesh = obj as THREE.SkinnedMesh;
+			const mesh = obj as THREE.Mesh;
 			if (!mesh.isMesh) return;
 			mesh.geometry.dispose();
 			for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-				// emissiveMap is the same texture.
 				(m as THREE.MeshStandardMaterial).map?.dispose();
 				m.dispose();
 			}
-			if (mesh.isSkinnedMesh) mesh.skeleton.dispose();
 		});
 		object.clear();
 	};
-	return { object, s0, update, setNight, dispose };
+	return { object, update, state, setNight, dispose };
 }
 
 function dist(a: Vec3, b: Vec3): number {
 	return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-}
-
-function isClosed(path: Vec3[]): boolean {
-	return path.length > 2 && dist(path[0], path[path.length - 1]) < CLOSED_EPS;
 }

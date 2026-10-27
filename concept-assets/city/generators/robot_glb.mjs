@@ -1,7 +1,8 @@
 // Post-process export_robot.py's raw glb for the web: prune, dedup, weld, resample (drops keyframes that a
-// linear blend of their neighbours reproduces within RESAMPLE_TOLERANCE), quantize, meshopt. The skin and
-// both animations ('walk', 'idle') stay; the keys stay linear (the robot's walk is the fluid one).
-// Copies robot_meta.json beside the output and prints size, triangles and keyframes.
+// linear blend of their neighbours reproduces within RESAMPLE_TOLERANCE), quantize, meshopt. The variant
+// meshes (ROBOT_V<i>, all on the one rig), the palette strip and both animations ('walk', 'idle') stay; the
+// keys stay linear (the robots' walk is the fluid one).
+// Copies robot_meta.json beside the output and prints size, triangles per variant and keyframes.
 //   node robot_glb.mjs [in=build/robot/robot_raw.glb] [out=../../../static/city/robot.glb]
 import fs from "node:fs";
 import path from "node:path";
@@ -44,9 +45,11 @@ async function main(inPath = DEFAULT_IN, outPath = DEFAULT_OUT) {
 
 	const { triangles } = stats(doc);
 	const joints = doc.getRoot().listSkins().map((s) => s.listJoints().length).join("/");
+	const perMesh = doc.getRoot().listNodes().filter((n) => n.getMesh())
+		.map((n) => `${n.getName()} ${n.getMesh().listPrimitives().reduce((t, p) => t + p.getIndices().getCount() / 3, 0)}`);
 	const kb = (b) => (b / 1024).toFixed(1);
 	console.log(`${outPath}: ${kb(fs.statSync(outPath).size)} KB (+ meta ${kb(fs.statSync(metaOut).size)} KB)`);
-	console.log(`triangles ${triangles}, joints ${joints}, keyframes ${before} -> ${keyframes(doc)}`);
+	console.log(`triangles ${triangles} (${perMesh.join(", ")}), joints ${joints}, keyframes ${before} -> ${keyframes(doc)}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]))

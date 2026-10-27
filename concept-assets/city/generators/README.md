@@ -384,9 +384,9 @@ git-ignored until the user approves the look and its use on the site.
 
 ## Robot
 
-`export_robot.py` bakes the `/city` robot, one mech from the Mech_00 pack in `Assets/Robot` (FBX: a modular
-skinned mesh and a separate animation file on the same 87-bone rig, 60 fps). It needs no .blend, only
-reads the pack and never writes to it:
+`export_robot.py` bakes the `/city` robots: `VARIANTS` (8) seeded mechs from the Mech_00 pack in `Assets/Robot`
+and its Mech_00A expansion (FBX: modular skinned meshes, separate attachment meshes and an animation file, all
+on the same 87-bone rig, 60 fps). It needs no .blend, only reads the pack and never writes to it:
 
 ```sh
 cd concept-assets/city/generators
@@ -394,55 +394,102 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
   -- "$PWD/build/robot"                       # [out_dir] [assets=/run/media/.../Assets/Robot]
 node robot_glb.mjs         # [in=build/robot/robot_raw.glb] [out=../../../static/city/robot.glb]
 node --test test/robot_glb.test.js    # skip when static/city/robot.glb is absent
-# contact sheet of the walk, side (ground stripes sliding at the meta speed) and front (build/robot/, git-ignored;
-# Blender can't read meshopt, so decode.mjs writes a plain copy first):
+# contact sheets (build/robot/, git-ignored; Blender can't read meshopt, so decode.mjs writes a plain copy
+# first): every variant in its palette, idle front / side / back and a walk frame three-quarter, then the walk
+# of variant 0, side (ground stripes sliding at the meta speed) and front
 node build/robot/decode.mjs ../../../static/city/robot.glb build/robot/robot_decoded.glb
+flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/build/robot/check_variants.py" \
+  -- "$PWD/build/robot/robot_decoded.glb" "$PWD/../../../static/city/robot_meta.json" "$PWD/build/robot/variants_sheet.png"
 flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/build/robot/check_walk.py" \
   -- "$PWD/build/robot/robot_decoded.glb" "$PWD/../../../static/city/robot_meta.json" "$PWD/build/robot/walk_sheet.png"
 ```
 
-- **Parts** (`robot_rig.pick_parts`, tested): the medium body set `Base_M_*` with the plain forearms (not
-  `LimbGun`, which the `Core_Palm` hands exclude) and every shared `Core_*` part, 22 meshes. Every part
-  carries an inverted-hull `OutLine` copy of itself (half its faces); those faces are deleted. The parts are
-  joined into one mesh `ROBOT_Mech` in metres: 2,694 triangles, 1,477 vertices, at most 2 bone weights a
-  vertex.
-- **Rig**: the animation file's armature, whose bones rest where the mesh file's do (only the unweighted
-  `c_traj` root is turned), so its actions play as authored. Its object transform (90° about X, scale 0.01)
-  is applied to the bones and the bone location keys scaled by 0.01; the actions' object-level curves are
-  dropped. Bones nothing is weighted to (attachment sockets, finger tips, `lookAt`, twist helpers) are
-  deleted, keeping every ancestor of a weighted bone (`robot_rig.keep_bones`, tested): 43 of 87 remain.
-  The rest pose is lowered 1.9 cm so the soles sit on y = 0 (the outline hull reached lower).
+- **Body sets**: six, `Base_S_`, `Base_M_`, `Base_L_` (`Char_Mesh/Mech_Char_Mesh.fbx`, with every shared
+  `Core_*` part) and `Base(A)_S_`, `Base(A)_M_`, `Base(A)_L_` (`Mech_00A.fbx`), each a part for every slot
+  (`Torso`, `Pelvis`, `Shoulder`, `Arm`, `Forearm` .L/.R, `Thigh`, `Leg`). All are weighted to the same bones
+  and both files' rigs rest exactly where the animation file's does (only the unweighted `c_traj` root is
+  turned), so any mix of sets plays the pack's actions. Every part carries an inverted-hull `OutLine` copy of
+  itself (half its faces); those faces are deleted.
+- **Attachments**: the pack's sockets are bones under the deform bones, one per size (`Shoulder_M_Attachment.L`,
+  `Back_S_Attachment`, ...), and its prefabs place an item on a socket at identity, so an item's vertices go
+  through the socket's rest matrix (scale dropped) and are weighted fully to the socket's parent bone (no action
+  moves a socket against its parent). The socket's size follows the slot it sits on (`SOCKET_SLOT`: back on
+  the torso, elbow on the forearm, knee on the leg ...). Rolled: `Attach_Armour_00`–`02` on shoulders, elbows,
+  thighs or knees, `Attach_Module_00` / `_02` on shoulders or thighs (`ATTACH_FITS`; not `Module_01`, a thin
+  cage that reads as noise at a distance) and `Attach_Back_JetPack_00` on the back. No weapons: `robot_rig.WEAPONS`
+  (`Gun`, `Missile`, `Weapon`, `Sword`, `Hammer`) rules out the `LimbGun` forearms, `Attach_Gun_*`,
+  `Attach_Back_*Gun`, the missiles, the weapon carrier and `Weapons/`.
+- **Variants** (`robot_rig.roll_variants`, tested, `VARIANT_SEED` 7): each variant's main set comes round a
+  shuffled list of the six (so all six lead one), 0–2 slots swapped for another set, one or two mirrored pairs
+  of limb items and a jetpack 40% of the time, at most `VARIANT_MAX_TRIS` (5,000), and no two alike. Each is
+  joined, in name order, into one mesh `ROBOT_V<i>` in metres. v05 result:
+
+  | Variant | Main set | Swapped | Attachments | Triangles |
+  |---|---|---|---|---|
+  | `ROBOT_V0` | `Base(A)_M_` | | jetpack, module 02 on the thighs | 4,452 |
+  | `ROBOT_V1` | `Base_S_` | | jetpack, module 00 on the thighs | 3,428 |
+  | `ROBOT_V2` | `Base(A)_L_` | torso `Base(A)_M_`, leg `Base_S_` | armour 02 on the elbows | 3,388 |
+  | `ROBOT_V3` | `Base(A)_S_` | | armour 02 on the elbows | 3,430 |
+  | `ROBOT_V4` | `Base_M_` | pelvis `Base(A)_M_` | module 02 on the shoulders | 3,366 |
+  | `ROBOT_V5` | `Base_L_` | forearms `Base_S_` | armour 00 on the shoulders | 3,184 |
+  | `ROBOT_V6` | `Base(A)_M_` | | armour 01 on the knees | 3,630 |
+  | `ROBOT_V7` | `Base_S_` | arm `Base(A)_L_` | armour 01 on the shoulders, armour 02 on the elbows | 3,450 |
+
+- **Rig**: the animation file's armature. Its object transform (90° about X, scale 0.01) is applied to the
+  bones and the bone location keys scaled by 0.01; the actions' object-level curves are dropped. Bones no
+  variant is weighted to (sockets, finger tips, `lookAt`, twist helpers) are deleted, keeping every ancestor
+  of a weighted bone (`robot_rig.keep_bones`, tested): 43 of 87 remain. The rest pose is lowered 1.9 cm so
+  the soles sit on y = 0 (the outline hull reached lower); every variant has the shared `Core_Feet`, so all
+  soles agree (checked).
 - **Animations**: `Mech_Walk` (in place, not `Mech_Walk_Root`) as `walk`, 70 frames = 1.1667 s, and
   `Mech_Idle` as `idle`, 80 frames = 1.3333 s, both sampled every frame with linear keys and looping (last
-  frame = first). The robot's walk is the fluid one, played continuously on the page; the people's is
+  frame = first). The robots' walk is the fluid one, played continuously on the page; the people's is
   stepped.
-- **Material**: one `ROBOT_Mech`, the pack's palette `TexturePallets/SimplePalette/SimplePalette0014.png`
-  (80 × 48, green, purple and grey swatches; the FBX points at a missing `D:/` copy) as base colour with
-  nearest filtering, roughness `ROUGHNESS` 0.85, metallic 0. No emission: the pack's readme suggests the
-  palette as emissive, but it has no light swatches, so emitting it would only flatten the shading.
-- **Measures**: the bind (T) pose is 4.063 m tall (the pack's size, kept: inside `HEIGHT_RANGE` 2.5–4.5 m),
-  facing glTF +Z, the origin at the rig root between the feet. `walk_cycle_m` is measured from the planted
-  feet (`robot_rig.stance_cycle_m`, tested): a foot bone within `CONTACT_EPS` (5 mm) of its lowest slides
-  back at the ground speed in the in-place walk, so the mean slide over neighbouring planted frames times
-  the loop's 70 frames is 3.69 m per loop (3.16 m/s; the pack's own `_Root` walk moves 3.52 m, and its feet
-  slip a little). At that speed a planted foot drifts at most 2.1 cm against the ground per stance
-  (`robot_rig.skate_m`). Some foot is on the ground in every walk frame: the lowest vertex stays at y = 0.
-- **Outputs** (`build/robot/`): `robot_raw.glb` (`ROBOT_Rig` armature, skinned `ROBOT_Mech`, animations
-  `walk` and `idle`) and `robot_meta.json` `{version: 1, height, walk_cycle_m, walk_duration_s,
-  idle_duration_s}`. Two runs give byte-identical files.
+- **Material**: one `ROBOT_Mech` for every variant: a strip of `PALETTES` side by side (`robot_palettes.png`,
+  9 × 80 × 48 px) as base colour with nearest filtering, roughness `ROUGHNESS` 0.85, metallic 0; the variants'
+  UVs are squeezed into the first palette (u / 9), so the page picks palette k by offsetting u by k / 9. Each
+  pack palette is two colour ramps and a grey one; the 47 `SimplePalette`s step round the hue wheel, and the
+  pick is every 3rd–5th of them by main colour (red 0000, orange 0004, ochre 0007, green 0014, teal-green
+  0020, cyan 0025, blue 0029, violet 0034; the pink and magenta mains past it left out as garish for a civic
+  city) and `Gray_Col0025` (grey with orange). No emission: the palettes have no light cells.
+- **Measures**: per variant: the bind (T) pose height (4.063 m for all: the shared head is the top, inside
+  `HEIGHT_RANGE` 2.5–4.5 m), facing glTF +Z, the origin at the rig root between the feet. `walk_cycle_m` is
+  measured from the planted feet (`robot_rig.stance_cycle_m`, tested): a foot bone within `CONTACT_EPS` (5 mm)
+  of its lowest slides back at the ground speed in the in-place walk, so the mean slide over neighbouring
+  planted frames times the loop's 70 frames is 3.69 m per loop (3.16 m/s; the pack's own `_Root` walk moves
+  3.52 m, and its feet slip a little). It is measured per variant, and comes out the same for all eight: the
+  sets only change the meshes on the same foot bones. At that speed a planted foot drifts at most 2.1 cm
+  against the ground per stance (`robot_rig.skate_m`). Some foot is on the ground in every walk frame: the
+  lowest vertex stays at y = 0.
+- **Outputs** (`build/robot/`): `robot_raw.glb` (`ROBOT_Rig` armature, skinned `ROBOT_V0`–`ROBOT_V7`,
+  animations `walk` and `idle`), `robot_palettes.png` and `robot_meta.json` `{version: 2, height,
+  walk_cycle_m, walk_duration_s, idle_duration_s, palettes: [name], variants: [{name, height, walk_cycle_m,
+  tris, main, slots, attachments: [[item, socket]]}]}` (the top-level height and walk_cycle_m are variant
+  0's). Two runs give byte-identical files.
 
 `robot_glb.mjs` runs `prune`, `dedup`, `weld`, `resample` (drops keys a linear blend of their neighbours
 gives within 1e-4; walk 9,159 → 1,763 keys, idle 10,449 → 1,021), `quantize` and `meshopt`, writes
-`static/city/robot.glb` and copies `robot_meta.json` beside it: 134.5 KB (137,740 bytes).
+`static/city/robot.glb` and copies `robot_meta.json` beside it: 446.7 KB (28,328 triangles in all); two runs
+give the same bytes.
 
-On the page (`src/lib/city/robot.ts`) the one robot walks a loop down the middle of the avenue, clear of the
-pavement walkers: round the avenue axis (the pointwise mean of the walk paths, on their ground), legs
-`ROBOT_LANE.halfGap` 7 m either side of it from 10 m to 170 m up the avenue, joined by half circles, its heading
-the chord ±`ROBOT_TURN_LOOK` 1.5 m so it turns smoothly. It moves at `walk_cycle_m / walk_duration_s` and the
-paused `walk` clip's time follows the distance walked, driven by the scene clock like the people (frozen with
-reduced motion). At night its palette glows at `ROBOT_NIGHT_GLOW` 0.15 so it reads against the dark trees.
-Without `robot.glb` or `robot_meta.json` there is no robot. It adds 2 draw calls (main + shadow) and 2,694
-triangles each.
+On the page (`src/lib/city/robot.ts`) `ROBOT_COUNT` (2; set it to 1 for a single robot) robots cross the
+view on the export's `robot_routes` (see "Robot routes"; none without them). Each is a skeleton clone of the
+glb with its own material (the palette offset) showing one variant mesh at a time. A pass: pick a route no
+other robot is on, preferring one the camera sees at the current frame (a `view` sample within
+`ROUTE_VIEW_SLACK` 5 frames, `pickRoute`), a direction (its points as stored, screen left to right, or
+reversed), a variant and a palette (`pickIndex`: not its own last ones nor the other robot's), all from
+`mulberry32(ROBOT_SEED + i)`; then it walks the route from end to end (both ends are hidden) at the variant's
+`walk_cycle_m / walk_duration_s`, on the polyline's ground (riding the 0.6 m kerb on `street_57`), its
+heading the chord ±`ROBOT_TURN_LOOK` 1.5 m so it turns smoothly round the ring arcs (`routePose`). The paused
+`walk` clip's time follows the distance walked at the variant's stride (`robotWalkTime`), driven by the
+scene clock like the people (frozen with reduced motion). Off the far end it is hidden for
+`ROBOT_RESPAWN_GAP` (0.5–3 s) and the next pass is rolled. The first pass starts part of the way along, so
+the two don't set off together. At night the palette glows at `ROBOT_NIGHT_GLOW` 0.15 so it reads against
+the dark trees. Without `robot.glb` or a version-2 `robot_meta.json` there is no robot (`loadRobotAsset`,
+tested). Each robot adds 2 draw calls (main + shadow) and up to 4,452 triangles each; with both at 2893×1271
+(desktop, shadows) the page peaks at 253 draw calls by day, 269 by night, and 1.458 M triangles. In v05 a
+pass takes 18–23 s; `street_57` passes about 70 m from the camera (a robot about 70 px tall at 720p), the
+other four 370–420 m out (about 12 px).
 
 The pack's licence allows its use in projects but not redistributing it as a standalone asset. Like the
 people, `robot.glb` and `robot_meta.json` are git-ignored until the user approves the look.
