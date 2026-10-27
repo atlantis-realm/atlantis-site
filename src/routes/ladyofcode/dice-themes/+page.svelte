@@ -1,4 +1,5 @@
 <script lang="ts">
+	import OceanPage from '#lib/components/layout/OceanPage.svelte';
 	import { onMount } from 'svelte';
 	import ThemeCatalogSection from '#lib/components/dice/ThemeCatalogSection.svelte';
 	import {
@@ -103,10 +104,9 @@
 	<title>Dice Themes · Atlantis</title>
 </svelte:head>
 
-<section class="dice-themes-page">
-	<div class="content-wrapper">
-		<header>
-			<h1>Dice Themes</h1>
+<OceanPage title="Dice Themes">
+	<div class="dice-themes">
+		<section class="card">
 			<p class="lede">
 				Browse themes below and preview them on the dice set. During stream, use the chat command on
 				each card to set your theme.
@@ -115,7 +115,7 @@
 				You can only change your theme during stream once every 20 minutes. After we migrate to
 				Grid, you'll have your own settings page to pick your theme whenever.
 			</p>
-		</header>
+		</section>
 
 		<div class="canvas-shell">
 			<div class="canvas-frame" data-layout={layoutMode}>
@@ -164,36 +164,18 @@
 			onselect={selectTheme}
 		/>
 	</div>
-</section>
+</OceanPage>
 
 <style>
 	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
 	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap');
 
-	.dice-themes-page {
-		min-height: 100vh;
-		background: linear-gradient(to bottom, #2e4057 0%, #1a2838 100%);
-		padding: 80px 20px 40px;
+	.dice-themes {
+		display: flex;
+		flex-direction: column;
+		gap: 1.5rem;
 		color: #eeefb7;
 		font-family: 'Ubuntu Sans Mono', monospace;
-	}
-
-	.content-wrapper {
-		max-width: 1200px;
-		margin: 0 auto;
-	}
-
-	header {
-		text-align: center;
-		margin-bottom: 2rem;
-	}
-
-	h1 {
-		font-family: 'Cinzel Decorative', cursive;
-		font-size: clamp(2rem, 5vw, 3rem);
-		margin: 0 0 1rem;
-		color: hsl(45, 67%, 74%);
-		letter-spacing: 2px;
 	}
 
 	.lede {

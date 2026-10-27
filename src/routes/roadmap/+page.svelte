@@ -1,8 +1,14 @@
-<section class="roadmap-section">
-	<div class="content-wrapper">
-		<h1>Roadmap</h1>
+<script lang="ts">
+	import OceanPage from '#lib/components/layout/OceanPage.svelte';
+</script>
 
-		<section class="ongoing-events">
+<svelte:head>
+	<title>Roadmap · Atlantis</title>
+</svelte:head>
+
+<OceanPage title="Roadmap">
+	<div class="roadmap">
+		<section class="card">
 			<h2>Ongoing</h2>
 			<ul class="events-list">
 				<li>
@@ -28,7 +34,7 @@
 			</ul>
 		</section>
 
-		<section>
+		<section class="card">
 			<h2>Upcoming</h2>
 
 			<div class="roadmap-container">
@@ -112,38 +118,18 @@
 			</div>
 		</section>
 	</div>
-</section>
+</OceanPage>
 
 <style>
 	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
 	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap');
 
-	.roadmap-section {
-		position: relative;
-		min-height: 100vh;
-		background: linear-gradient(to bottom, #2e4057 0%, #1a2838 100%);
-		padding: 80px 20px;
+	.roadmap {
+		display: flex;
+		flex-direction: column;
+		gap: 1.5rem;
 		color: #eeefb7;
 		font-family: 'Ubuntu Sans Mono', monospace;
-	}
-
-	.content-wrapper {
-		max-width: 900px;
-		width: 100%;
-		margin: 0 auto;
-	}
-
-	h1 {
-		font-family: 'Cinzel Decorative', cursive;
-		font-size: 3rem;
-		margin-bottom: 4rem;
-		color: hsl(45, 67%, 74%);
-		letter-spacing: 2px;
-		text-align: center;
-	}
-
-	.ongoing-events {
-		margin-bottom: 5rem;
 	}
 
 	h2 {
@@ -242,16 +228,7 @@
 	}
 
 	@media (max-width: 768px) {
-		h1 {
-			font-size: 2rem;
-			margin-bottom: 3rem;
-		}
-
-		.ongoing-events {
-			margin-bottom: 4rem;
-		}
-
-		.ongoing-events h2 {
+		h2 {
 			font-size: 1.5rem;
 			margin-bottom: 1.5rem;
 		}

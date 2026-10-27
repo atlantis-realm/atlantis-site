@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { POOL_RADIUS, WaterWorld } from '#lib/water/WaterWorld.js';
 
 // All distances are in metres (1 unit = 1 m). The tower stands at the origin and the
 // path runs along the z axis, with the viewer on the +z side looking back at the tower.
@@ -8,8 +9,9 @@ const CUBE_SIZES = [600, 400, 250];
 
 // The well sits on the path this far from the tower. The viewer starts on its front edge
 // (towards the tower), so it's behind them while they look down, then steps back into its middle.
+// The well is the water world's pool (see WaterWorld).
 const WELL_DISTANCE = 3000;
-const WELL_RADIUS = 1.5;
+const WELL_RADIUS = POOL_RADIUS;
 const STEP_BACK = WELL_RADIUS;
 const VIEWER_DISTANCE = WELL_DISTANCE - STEP_BACK;
 const EYE_HEIGHT = 1.83; // ~6 ft
@@ -17,7 +19,7 @@ const EYE_HEIGHT = 1.83; // ~6 ft
 const FOV = 50;
 
 // Scroll-driven intro: look down at the floor, pan up to the tower, step back into the well,
-// then sink below the surface. Pitch is in radians; 0 is straight ahead with the horizon at eye level.
+// sink below the surface, then dive on down through the water into the dark. Pitch is in radians; 0 is straight ahead with the horizon at eye level.
 const FLOOR_PITCH = THREE.MathUtils.degToRad(-45);
 const TOWER_PITCH = 0;
 const STEP_BOB = 0.04; // slight dip mid-step so it reads as walking, not sliding
@@ -26,14 +28,20 @@ const PAN_END = 1;
 const STEP_END = PAN_END + 1;
 // Sinking gets a little more scroll than the other beats so it reads as sinking, not dropping.
 const SINK_END = STEP_END + 1.5;
+// The dive, from just under the surface down into the abyss. The page's content starts scrolling
+// up over the water a quarter of the way in, where the light shafts are; the rest of the dive is
+// spread over the rest of the page, so the background gets darker all the way to the bottom.
+const DIVE_END = SINK_END + 4;
+const CONTENT_TIME = SINK_END + 1;
 // How quickly the camera catches up to the scroll position (higher is snappier).
 const SCROLL_DAMPING = 6;
 
 const WATER_LEVEL = 0.01; // lifted slightly so the surface doesn't z-fight with the path
-const SINK_DEPTH = 1.5; // how far below the surface the eye ends up
-const WELL_DEPTH = 8;
-const UNDERWATER_COLOR = 0x0b3d5e;
-const UNDERWATER_FOG_DENSITY = 0.25;
+const SINK_DEPTH = 1.5; // how far below the surface the sink takes the eye
+// How far below the surface the dive ends (same as the /smoke experiment), and how far the camera
+// drifts back out of the column of light on the way down, so it's seen rather than sat inside.
+const DIVE_DEPTH = 12;
+const DRIFT_BACK = 7;
 
 const PATH_WIDTH = 40;
 const PATH_LENGTH = 10000;
@@ -66,12 +74,10 @@ export class HomeScene {
 	private readonly cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xebd38f });
 	private readonly buildingMaterial = new THREE.MeshStandardMaterial({ color: 0xa9b4c2 });
 	private readonly path: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
-	private readonly well: THREE.Mesh<THREE.CircleGeometry, THREE.MeshStandardMaterial>;
-	private readonly wellShaft: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
-	// Fog stays attached and is switched on/off via density, so going underwater doesn't
-	// force every material to recompile mid-animation.
-	private readonly underwaterFog = new THREE.FogExp2(UNDERWATER_COLOR, 0);
-	private readonly underwaterBackground = new THREE.Color(UNDERWATER_COLOR);
+	private readonly water: WaterWorld;
+	// Everything above the water (tower, path, buildings), hidden once the camera is under it so
+	// none of it shows through the surface.
+	private readonly landmarks: THREE.Object3D[] = [];
 	private readonly timer = new THREE.Timer();
 	// Reduced motion follows the scroll exactly instead of easing after it.
 	private readonly reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -110,6 +116,7 @@ export class HomeScene {
 			cube.position.y = towerTop + size / 2;
 			towerTop += size;
 			this.scene.add(cube);
+			this.landmarks.push(cube);
 		}
 
 		this.path = new THREE.Mesh(
@@ -119,25 +126,13 @@ export class HomeScene {
 		this.path.rotation.x = -Math.PI / 2;
 		this.path.position.z = PATH_BEHIND_TOWER - PATH_LENGTH / 2;
 		this.scene.add(this.path);
+		this.landmarks.push(this.path);
 
-		this.well = new THREE.Mesh(
-			new THREE.CircleGeometry(WELL_RADIUS, 64),
-			// Double-sided so the surface is still there when seen from below.
-			new THREE.MeshStandardMaterial({ color: 0x1f78b4, side: THREE.DoubleSide })
-		);
-		this.well.rotation.x = -Math.PI / 2;
-		this.well.position.set(0, WATER_LEVEL, WELL_DISTANCE);
-		this.scene.add(this.well);
-
-		// Open-ended cylinder rendered from the inside: the walls you see once submerged.
-		this.wellShaft = new THREE.Mesh(
-			new THREE.CylinderGeometry(WELL_RADIUS, WELL_RADIUS, WELL_DEPTH, 64, 1, true),
-			new THREE.MeshStandardMaterial({ color: 0x1b5a7a, side: THREE.BackSide })
-		);
-		this.wellShaft.position.set(0, WATER_LEVEL - WELL_DEPTH / 2, WELL_DISTANCE);
-		this.scene.add(this.wellShaft);
-
-		this.scene.fog = this.underwaterFog;
+		this.water = new WaterWorld(this.scene, {
+			pool: new THREE.Vector3(0, WATER_LEVEL, WELL_DISTANCE),
+			startHeight: EYE_HEIGHT - WATER_LEVEL,
+			descent: DIVE_DEPTH
+		});
 
 		this.addBuildings();
 
@@ -164,21 +159,29 @@ export class HomeScene {
 					z - width / 2
 				);
 				this.scene.add(building);
+				this.landmarks.push(building);
 
 				z -= width + BUILDING_GAP;
 			}
 		}
 	}
 
-	/** Scrub the intro: 0 is looking at the floor, 1 is fully submerged. */
-	setProgress(progress: number): void {
-		this.targetTime = THREE.MathUtils.clamp(progress, 0, 1) * SINK_END;
+	/**
+	 * Scrub the timeline. `intro` runs 0..1 over the intro (looking at the floor, down to where the
+	 * content starts); `rest` runs 0..1 over the rest of the page, down to the bottom of the dive.
+	 */
+	setProgress(intro: number, rest: number): void {
+		const clamp = THREE.MathUtils.clamp;
+		this.targetTime =
+			clamp(intro, 0, 1) * CONTENT_TIME + clamp(rest, 0, 1) * (DIVE_END - CONTENT_TIME);
 	}
 
 	private updateCamera(time: number): void {
 		const pan = THREE.MathUtils.smootherstep(time, 0, PAN_END);
 		const step = THREE.MathUtils.smootherstep(time, PAN_END, STEP_END);
 		const sink = THREE.MathUtils.smootherstep(time, STEP_END, SINK_END);
+		const dive = THREE.MathUtils.smoothstep(time, SINK_END, DIVE_END);
+		const driftBack = THREE.MathUtils.smootherstep(time, SINK_END, (SINK_END + DIVE_END) / 2);
 
 		// Camera looks down -z (towards the tower) by default, so pitch is just rotation.x.
 		this.camera.rotation.x = THREE.MathUtils.lerp(FLOOR_PITCH, TOWER_PITCH, pan);
@@ -186,13 +189,10 @@ export class HomeScene {
 			0,
 			EYE_HEIGHT -
 				STEP_BOB * Math.sin(Math.PI * step) -
-				(EYE_HEIGHT - WATER_LEVEL + SINK_DEPTH) * sink,
-			VIEWER_DISTANCE + STEP_BACK * step
+				(EYE_HEIGHT - WATER_LEVEL + SINK_DEPTH) * sink -
+				(DIVE_DEPTH - SINK_DEPTH) * dive,
+			VIEWER_DISTANCE + STEP_BACK * step + DRIFT_BACK * driftBack
 		);
-
-		const submerged = this.camera.position.y < WATER_LEVEL;
-		this.underwaterFog.density = submerged ? UNDERWATER_FOG_DENSITY : 0;
-		this.scene.background = submerged ? this.underwaterBackground : null;
 	}
 
 	resize(): void {
@@ -204,6 +204,7 @@ export class HomeScene {
 		this.camera.updateProjectionMatrix();
 		this.renderer.setSize(width, height, false);
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+		this.water.resize(this.renderer, this.camera);
 	}
 
 	private tick = (timestamp: number): void => {
@@ -219,13 +220,15 @@ export class HomeScene {
 					this.timer.getDelta()
 				);
 		this.updateCamera(this.currentTime);
-
-		this.renderer.render(this.scene, this.camera);
+		this.water.update(this.camera, this.reducedMotion ? 0 : this.timer.getElapsed());
+		// The underwater render path has no depth buffer, so the landmarks go as soon as it starts.
+		for (const landmark of this.landmarks) landmark.visible = !this.water.submerged;
+		this.water.render(this.renderer, this.scene, this.camera);
 		this.animationFrameId = requestAnimationFrame(this.tick);
 	};
 
 	start(): void {
-		if (this.animationFrameId != null) return;
+		if (this.destroyed || this.animationFrameId != null) return;
 		this.animationFrameId = requestAnimationFrame(this.tick);
 	}
 
@@ -244,10 +247,7 @@ export class HomeScene {
 		this.buildingMaterial.dispose();
 		this.path.geometry.dispose();
 		this.path.material.dispose();
-		this.well.geometry.dispose();
-		this.well.material.dispose();
-		this.wellShaft.geometry.dispose();
-		this.wellShaft.material.dispose();
+		this.water.dispose();
 		this.scene.clear();
 		this.renderer.dispose();
 	}

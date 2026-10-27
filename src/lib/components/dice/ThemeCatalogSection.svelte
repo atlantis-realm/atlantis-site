@@ -13,7 +13,7 @@
 	let { title, note, themes, selectedId, onselect }: Props = $props();
 </script>
 
-<section class="catalog-section">
+<section class="card">
 	<header>
 		<h2>{title}</h2>
 		{#if note}
@@ -31,10 +31,6 @@
 </section>
 
 <style>
-	.catalog-section {
-		margin-top: 2.5rem;
-	}
-
 	header {
 		margin-bottom: 1rem;
 	}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import OceanPage from '#lib/components/layout/OceanPage.svelte';
 	import { blogPosts } from '#lib/content/blogPosts.js';
 </script>
 
@@ -6,17 +7,16 @@
 	<title>Blog · Atlantis</title>
 </svelte:head>
 
-<main>
-	<h1>Blog</h1>
-	<p>Updates from the guild.</p>
+<OceanPage title="Blog">
+	<section class="card">
+		<p>Updates from the guild.</p>
+	</section>
 
-	<ul>
-		{#each blogPosts as post (post.slug)}
-			<li>
-				<a href="/blog/{post.slug}">{post.title}</a>
-				<p>{post.author} · {post.date}</p>
-				<p>{post.excerpt}</p>
-			</li>
-		{/each}
-	</ul>
-</main>
+	{#each blogPosts as post (post.slug)}
+		<article class="card">
+			<h2><a href="/blog/{post.slug}">{post.title}</a></h2>
+			<p>{post.author} · {post.date}</p>
+			<p>{post.excerpt}</p>
+		</article>
+	{/each}
+</OceanPage>

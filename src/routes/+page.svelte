@@ -3,6 +3,8 @@
 	import type { HomeScene } from '#lib/home/HomeScene.js';
 	import { blogPosts } from '#lib/content/blogPosts.js';
 	import { upcomingEvents } from '#lib/content/events.js';
+	import { projects } from '#lib/content/projects.js';
+	import ProjectCard from '#lib/components/projects/ProjectCard.svelte';
 
 	const [featuredPost, ...otherPosts] = [...blogPosts].sort((a, b) => b.date.localeCompare(a.date));
 	const smallPosts = otherPosts.slice(0, 4);
@@ -42,28 +44,23 @@
 
 	const upcomingStreams = nextStreamDates(2);
 
-	// The scene is pinned while the page scrolls past it. Scroll distances are in screen heights:
-	// the camera intro plays over the first stretch, then the view finishes fading to black.
-	const INTRO_SCREENS = 3;
-	const FADE_SCREENS = 0.5;
-	// Point in the intro where the fade begins; ~0.8 is roughly when the camera goes underwater.
-	const FADE_START = 0.8;
+	// The water scene is fixed behind the whole page. The intro (street, step back into the well,
+	// sink through it) plays over the first screens, down to where the light shafts are; then the
+	// content scrolls up over the water and the dive carries on underneath it, getting darker,
+	// reaching the abyss at the bottom of the page.
+	const INTRO_SCREENS = 4;
 
-	let sceneTrack: HTMLElement | undefined = $state();
 	let canvas: HTMLCanvasElement | undefined = $state();
+	let track: HTMLDivElement | undefined = $state();
 	let scene: HomeScene | undefined;
-	let fade = $state(0);
 
 	function syncScroll(): void {
-		if (!sceneTrack) return;
-
-		const scrolled = -sceneTrack.getBoundingClientRect().top;
-		const introProgress = scrolled / (INTRO_SCREENS * window.innerHeight);
-		scene?.setProgress(introProgress);
-
-		const fadeFrom = FADE_START * INTRO_SCREENS * window.innerHeight;
-		const fadeTo = (INTRO_SCREENS + FADE_SCREENS) * window.innerHeight;
-		fade = Math.min(Math.max((scrolled - fadeFrom) / (fadeTo - fadeFrom), 0), 1);
+		// Measured rather than INTRO_SCREENS * innerHeight: the track is sized in vh, which on mobile
+		// is the large viewport (URL bar hidden), not the current innerHeight.
+		const intro = track?.offsetHeight ?? INTRO_SCREENS * window.innerHeight;
+		const rest = document.documentElement.scrollHeight - window.innerHeight - intro;
+		const scrolled = window.scrollY;
+		scene?.setProgress(scrolled / intro, rest > 0 ? (scrolled - intro) / rest : 0);
 	}
 
 	onMount(() => {
@@ -92,16 +89,10 @@
 
 <svelte:window onscroll={syncScroll} onresize={syncScroll} />
 
-<section
-	id="scene-section"
-	bind:this={sceneTrack}
-	style:--scroll-screens={INTRO_SCREENS + FADE_SCREENS}
->
-	<div class="scene-viewport">
-		<canvas bind:this={canvas}></canvas>
-		<div class="scene-fade" style:opacity={fade}></div>
-	</div>
-</section>
+<div class="scene-stage">
+	<canvas bind:this={canvas} aria-hidden="true"></canvas>
+</div>
+<div class="scene-track" style:--intro-screens={INTRO_SCREENS} bind:this={track}></div>
 
 <section id="community-section">
 	<div class="content-wrapper">
@@ -115,6 +106,15 @@
 			<p class="added">
 				<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
 			</p>
+			<p class="age-note">18+ only</p>
+			<a
+				href="https://discord.com/invite/4gQAndh"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="discord-button"
+			>
+				Join us on Discord
+			</a>
 		</div>
 
 		<div class="divider"></div>
@@ -175,24 +175,11 @@
 
 		<h2>Community projects</h2>
 		<div class="project-grid">
-			<div class="project-card">
-				<p>
-					We're creating a collective mood board to define our design language direction... And
-					brainstorm ideas for visualising Atlantis as an actual city.
-				</p>
-			</div>
-			<div class="project-card">
-				<p>
-					We're also starting a collaborative playlist to share favourite songs with each other. :D
-				</p>
-			</div>
-			<div class="project-card">
-				<p>
-					<a href="/ladyofcode/dice-themes" class="text-link">Browse stream dice themes</a>
-					— preview materials and grab the <code>!dicethemes</code> chat command for each one.
-				</p>
-			</div>
+			{#each projects as project (project.title)}
+				<ProjectCard {project} />
+			{/each}
 		</div>
+		<p class="added"><a href="/projects" class="text-link">All projects</a></p>
 		
 		<div class="divider"></div>
 
@@ -208,13 +195,6 @@
 				Member icons go here. Members without an icon get a generated default Atlantis symbol.
 			</p>
 	
-			<h3>What are we like?</h3>
-			<p>
-				Everyone approaches their craft with love and a huge amount of effort. Guildies are from
-				around the world, so expect a bunch of different cultures and personalities. The vibe is
-				generally easygoing, littered with puns and terrible jokes.
-			</p>
-			<p class="reassurance">Atlantis is chaos only a portion of the time, we promise &lt;3</p>
 			<p class="age-note">18+ only</p>
 	
 			<a
@@ -233,39 +213,28 @@
 	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
 	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap');
 
-	/* Tall scroll track; the viewport inside sticks to the screen while the track scrolls past. */
-	#scene-section {
-		position: relative;
-		height: calc((1 + var(--scroll-screens)) * 100vh);
+	/* The water scene, fixed behind the whole page; the layout's nav and the content draw over it. */
+	.scene-stage {
+		position: fixed;
+		inset: 0;
+		z-index: -1;
 		background: #000;
 	}
 
-	.scene-viewport {
-		position: sticky;
-		top: 0;
-		height: 100vh;
-	}
-
-	.scene-viewport canvas {
-		position: absolute;
-		inset: 0;
+	.scene-stage canvas {
 		display: block;
 		width: 100%;
 		height: 100%;
 	}
 
-	/* Black overlay faded in by scroll, so the water hands off seamlessly to the black page below. */
-	.scene-fade {
-		position: absolute;
-		inset: 0;
-		background: #000;
-		pointer-events: none;
+	/* Scroll room for the intro; the content starts coming up from the bottom of the screen as it ends. */
+	.scene-track {
+		height: calc(var(--intro-screens) * 100vh);
 	}
 
 	#community-section {
 		position: relative;
 		min-height: 100vh;
-		background: #000;
 		padding: 80px 20px;
 		display: flex;
 		align-items: center;
@@ -273,61 +242,6 @@
 		color: #eeefb7;
 		z-index: 1;
 		font-family: 'Ubuntu Sans Mono', monospace;
-	}
-
-	/* Square dots on a grid with a slowly pulsing glow, layered over the gradient.
-	   ::before draws the dots, ::after draws a blurred copy as the glow. */
-	#community-section {
-		--dot-size: 2px;
-		--dot-color: hsl(45, 67%, 74%);
-		--dot-glow-color: hsl(45, 67%, 74%);
-		--dot-spacing: 100px;
-	}
-
-	#community-section::before,
-	#community-section::after {
-		content: '';
-		position: absolute;
-		inset: 0;
-		pointer-events: none;
-		background-image: conic-gradient(
-			from 270deg at var(--dot-size) var(--dot-size),
-			var(--dot-layer-color) 25%,
-			transparent 0
-		);
-		background-size: var(--dot-spacing) var(--dot-spacing);
-		background-position: calc((var(--dot-spacing) - var(--dot-size)) / 2)
-			calc((var(--dot-spacing) - var(--dot-size)) / 2);
-	}
-
-	#community-section::before {
-		--dot-layer-color: var(--dot-color);
-		z-index: -1;
-	}
-
-	#community-section::after {
-		--dot-layer-color: var(--dot-glow-color);
-		z-index: -2;
-		filter: blur(4px);
-		animation: dotGlow 8s ease-in-out infinite;
-	}
-
-	@keyframes dotGlow {
-		0%,
-		100% {
-			opacity: 0.1;
-		}
-
-		50% {
-			opacity: 1;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		#community-section::after {
-			animation: none;
-			opacity: 0.5;
-		}
 	}
 
 	.content-wrapper {
@@ -360,7 +274,8 @@
 		width: 100px;
 		height: 2px;
 		background: linear-gradient(to right, transparent, hsl(45, 67%, 74%), transparent);
-		margin: 3rem auto;
+		/* Generous room between sections, so each one surfaces on its own as the water darkens. */
+		margin: clamp(6rem, 20vh, 12rem) auto;
 	}
 
 	h2 {
@@ -376,13 +291,6 @@
 		line-height: 1.8;
 		margin-bottom: 1.5rem;
 		color: rgba(238, 239, 183, 0.9);
-	}
-
-	.reassurance {
-		font-size: 1.2rem;
-		margin-top: 2rem;
-		color: rgba(8, 107, 125, 0.8);
-		font-style: italic;
 	}
 
 	.discord-button {
@@ -526,16 +434,6 @@
 		text-align: left;
 	}
 
-	.project-card {
-		padding: 1rem;
-		border-radius: 8px;
-		background: #243448;
-	}
-
-	#community-section .project-card p {
-		margin: 0;
-	}
-
 	.member-grid {
 		list-style: none;
 		padding: 0;
@@ -590,12 +488,6 @@
 		margin-top: 1rem;
 	}
 
-	#community-section code {
-		font-size: 0.95em;
-		padding: 0.1rem 0.35rem;
-		border-radius: 4px;
-		background: #223245;
-	}
 
 	@media (max-width: 768px) {
 		.news-grid,

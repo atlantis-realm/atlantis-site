@@ -13,3 +13,56 @@ body {
 .added * {
     font-family: 'Times New Roman', Times, serif !important;
 }
+
+/* Headings whose letters wave in turn on hover; the wave action wraps each letter in a span. */
+.wave-char {
+    display: inline-block;
+}
+
+:hover > .wave-char {
+    animation: wave 2s infinite;
+    animation-delay: calc(var(--i) * 120ms);
+}
+
+@keyframes wave {
+    0%   { transform: translateY(0); animation-timing-function: ease-out; }
+    33%  { transform: translateY(-0.4rem); animation-timing-function: ease-in-out; }
+    66%  { transform: translateY(0.6rem); animation-timing-function: ease-in; }
+    100% { transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :hover > .wave-char {
+        animation: none;
+    }
+}
+
+/* Base panel for page sections: tinted glass, readable over the water at any depth. The HUD and
+   circuit-board styling will build on this. No backdrop-filter: the water behind redraws every
+   frame, so a blur would be recomputed per card per frame; a more opaque tint reads as well. */
+.card {
+    padding: 1.5rem 1.75rem;
+    border: 1px solid rgb(255 255 255 / 0.15);
+    border-radius: 12px;
+    background: rgb(20 30 44 / 0.82);
+    color: hsl(45, 67%, 88%);
+    line-height: 1.6;
+}
+
+.card h2,
+.card h3 {
+    margin-top: 0;
+    color: hsl(45, 67%, 74%);
+}
+
+.card > :first-child {
+    margin-top: 0;
+}
+
+.card > :last-child {
+    margin-bottom: 0;
+}
+
+.card a {
+    color: hsl(190, 70%, 78%);
+}

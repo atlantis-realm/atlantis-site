@@ -1,4 +1,5 @@
 <script lang="ts">
+	import OceanPage from '#lib/components/layout/OceanPage.svelte';
 	let { data } = $props();
 </script>
 
@@ -6,12 +7,25 @@
 	<title>{data.post.title} · Atlantis</title>
 </svelte:head>
 
-<main>
-	<p><a href="/blog">← Back to blog</a></p>
-	<h1>{data.post.title}</h1>
-	<p>{data.post.author} · {data.post.date}</p>
+<OceanPage title={data.post.title}>
+	{#snippet above()}
+		<p class="back"><a href="/blog">← Back to blog</a></p>
+	{/snippet}
 
-	{#each data.post.body as paragraph}
-		<p>{paragraph}</p>
-	{/each}
-</main>
+	<article class="card">
+		<p>{data.post.author} · {data.post.date}</p>
+		{#each data.post.body as paragraph, i (i)}
+			<p>{paragraph}</p>
+		{/each}
+	</article>
+</OceanPage>
+
+<style>
+	.back {
+		margin: 0 0 0.5rem;
+	}
+
+	.back a {
+		color: #13283f;
+	}
+</style>
