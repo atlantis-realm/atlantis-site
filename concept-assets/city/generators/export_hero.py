@@ -86,6 +86,7 @@ SUBDIV_MAX_EDGE = 200.0                 # m: faces with longer edges (sea, groun
 SUBDIV_MAX_PASSES = 6
 SMOOTH_ANGLE_DEG = 30.0                  # smooth by angle: edges between faces closer than this shade smooth
 AO_SAMPLES, AO_DISTANCE = 32, 8.0
+AO_SMOOTH_PASSES = 2                    # neighbour-averaging passes over the baked AO (smooth_ao)
 NO_AO_MATERIALS = {"MAT_AP_Water"}      # water gets white AO and no subdivision
 
 TREE_OBJECT_PREFIXES = ("KIT_PlantD_",)
@@ -541,6 +542,28 @@ def smooth_by_angle(me):
     me.set_sharp_from_angle(angle=math.radians(SMOOTH_ANGLE_DEG))
 
 
+def smooth_ao(me, passes=AO_SMOOTH_PASSES):
+    """Average the baked AO per vertex, then blend each vertex with its edge neighbours `passes` times.
+    Cycles bakes vertex AO at the exact vertex position, so corners that touch other geometry (the foot of
+    each well-ring riser) come out black or white by float luck; alternating neighbours drew a sawtooth."""
+    attr = me.color_attributes.get("AO")
+    nl, nv = len(me.loops), len(me.vertices)
+    if attr is None or nl == 0:
+        return
+    col = np.empty(nl * 4, np.float32); attr.data.foreach_get("color", col)
+    col = col.reshape(-1, 4)
+    lv = np.empty(nl, np.int64); me.loops.foreach_get("vertex_index", lv)
+    ev = np.empty(len(me.edges) * 2, np.int64); me.edges.foreach_get("vertices", ev)
+    a, b = ev[0::2], ev[1::2]
+    deg = np.bincount(a, minlength=nv) + np.bincount(b, minlength=nv)
+    v = np.bincount(lv, col[:, 0], nv) / np.maximum(np.bincount(lv, minlength=nv), 1)
+    for _ in range(passes):
+        nsum = np.bincount(a, v[b], nv) + np.bincount(b, v[a], nv)
+        v = np.where(deg > 0, 0.5 * v + 0.5 * nsum / np.maximum(deg, 1), v)
+    col[:, :3] = v[lv, None]
+    attr.data.foreach_set("color", col.ravel())
+
+
 def ao_white(me):
     attr = me.color_attributes.get("AO") or me.color_attributes.new("AO", "BYTE_COLOR", "CORNER")
     attr.data.foreach_set("color", np.ones(len(me.loops) * 4, np.float32))
@@ -962,6 +985,8 @@ def run():
             with bpy.context.temp_override(scene=hs, view_layer=vl, active_object=bake[0],
                                            selected_objects=bake, selected_editable_objects=bake):
                 bpy.ops.object.bake(type="AO", target=vc_target, use_clear=True)
+        for ob in bake:
+            smooth_ao(ob.data)
         timing["bake"] = time.time() - t0
 
         # ---- camera
