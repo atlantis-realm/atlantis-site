@@ -444,6 +444,9 @@ InstancedMeshes (no extra draw calls):
   stands; update() writes a member's key only when it changes. With v05's spots (`CONVO_SEED` picked for a
   spread) the groups are 2, 3 and 5 on the well walkway and 4 at the avenue's foot.
 
+With `botSlots` (`MINIBOT_TALKERS`, 2) one member of that many groups is left out for a minibot (see
+"Minibots"), so the people are 2 fewer; `People` also returns `walkers` (the minibots step round them).
+
 Reduced motion freezes the scene clock, so the conversations hold their first beat. The capsule fallback and
 an old (version 2) meta have no conversations or forward leans. `PEOPLE_PER_PATH` stays 30
 (120 walkers; 40 per path took the frame to 1.54 M triangles when the idle people came in). With the robots,
@@ -538,10 +541,17 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
   tris, main, slots, attachments: [[item, socket]]}]}` (the top-level height and walk_cycle_m are variant
   0's). Two runs give byte-identical files.
 
-`robot_glb.mjs` runs `prune`, `dedup`, `weld`, `resample` (drops keys a linear blend of their neighbours
-gives within 1e-4; walk 9,159 → 1,763 keys, idle 10,449 → 1,021), `quantize` and `meshopt`, writes
-`static/city/robot.glb` and copies `robot_meta.json` beside it: 446.7 KB (28,328 triangles in all); two runs
-give the same bytes.
+`robot_glb.mjs` runs `prune`, `dedup`, `weld`, `lod`, `resample` (drops keys a linear blend of their
+neighbours gives within 1e-4; walk 9,159 → 1,763 keys, idle 10,449 → 1,021), `quantize` and `meshopt`, writes
+`static/city/robot.glb` and copies `robot_meta.json` beside it; two runs give the same bytes. `lod` adds a
+`ROBOT_V<i>_LOD` node beside each variant for the minibots (see "Minibots"): the variant's primitive on the same
+skin with a meshopt-simplified index list, down to `LOD_RATIO` (0.2) of the triangles while within `LOD_ERROR`
+(0.002 of the mesh's extent, 8 mm on the 4 m bake; seams kept, so the palette regions stay). The error decides:
+1,590–2,540 triangles a variant, 50–65% (V0 2,540, V1 1,856, V2 1,954, V3 1,867, V4 1,685, V5 1,590, V6 2,036,
+V7 1,921). 0.01 took the thin rods of the legs and arms, leaving the parts floating apart. With the LODs the glb is
+716 KB (43,777 triangles in all; it was 446.7 KB and 28,328). `test/robot_glb.test.js` checks the LODs (one per
+variant, skinned, 40–75% of the triangles, bind bounds within 2 cm of the full mesh's) and that every mesh binds
+consistently (each joint of a vertex puts it in the same rest place).
 
 On the page (`src/lib/city/robot.ts`) `ROBOT_COUNT` (2; set it to 1 for a single robot) robots cross the
 view on the export's `robot_routes` (see "Robot routes"; none without them). Each is a skeleton clone of the
@@ -573,6 +583,52 @@ there is no avenue or street in the frame to cross.
 
 The pack's licence allows its use in projects but not redistributing it as a standalone asset. Like the
 people, `robot.glb` and `robot_meta.json` are git-ignored until the user approves the look.
+
+## Minibots
+
+Person-sized mechs from the same `robot.glb` taking part in the people's things (`src/lib/city/minibots.ts`).
+No export of their own: they use the bake's `ROBOT_V<i>_LOD` meshes (see "Robot") and its `walk` and `idle`
+clips, and the hero's `walk_paths` and `talk_spots`.
+
+- **Who**: `MINIBOT_WALKERS` (6; `MINIBOT_WALKERS_MOBILE` 4) walk the walk paths, round robin over the four,
+  spread over each path's there-and-back cycle; `MINIBOT_TALKERS` (2) stand in conversations (`planMinibots`,
+  tested, seeded per bot from `mulberry32(MINIBOT_SEED + i)`). Each is a variant and palette (every variant and
+  palette comes round before any repeats) and a height, `MINIBOT_HEIGHT` 1.2–1.8 m for a walker,
+  `MINIBOT_TALK_HEIGHT` 1.25–1.6 m in a conversation (the bake scaled by height / 4.063).
+- **Walking**: at the variant's own stride, scaled (`walk_cycle_m` × scale per `walk_duration_s`: 0.93–1.40 m/s,
+  inside the people's 0.9–1.5), so the walk clip plays at its own rate and its time follows the distance
+  walked (`robotWalkTime`): no foot slide. They ping-pong on the paths like the people. A walker steps aside
+  round the people on its path (`dodgeOffset`, tested): from each one whose sideways place is within
+  `MINIBOT_DODGE_R` (0.8 m) it is pushed to that distance, in full within `MINIBOT_DODGE_NEAR` (1 m) along the
+  path and easing out to `MINIBOT_DODGE_FAR` (3 m), clamped to `MINIBOT_LANE_MAX` (0.8 m) from the path line
+  (the lamps stand 1.83 m out, a tree 1.03 m, the idle people 2 m). It is a function of the clock and the
+  people's own (stateless) walk, so it replays and freezes with them. Over 300 s a walker overlaps someone 1.6%
+  of the time (6.8% without the dodge; people overlap each other 1.7%).
+- **Conversations**: `createCharacterPeople` with `botSlots` leaves out one member of each of that many
+  conversations (`pickBotSlots`, tested: groups of three or more first, so a group keeps two people) and
+  returns their places as `slots`; a minibot stands there facing the circle's centre, playing `idle` from a
+  seeded phase. When its turn to talk comes round the others listen. The page asks for slots only when
+  `robot.glb` has the LOD meshes.
+- **Sitting**: not done. The mech's arms are as long as its legs (its fists hang by its knees), so a seat on
+  a ledge needs the fists placed on the ledge or in its lap, which bone turns alone don't give; and the sit
+  spots are 100–160 m up the avenue, where a 1.4 m bot is a few pixels tall.
+- **Drawing**: all of them are one InstancedMesh, one draw call (and one in the sun shadow pass on desktop),
+  whatever variants are out. The variants out are baked into a float vertex texture (4 texels a vertex: bind
+  position + u, normal + v, joints, weights; `bakeVariant`) with a corner list per variant; per instance
+  `mbInfo` holds its variant's corner offset and count and its palette's u offset. The vertex shader
+  (`onBeforeCompile` on the robots' material and on a depth material for the shadows) skins corner
+  `gl_VertexID` of its variant with the instance's row of a bone texture (43 bones × 4 texels per bot); corners
+  past the variant's own count collapse to a point. Each frame one shared rig is posed for each bot in turn and
+  its skin matrices (modelMatrix · bindMatrixInverse · bone · boneInverse, `boneRows`) copied into the bot's row:
+  the same sum three's own skinning makes (`skinBaked`, tested against `SkinnedMesh.applyBoneTransform`). The
+  instance's triangles are the largest variant's out (2,540 with V0), so 8 bots draw 20,320 in the main pass and
+  as many in the shadow pass. At night the palette glows at `ROBOT_NIGHT_GLOW` like the robots'.
+
+Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.05 steps, with the drones: peak 262 draw
+calls by day (was 261), 278 at night (was 276: the minibots add 2 calls, the rest is where the robots and drones
+happened to be), 1.471 M triangles (was 1.437 M). On mobile they add 1 call. The conversation minibots are in
+view over the first ~60% of the scroll (frames 1–109 at the well, 100–260 px tall at 1271 px); the walkers
+from about frame 100 to 1, small up the avenue.
 
 ## Drones
 

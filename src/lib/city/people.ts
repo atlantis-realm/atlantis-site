@@ -52,6 +52,8 @@ const CONVO_BEAT_S: [number, number] = [0.5, 1.1];
 /** Chance a turn has a second talker (someone chipping in): never more than two at once. */
 const CONVO_OVERLAP = 0.3;
 const CONVO_SEED = 0xc0b5;
+/** Which conversation places go to the minibots (pickBotSlots). */
+const BOT_SLOT_SEED = 0xb075;
 /** Idle people stand at least this far (m) apart, so a facade gets a few, not a row. */
 export const IDLE_GAP = 2;
 /** A sitter's seat height (scaled) may miss the spot's drop by this much (m): feet a little short of or into the ground. */
@@ -98,6 +100,8 @@ export type PeopleOptions = {
 	/** Conversation groups at `talkSpots` (baked characters with stand/talk only; default none). */
 	convos?: number;
 	talkSpots?: TalkSpot[];
+	/** Conversation places handed to the minibots (pickBotSlots): left out here, returned as `slots`. */
+	botSlots?: number;
 };
 /** One figure: its path, start distance s0 (m), speed (m/s), direction, offset and look (colour or character variant). */
 export type Walker = {
@@ -110,8 +114,19 @@ export type Walker = {
 	color: number;
 	variant: number;
 };
-/** `meshes`: one InstancedMesh for the capsules, or one per character variant that has walkers. */
-export type People = { meshes: THREE.InstancedMesh[]; update(t: number): void; dispose(): void };
+/**
+ * `meshes`: one InstancedMesh for the capsules, or one per character variant that has walkers;
+ * `walkers` the walking layout (the minibots step round them), `slots` the conversation places left
+ * for the minibots (opts.botSlots) and `idlers` the idle people.
+ */
+export type People = {
+	meshes: THREE.InstancedMesh[];
+	update(t: number): void;
+	dispose(): void;
+	walkers?: Walker[];
+	slots?: ConvoMember[];
+	idlers?: Idler[];
+};
 
 /** people_meta.json, written by export_people.py beside people.glb. */
 export type PeopleMeta = {
@@ -577,6 +592,28 @@ export function planConvos(spots: TalkSpot[], groups: number, weights?: number[]
 	});
 }
 
+/** A conversation place for a minibot: member `member` of conversation `convo`. */
+export type BotSlot = { convo: number; member: number };
+
+/**
+ * `n` seeded conversation places for the minibots, one per group: the groups
+ * of three or more first (so a group keeps two people), then the pairs; a
+ * random member of each.
+ */
+export function pickBotSlots(convos: Convo[], n: number): BotSlot[] {
+	const rand = mulberry32(BOT_SLOT_SEED);
+	const order = convos.map((_, k) => k);
+	for (let k = order.length - 1; k > 0; k--) {
+		const j = Math.floor(rand() * (k + 1));
+		[order[k], order[j]] = [order[j], order[k]];
+	}
+	const big = order.filter((k) => convos[k].members.length >= 3);
+	const pairs = order.filter((k) => convos[k].members.length < 3);
+	return [...big, ...pairs]
+		.slice(0, Math.max(0, n))
+		.map((convo) => ({ convo, member: Math.floor(rand() * convos[convo].members.length) }));
+}
+
 /**
  * Who in conversation `c` shows the `talk` pose at time `t` (s, looping over
  * the schedule): the turn's talkers gesture in stepped beats (talk, talk,
@@ -660,7 +697,7 @@ export function createPeople(paths: Vec3[][], opts: PeopleOptions): People {
 		material.dispose();
 		mesh.dispose();
 	};
-	return { meshes: [mesh], update, dispose };
+	return { meshes: [mesh], update, dispose, walkers };
 }
 
 /**
@@ -692,8 +729,12 @@ export function createCharacterPeople(
 		poses?.stand !== undefined && poses.talk !== undefined && opts.convos && opts.talkSpots
 			? planConvos(opts.talkSpots, opts.convos, weights)
 			: [];
-	// Every conversation member, with its group and index in it.
-	const talkers = convos.flatMap((c) => c.members.map((m, i) => ({ ...m, convo: c, index: i })));
+	// The minibots' places, then every other conversation member, with its group and index in it.
+	const botSlots = pickBotSlots(convos, opts.botSlots ?? 0);
+	const isBot = (c: number, i: number) => botSlots.some((s) => s.convo === c && s.member === i);
+	const talkers = convos.flatMap((c, n) =>
+		c.members.flatMap((m, i) => (isBot(n, i) ? [] : [{ ...m, convo: c, index: i }]))
+	);
 	const groups = cast.members
 		.map((member, v) => ({
 			member,
@@ -790,7 +831,14 @@ export function createCharacterPeople(
 		for (const { mesh } of groups) mesh.dispose();
 		disposeCast(cast);
 	};
-	return { meshes: groups.map((g) => g.mesh), update, dispose };
+	return {
+		meshes: groups.map((g) => g.mesh),
+		update,
+		dispose,
+		walkers,
+		slots: botSlots.map((s) => convos[s.convo].members[s.member]),
+		idlers
+	};
 }
 
 /** Free the cast's geometries, material and atlas texture. */

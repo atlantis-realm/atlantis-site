@@ -7,12 +7,14 @@ import {
 	LEAN_FWD_TOLERANCE,
 	SIT_DROP_TOLERANCE,
 	castFromScene,
+	castWeights,
 	convoTalkers,
 	createCharacterPeople,
 	createPeople,
 	idlerPose,
 	mulberry32,
 	parsePeopleMeta,
+	pickBotSlots,
 	planConvos,
 	planIdlers,
 	planWalkers,
@@ -602,4 +604,39 @@ test('createCharacterPeople: conversations in the walkers meshes, stepping betwe
 	}
 	assert.ok(changed, 'someone switched between stand and talk');
 	one.dispose();
+});
+
+test('pickBotSlots: seeded, one slot per group, groups of three or more first', () => {
+	const convos = planConvos(TALK, 4, [1, 1, 1, 1, 1, 1]);
+	const a = pickBotSlots(convos, 2);
+	assert.deepEqual(a, pickBotSlots(convos, 2));
+	assert.equal(a.length, 2);
+	assert.equal(new Set(a.map((s) => s.convo)).size, 2, 'different groups');
+	const big = convos.filter((c) => c.members.length >= 3).length;
+	for (const s of a.slice(0, big)) assert.ok(convos[s.convo].members.length >= 3);
+	for (const s of a) assert.ok(s.member >= 0 && s.member < convos[s.convo].members.length);
+	// More slots than groups: one each.
+	assert.equal(pickBotSlots(convos, 10).length, convos.length);
+	assert.deepEqual(pickBotSlots(convos, 0), []);
+	assert.deepEqual(pickBotSlots([], 2), []);
+});
+
+test('createCharacterPeople: botSlots hands conversation places to the minibots, the rest stay', () => {
+	const opts = { ...OPTS, convos: 3, talkSpots: TALK };
+	const cast = () =>
+		castFromScene(fakeGlb(['A', 'B', 'C'], 11, new THREE.MeshStandardMaterial()), META3);
+	const all = createCharacterPeople([SQUARE, LINE], opts, cast());
+	const some = createCharacterPeople([SQUARE, LINE], { ...opts, botSlots: 2 }, cast());
+	const count = (p: typeof all) => p.meshes.reduce((n, m) => n + m.count, 0);
+	assert.equal(count(some), count(all) - 2);
+	assert.deepEqual(all.slots, []);
+	assert.equal(some.slots!.length, 2);
+	const convos = planConvos(TALK, 3, castWeights(cast()));
+	pickBotSlots(convos, 2).forEach((s, k) => {
+		const m = convos[s.convo].members[s.member];
+		assert.deepEqual(some.slots![k].position, m.position);
+		assert.equal(some.slots![k].heading, m.heading);
+	});
+	all.dispose();
+	some.dispose();
 });
