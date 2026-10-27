@@ -10,6 +10,12 @@ safe_vfov()        the safe-frame rule: narrow screens widen the vertical FOV to
 cull_aspects()     the screen aspects the export culls for, with their safe-frame vfov.
 sample_frames()    the camera frames the cull samples.
 clear_runs()       split a walk path round the points it must avoid (near the camera).
+gl_heading()       glTF yaw of a Blender facing direction (walkerPose's convention).
+polyline_dist()    horizontal distance from a point to a path.
+thin_spots()       greedy minimum spacing, first come first kept.
+stride_pick()      an even, deterministic subset.
+sit_profile()      the drop in front of a ledge, from downward probes behind and in front of its edge.
+lean_profile()     whether the ground in front of a wall is level and free.
 
 Tests: python3 -m unittest discover -s test -p "test_*.py"
 """
@@ -141,3 +147,71 @@ def clear_runs(points, closed, ok):
     if len(cur) >= 2:
         runs.append(cur)
     return runs
+
+
+def gl_heading(fx, fy):
+    """Heading of a horizontal Blender facing (fx, fy): the yaw about glTF +Y turning local +Z to it.
+
+    glTF is (x, z, -y) of Blender, so the facing is glTF (fx, 0, -fy); the same atan2(dx, dz) as
+    walkerPose in src/lib/city/people.ts.
+    """
+    return math.atan2(fx, -fy)
+
+
+def polyline_dist(p, path):
+    """Distance in x, y from p to the polyline `path` ((x, y, ...) points); inf for an empty path."""
+    if not path:
+        return math.inf
+    if len(path) == 1:
+        return math.hypot(p[0] - path[0][0], p[1] - path[0][1])
+    best = math.inf
+    for a, b in zip(path, path[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        ll = dx * dx + dy * dy
+        t = 0.0 if ll == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / ll))
+        best = min(best, math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy))
+    return best
+
+
+def thin_spots(points, min_dist):
+    """Indices of the points kept, in order, when each is dropped if it lies closer than `min_dist`
+    (in x, y) to one kept before it."""
+    kept, out = [], []
+    m2 = min_dist * min_dist
+    for i, p in enumerate(points):
+        if all((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 >= m2 - 1e-12 for q in kept):
+            kept.append(p)
+            out.append(i)
+    return out
+
+
+def stride_pick(items, n):
+    """At most n items spread evenly over the list, first and last included; the list itself if short."""
+    if len(items) <= n:
+        return list(items)
+    if n <= 1:
+        return list(items[:n])
+    return [items[round(k * (len(items) - 1) / (n - 1))] for k in range(n)]
+
+
+def sit_profile(top, behind, front, drop_range, tol):
+    """The drop (m) in front of a ledge whose top is at `top`, or None if it is no seat.
+
+    `behind`: ledge-top heights probed behind the edge (the seat), all within `tol` of `top`.
+    `front`: ground heights probed in front of it (under the knees and feet), level within `tol` of the
+    first. The drop is top minus the first front height and must lie in `drop_range`. None in a list is
+    a probe that hit nothing.
+    """
+    if any(z is None for z in behind) or not front or any(z is None for z in front):
+        return None
+    if any(abs(z - top) > tol for z in behind):
+        return None
+    if any(abs(z - front[0]) > tol for z in front):
+        return None
+    drop = top - front[0]
+    return drop if drop_range[0] <= drop <= drop_range[1] else None
+
+
+def lean_profile(ground_z, front, tol):
+    """True if every ground probe in front of a wall (None = no hit) is within `tol` of `ground_z`."""
+    return all(z is not None and abs(z - ground_z) <= tol for z in front)

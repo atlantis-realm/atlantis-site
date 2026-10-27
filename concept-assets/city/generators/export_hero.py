@@ -43,6 +43,9 @@ Stages
                visible sky above the frontage), walk paths (the avenue pavements, cut where they pass
                within WALK_CAMERA_CLEARANCE of the camera path; no walkers circle the plaza), well water node, night material names and
                night_nodes (the nodes allowed NIGHT_MAT_AP_Cyan / NIGHT_WellRing). glTF space: (x, z, -y).
+  idle spots   idle_spots(): ledge edges to sit on and walls/railings to lean on, from an IDLE_GRID height map
+               of the kept scene within IDLE_RANGE of the camera, refined with sideways rays; clear of the
+               camera, the walk paths and water, IDLE_SPACING apart, in view (props "idle_spots").
 
 Pure cull geometry lives in hero_geom.py (tested). Tuning knobs are the constants below.
 """
@@ -136,6 +139,34 @@ FRONTAGE_HEIGHT = 10.0                  # m above the camera's frame-1 height
 FRONTAGE_SEARCH = 80.0                  # m sideways
 FRONTAGE_SKIP = ("SKYWALK", "KIT_Sky", "KIT_Plant", "TREES_")   # not frontage: skywalks and trees
 NOT_GROUND = FRONTAGE_SKIP + ("KIT_Care", "KIT_Street", "KIT_Facade", "Text")   # nor street furniture, facades
+
+# Idle people (sitting on ledges, leaning on walls): candidate spots found by ray probes (idle_spots()).
+IDLE_RANGE = 150.0                      # m: spots this far (3D) from the camera path at most, for a readable size
+IDLE_GRID = 0.5                         # m between the downward probes of the idle height map
+IDLE_SKIP = FRONTAGE_SKIP + ("Text",)   # not seats or walls: skywalks, trees, the Text
+IDLE_FLAT_NZ = 0.95                     # |normal z| of a level surface (ledge top, ground)
+IDLE_WALL_NZ = 0.3                      # |normal z| below this: a vertical surface (riser, wall)
+IDLE_TOL = 0.04                         # m: heights this close count as one level
+SIT_DROP = (0.35, 0.6)                  # m: ledge top above the ground in front
+SIT_BEHIND = (0.1, 0.25, 0.4)           # m behind the edge probed for a level seat
+SIT_FRONT = (0.15, 0.3, 0.5)            # m in front of the edge probed for level ground under knees and feet
+SIT_KNEE_CLEAR = 0.8                    # m in front of the knees that must be free
+SIT_HEAD_CLEAR = 1.2                    # m above the seat that must be free
+SIT_BACK_CLEAR = 0.3                    # m behind the seat edge free at back height (SIT_BACK_H)
+SIT_BACK_H = 0.6
+LEAN_CONTACT_HS = (0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2)   # m above the ground: where the back can rest
+LEAN_LEG_HS = (0.3, 0.55, 0.75)         # m: nothing at leg height may stick out past the contact
+LEAN_STICK_OUT = 0.05                   # m
+LEAN_FRONT = (0.3, 0.6, 1.0)            # m in front of the wall probed for level standing ground
+LEAN_CLEAR_HS, LEAN_CLEAR_D = (0.3, 1.0, 1.6), 1.0   # heights (m) of the rays that must run free out from the wall
+LEAN_BODY_H, LEAN_BODY_D = 1.5, 0.3     # at shoulder height nothing sticks out past the contact either
+IDLE_PATH_CLEARANCE = 1.2               # m from every walk path line
+IDLE_LEVEL = 3.0                        # m: feet within this of the nearest walk path point's height (no roofs)
+IDLE_SPACING = 1.0                      # m between spots at least
+IDLE_MAX_SPOTS = 400                    # spots written at most (stride-picked per pose)
+IDLE_VIEW_H = 0.8                       # m above the spot: the point that must be seen from a sample camera
+WELL_AREA_R = 20.0                      # m round the well centre: area "well" (its walkway); along the avenue: "avenue"
+AVENUE_AREA_PAD = 10.0                  # m past the outer pavement edge still counted as the avenue
 
 BLIMP_COUNT, BLIMP_PERIOD_S, BLIMP_ALTITUDE = 6, 240.0, 280.0
 BLIMP_RADII = range(600, 1401, 50)
@@ -598,6 +629,221 @@ def ground(occ, x, y, top=GROUND_TOP):
     return (None, None) if h is None else (h[0].z, h[1])
 
 
+def probe(occ, o, d, dist, skip=IDLE_SKIP):
+    """(location, normal, triangle, owner name) of the first hit along o + t d (t <= dist) whose owner doesn't
+    start with `skip`, or None. The normal is turned to face back along the ray."""
+    o, d = Vector(o), Vector(d)
+    for _ in range(CAST_MAX_HOPS):
+        loc, n, tri, t = occ.bvh.ray_cast(o, d, dist)
+        if loc is None:
+            return None
+        name = occ.src[occ.owner[tri]]
+        if not name.startswith(skip):
+            return loc, (-n if n.dot(d) > 0 else n), tri, name
+        dist -= t + CAST_NUDGE
+        o = loc + d * CAST_NUDGE
+        if dist <= 0:
+            return None
+    return None
+
+
+class IdleProbes:
+    """Downward and sideways probes for idle_spots(): `down` reports the level and the triangle under (x, y)."""
+    DOWN = Vector((0, 0, -1))
+
+    def __init__(self, occ, kept_ids):
+        self.occ, self.kept = occ, kept_ids
+
+    def down(self, x, y, top=GROUND_TOP):
+        """(z, |normal z|, triangle, owner) of the first non-IDLE_SKIP surface below (x, y), or None."""
+        h = probe(self.occ, (x, y, top), self.DOWN, 2 * top)
+        return None if h is None else (h[0].z, abs(h[1].z), h[2], h[3])
+
+    def z(self, q):
+        h = self.down(q.x, q.y)
+        return None if h is None or h[1] < IDLE_FLAT_NZ or not self.usable(h[2], h[3]) else h[0]
+
+    def usable(self, tri, owner):
+        """Exported geometry, not water, not a facade/roof or street furniture (NOT_GROUND)."""
+        return (int(self.occ.owner[tri]) in self.kept and self.occ.mat[tri] != WATER_MATERIAL
+                and not owner.startswith(NOT_GROUND))
+
+    def free(self, o, d, dist):
+        return probe(self.occ, o, d, dist) is None
+
+
+def idle_height_map(pr, cam_xy):
+    """Grid (IDLE_GRID, world-aligned) of the first surface below each point within IDLE_RANGE (in x, y) of the
+    camera path: (xs, ys, z, nz, ok) arrays, z NaN where nothing was hit. ok: level and usable (IdleProbes)."""
+    lo, hi = cam_xy.min(0) - IDLE_RANGE, cam_xy.max(0) + IDLE_RANGE
+    xs = np.arange(math.floor(lo[0] / IDLE_GRID), math.ceil(hi[0] / IDLE_GRID) + 1) * IDLE_GRID
+    ys = np.arange(math.floor(lo[1] / IDLE_GRID), math.ceil(hi[1] / IDLE_GRID) + 1) * IDLE_GRID
+    z = np.full((len(ys), len(xs)), np.nan)
+    nz = np.zeros_like(z)
+    ok = np.zeros(z.shape, bool)
+    for j, y in enumerate(ys):
+        dy = cam_xy[:, 1] - y
+        for i, x in enumerate(xs):
+            if np.min((cam_xy[:, 0] - x) ** 2 + dy ** 2) > IDLE_RANGE ** 2:
+                continue
+            h = pr.down(float(x), float(y))
+            if h is None:
+                continue
+            z[j, i], nz[j, i] = h[0], h[1]
+            ok[j, i] = h[1] >= IDLE_FLAT_NZ and pr.usable(h[2], h[3])
+    return xs, ys, z, nz, ok
+
+
+def sit_spot(pr, top_z, low_xy, d):
+    """A seat on the ledge whose riser is met going from `low_xy` (the lower side) along `d` (toward the ledge),
+    or None: (edge point at the ledge top, facing out over the drop, drop)."""
+    occ = pr.occ
+    h = probe(occ, Vector((low_xy[0], low_xy[1], top_z - 0.1)), d, IDLE_GRID * 1.5)
+    if h is None or abs(h[1].z) > IDLE_WALL_NZ:
+        return None
+    face = Vector((h[1].x, h[1].y)).normalized()
+    edge = h[0].to_2d()
+    top = pr.z(edge - face * 0.05)
+    if top is None or abs(top - top_z) > IDLE_TOL:
+        return None
+    drop = hg.sit_profile(top, [pr.z(edge - face * b) for b in SIT_BEHIND],
+                          [pr.z(edge + face * f) for f in SIT_FRONT], SIT_DROP, IDLE_TOL)
+    if drop is None:
+        return None
+    e3 = Vector((edge.x, edge.y, top))
+    f3 = face.to_3d()
+    if not (pr.free(e3 + f3 * 0.02 + Vector((0, 0, 0.1)), f3, SIT_KNEE_CLEAR)
+            and pr.free(e3 - f3 * 0.15 + Vector((0, 0, 0.05)), Vector((0, 0, 1)), SIT_HEAD_CLEAR)
+            and pr.free(e3 + Vector((0, 0, SIT_BACK_H)), -f3, SIT_BACK_CLEAR)):
+        return None
+    return e3, face, drop
+
+
+def lean_spot(pr, ground_z, xy, d):
+    """A wall or railing to lean on, met going from the ground at `xy` along `d`, or None: (wall-foot point on
+    the ground, facing away from the wall). The contact is the nearest vertical surface at LEAN_CONTACT_HS
+    (a railing's handrail or a wall); nothing lower may stick out past it, so the legs stay clear."""
+    occ = pr.occ
+    hits = []
+    for h_ in LEAN_CONTACT_HS:
+        h = probe(occ, Vector((xy[0], xy[1], ground_z + h_)), d, IDLE_GRID * 1.5)
+        if h is not None and abs(h[1].z) <= IDLE_WALL_NZ:
+            hits.append(((h[0] - Vector((xy[0], xy[1], h[0].z))).length, h))
+    if not hits:
+        return None
+    dist, hit = min(hits, key=lambda t: t[0])
+    face = Vector((hit[1].x, hit[1].y)).normalized()
+    if face.dot(Vector(d).to_2d()) > -0.7:
+        return None
+    for h_ in LEAN_LEG_HS:
+        h = probe(occ, Vector((xy[0], xy[1], ground_z + h_)), d, dist)
+        if h is not None and (h[0].to_2d() - Vector(xy)).length < dist - LEAN_STICK_OUT:
+            return None
+    foot2 = hit[0].to_2d() + face * 0.02
+    gz = pr.z(foot2 + face * 0.1)
+    if gz is None or abs(gz - ground_z) > IDLE_TOL:
+        return None
+    if not hg.lean_profile(gz, [pr.z(foot2 + face * f) for f in LEAN_FRONT], IDLE_TOL):
+        return None
+    foot = Vector((foot2.x, foot2.y, gz))
+    f3 = face.to_3d()
+    if not all(pr.free(foot + f3 * 0.05 + Vector((0, 0, h_)), f3, LEAN_CLEAR_D) for h_ in LEAN_CLEAR_HS):
+        return None
+    body = probe(occ, foot + f3 * LEAN_BODY_D + Vector((0, 0, LEAN_BODY_H)), -f3, LEAN_BODY_D)
+    if body is not None and (body[0] - foot).to_2d().length > LEAN_STICK_OUT:
+        return None
+    return foot, face
+
+
+def idle_spots(occ, kept_ids, cam_path, samples, frusta, walk_lines, well_c, fwd, side, pave_out, debug=None):
+    """Candidate spots for idle people in the kept scene. Sit: a level ledge top with a SIT_DROP drop in front
+    (any riser the height map crosses); lean: a vertical surface at LEAN_CONTACT_HS (a wall or a railing's
+    handrail) with level free ground in front. Kept only clear of the camera (WALK_CAMERA_CLEARANCE at the
+    chest, every frame), of the walk path lines (IDLE_PATH_CLEARANCE), of water and of each other
+    (IDLE_SPACING), at street level (IDLE_LEVEL: no roofs), within IDLE_RANGE, in view and seen from at least one sample camera.
+    Returns (spots in glTF space, sorted by position; counts)."""
+    pr = IdleProbes(occ, kept_ids)
+    cams = np.array([tuple(c) for c in cam_path])
+    xs, ys, z, nz, ok = idle_height_map(pr, cams[:, :2])
+    counts = {"cells": int(np.isfinite(z).sum()), "level_cells": int(ok.sum())}
+    if debug is not None:
+        debug.update(xs=xs, ys=ys, z=z, ok=ok)
+    raw = []
+    dirs = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    for j, i in zip(*np.nonzero(ok)):
+        x, y, zc = float(xs[i]), float(ys[j]), float(z[j, i])
+        for di, dj in dirs:
+            jj, ii = j + dj, i + di
+            if not (0 <= jj < len(ys) and 0 <= ii < len(xs)) or not np.isfinite(z[jj, ii]):
+                continue
+            dz = float(z[jj, ii]) - zc
+            d = Vector((di, dj, 0))
+            if ok[jj, ii] and SIT_DROP[0] - IDLE_TOL <= -dz <= SIT_DROP[1] + IDLE_TOL:
+                # (x, y) is on the ledge, the neighbour below it: probe from the neighbour back toward it
+                s_ = sit_spot(pr, zc, (float(xs[ii]), float(ys[jj])), -d)
+                if s_:
+                    raw.append(("sit", s_[0], s_[1], s_[2]))
+            elif not ok[jj, ii] or abs(dz) > IDLE_TOL:
+                # anything but more of the same ground: a wall, a railing (thin: its base or nothing is
+                # what the height map sees), a drop
+                l_ = lean_spot(pr, zc, (x, y), d)
+                if l_:
+                    raw.append(("lean", l_[0], l_[1], None))
+    counts["raw"] = len(raw)
+    if debug is not None:
+        debug["raw"] = np.array([(pose == "sit", p.x, p.y, p.z, f.x, f.y, dr or 0) for pose, p, f, dr in raw])
+    eyes = [Vector(s[1]) for s in samples]
+    walk_pts = np.array([q for line in walk_lines for q in line])
+    centre2 = well_c.to_2d()
+    out = []
+    for pose, p, face, drop in raw:
+        feet_z = p.z - (drop or 0.0)
+        chest = np.array((p.x, p.y, feet_z + WALK_CHEST_H))
+        dist = np.linalg.norm(cams - chest, axis=1)
+        if dist.min() < WALK_CAMERA_CLEARANCE or np.linalg.norm(cams - np.array(p), axis=1).min() > IDLE_RANGE:
+            continue
+        if any(hg.polyline_dist((p.x, p.y), line) < IDLE_PATH_CLEARANCE for line in walk_lines):
+            continue
+        street = walk_pts[np.argmin(np.sum((walk_pts[:, :2] - (p.x, p.y)) ** 2, axis=1)), 2]
+        if abs(feet_z - street) > IDLE_LEVEL:
+            continue
+        lo, hi = (p.x - 0.4, p.y - 0.4, feet_z), (p.x + 0.4, p.y + 0.4, feet_z + 1.7)
+        if not in_view(lo, hi, frusta):
+            continue
+        tgt = p + Vector((0, 0, IDLE_VIEW_H))
+        seen = False
+        for e in eyes:
+            v = tgt - e
+            if occ.bvh.ray_cast(e, v.normalized(), v.length - RAY_EPS)[0] is None:
+                seen = True
+                break
+        if not seen:
+            continue
+        q = p.to_2d() - centre2
+        along, across = q.dot(fwd), abs(q.dot(side))
+        area = ("well" if q.length < WELL_AREA_R else
+                "avenue" if 0 <= along <= AVENUE_START + AVENUE_LEN and across <= pave_out + AVENUE_AREA_PAD else "other")
+        out.append((pose, p, face, drop, area))
+    counts["clear"] = len(out)
+    out.sort(key=lambda s: (round(s[1].x, 3), round(s[1].y, 3), s[0]))
+    out = [out[k] for k in hg.thin_spots([(s[1].x, s[1].y) for s in out], IDLE_SPACING)]
+    counts["spaced"] = len(out)
+    picked = []
+    for pose in ("sit", "lean"):
+        picked += hg.stride_pick([s for s in out if s[0] == pose], IDLE_MAX_SPOTS // 2)
+    picked.sort(key=lambda s: (round(s[1].x, 3), round(s[1].y, 3), s[0]))
+    spots = []
+    for pose, p, face, drop, area in picked:
+        sp = {"pose": pose, "pos": gl(p), "heading": round(hg.gl_heading(face.x, face.y), 4)}
+        if pose == "sit":
+            sp["drop"] = round(drop, 3)
+        sp["area"] = area
+        spots.append(sp)
+    for key in ("sit", "lean"):
+        counts[key] = {a: sum(1 for s in spots if s["pose"] == key and s["area"] == a) for a in ("well", "avenue", "other")}
+    return spots, counts
+
+
 def blimp_radius(occ, centre, mats, vfov, cam_data):
     """Radius in BLIMP_RADII whose orbit at BLIMP_ALTITUDE is most often in the frame-1 view, unoccluded."""
     m1 = mats[hg.FRAME_START]
@@ -966,6 +1212,21 @@ def run():
                                     False)
         timing["props_geo"] = time.time() - t0
 
+        # ---- idle people: seats and walls in the kept scene, clear of the camera and the walkers
+        walk_lines = [[(q[0], -q[2], q[1]) for q in line] for line in walk_paths]   # Blender x, y, z
+        idle_debug = {} if _g.get("IDLE_DEBUG") else None
+        idle, idle_counts = idle_spots(occ, {c.id for c in kept_chunks}, cam_path, samples, frusta, walk_lines,
+                                       well_c, fwd, side, max(pave[1][1], pave[-1][1]), idle_debug)
+        timing["idle"] = time.time() - t0
+        print("export_hero: idle spots", json.dumps(idle_counts), flush=True)
+        if idle_debug is not None:
+            np.savez(_g["IDLE_DEBUG"], **idle_debug, cams=np.array([tuple(c) for c in cam_path]),
+                     walk=np.array([q for line in walk_lines for q in line]))
+        if _g.get("STOP_AFTER") == "idle":
+            with open(os.path.join(OUT_DIR, "idle_spots.json"), "w") as fh:
+                json.dump({"counts": idle_counts, "idle_spots": idle}, fh, indent=1)
+            return
+
         # ---- AO bake
         world = tag(bpy.data.worlds.new("HERO_EXPORT_World"))
         world.light_settings.distance = AO_DISTANCE
@@ -1046,6 +1307,7 @@ def run():
             "well_water": well_water,
             "night": night,
             "night_nodes": night_nodes,
+            "idle_spots": idle,
         }
         with open(os.path.join(OUT_DIR, "hero_props.json"), "w") as fh:
             json.dump(props, fh, indent=1)
@@ -1080,6 +1342,7 @@ def run():
                 "joined_meshes": len(buckets), "named": sorted(specials), "lamps": n_lamps, "triangles": tri,
                 "materials": sorted(m.name for m in M.cache.values()),
                 "blimp_orbit_visible": round(frac, 4),
+                "idle_spots": idle_counts,
             },
             "per_collection": dict(sorted(report.items())),
             "glb_bytes": os.path.getsize(glb),

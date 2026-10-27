@@ -15,8 +15,14 @@ from hero_geom import (  # noqa: E402
     clear_runs,
     cull_aspects,
     frustum_planes,
+    gl_heading,
+    lean_profile,
+    polyline_dist,
     safe_vfov,
     sample_frames,
+    sit_profile,
+    stride_pick,
+    thin_spots,
 )
 
 # Camera at the origin looking down +Y (Blender is Z-up), 16:9, the hero camera's vfov.
@@ -139,6 +145,93 @@ class SamplingTest(unittest.TestCase):
         self.assertIn(21 / 9, by_aspect)
         self.assertIn(9 / 19.5, by_aspect)
         self.assertGreater(by_aspect[9 / 19.5], by_aspect[16 / 9])
+
+
+class HeadingTest(unittest.TestCase):
+    # glTF is (x, z, -y) of Blender; heading turns local +Z (glTF) to the facing, like walkerPose.
+    def test_blender_minus_y_is_gltf_plus_z(self):
+        self.assertAlmostEqual(gl_heading(0, -1), 0.0)
+
+    def test_blender_plus_x_is_quarter_turn(self):
+        self.assertAlmostEqual(gl_heading(1, 0), math.pi / 2)
+
+    def test_blender_plus_y_is_half_turn(self):
+        self.assertAlmostEqual(abs(gl_heading(0, 1)), math.pi)
+
+    def test_matches_walker_pose_atan2(self):
+        # walkerPose: heading = atan2(dx, dz) of a glTF direction; Blender (fx, fy) is glTF (fx, -fy).
+        for fx, fy in ((0.6, 0.8), (-0.3, 0.2), (0.0, -2.0)):
+            self.assertAlmostEqual(gl_heading(fx, fy), math.atan2(fx, -fy))
+
+
+class PolylineDistTest(unittest.TestCase):
+    def test_distance_to_segment_interior_and_ends(self):
+        path = [(0, 0), (10, 0)]
+        self.assertAlmostEqual(polyline_dist((5, 3), path), 3.0)
+        self.assertAlmostEqual(polyline_dist((-3, 4), path), 5.0)
+        self.assertAlmostEqual(polyline_dist((13, 0), path), 3.0)
+
+    def test_nearest_of_several_segments(self):
+        self.assertAlmostEqual(polyline_dist((11, 5), [(0, 0), (10, 0), (10, 10)]), 1.0)
+
+    def test_single_point_and_empty(self):
+        self.assertAlmostEqual(polyline_dist((3, 4), [(0, 0)]), 5.0)
+        self.assertEqual(polyline_dist((3, 4), []), math.inf)
+
+
+class ThinSpotsTest(unittest.TestCase):
+    def test_keeps_first_of_each_cluster_in_order(self):
+        pts = [(0, 0), (0.5, 0), (1.2, 0), (5, 5), (5.4, 5.4)]
+        self.assertEqual(thin_spots(pts, 1.0), [0, 2, 3])
+
+    def test_exactly_min_dist_is_kept(self):
+        self.assertEqual(thin_spots([(0, 0), (1, 0)], 1.0), [0, 1])
+
+    def test_uses_only_xy(self):
+        self.assertEqual(thin_spots([(0, 0, 0), (0, 0, 5)], 1.0), [0])
+
+
+class StridePickTest(unittest.TestCase):
+    def test_short_list_unchanged(self):
+        self.assertEqual(stride_pick(list(range(5)), 10), [0, 1, 2, 3, 4])
+
+    def test_even_spread_with_both_ends(self):
+        self.assertEqual(stride_pick(list(range(10)), 4), [0, 3, 6, 9])
+        self.assertEqual(len(stride_pick(list(range(1000)), 400)), 400)
+
+    def test_deterministic(self):
+        self.assertEqual(stride_pick(list(range(37)), 7), stride_pick(list(range(37)), 7))
+
+
+class SitProfileTest(unittest.TestCase):
+    DROP = (0.35, 0.6)
+
+    def test_flat_seat_and_level_ground_gives_the_drop(self):
+        self.assertAlmostEqual(sit_profile(1.0, [1.0, 1.01, 0.99], [0.55, 0.54, 0.55], self.DROP, 0.03), 0.45, places=6)
+
+    def test_drop_out_of_range(self):
+        self.assertIsNone(sit_profile(1.0, [1.0], [0.8, 0.8], self.DROP, 0.03))   # 0.2: a kerb, too low
+        self.assertIsNone(sit_profile(1.0, [1.0], [0.2, 0.2], self.DROP, 0.03))   # 0.8: too high
+
+    def test_seat_not_flat(self):
+        self.assertIsNone(sit_profile(1.0, [1.0, 1.2], [0.55, 0.55], self.DROP, 0.03))
+
+    def test_ground_in_front_steps_again(self):
+        # The next ring down starts under the feet: not level ground.
+        self.assertIsNone(sit_profile(1.0, [1.0], [0.55, 0.1], self.DROP, 0.03))
+
+    def test_missing_probe(self):
+        self.assertIsNone(sit_profile(1.0, [None], [0.55], self.DROP, 0.03))
+        self.assertIsNone(sit_profile(1.0, [1.0], [0.55, None], self.DROP, 0.03))
+
+
+class LeanProfileTest(unittest.TestCase):
+    def test_level_free_ground(self):
+        self.assertTrue(lean_profile(2.0, [2.0, 2.02, 1.99], 0.05))
+
+    def test_step_or_hole_in_front(self):
+        self.assertFalse(lean_profile(2.0, [2.0, 1.7], 0.05))
+        self.assertFalse(lean_profile(2.0, [2.0, None], 0.05))
 
 
 if __name__ == "__main__":

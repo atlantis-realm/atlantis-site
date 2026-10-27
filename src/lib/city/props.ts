@@ -4,6 +4,19 @@
 
 export type Vec3 = [number, number, number];
 
+/** Where an idle person can sit (on a ledge edge, over a drop) or lean (back to a wall). */
+export type IdleSpot = {
+	pose: 'sit' | 'lean';
+	/** sit: a point on the ledge-top edge; lean: a point on the ground at the wall's foot. */
+	pos: Vec3;
+	/** Yaw about +Y turning local +Z to the facing (as walkerPose): out over the drop, or away from the wall. */
+	heading: number;
+	/** sit only: ledge top minus the ground in front, in metres. */
+	drop?: number;
+	/** Which part of the scene: 'well' (the stepped rings round it), 'avenue' or 'other'. */
+	area?: string;
+};
+
 export type HeroProps = {
 	version: number;
 	fps: number;
@@ -31,6 +44,8 @@ export type HeroProps = {
 	night: string[];
 	/** The only nodes allowed to use each restricted night material. */
 	night_nodes: Record<string, string[]>;
+	/** Candidate idle-person spots; absent in exports made before they existed. */
+	idle_spots?: IdleSpot[];
 };
 
 /** Required keys, nested ones dotted. Checked on load so a stale export fails loudly. */
@@ -71,5 +86,25 @@ export async function loadProps(url: string, fetchFn: typeof fetch = fetch): Pro
 	const data: unknown = await res.json();
 	const missing = REQUIRED_KEYS.filter((key) => lookup(data, key) === undefined);
 	if (missing.length) throw new Error(`${url}: missing key(s) ${missing.join(', ')}`);
-	return data as HeroProps;
+	const props = data as HeroProps;
+	if (props.idle_spots !== undefined) props.idle_spots = idleSpots(url, props.idle_spots);
+	return props;
+}
+
+/** Validate optional idle_spots: an array of well-formed spots, or a loud error naming the first bad one. */
+function idleSpots(url: string, spots: unknown): IdleSpot[] {
+	if (!Array.isArray(spots)) throw new Error(`${url}: idle_spots is not an array`);
+	spots.forEach((s, i) => {
+		const ok =
+			s !== null &&
+			typeof s === 'object' &&
+			(s.pose === 'sit' || s.pose === 'lean') &&
+			Array.isArray(s.pos) &&
+			s.pos.length === 3 &&
+			s.pos.every(Number.isFinite) &&
+			Number.isFinite(s.heading) &&
+			(s.pose === 'lean' || Number.isFinite(s.drop));
+		if (!ok) throw new Error(`${url}: bad idle_spots[${i}]`);
+	});
+	return spots as IdleSpot[];
 }

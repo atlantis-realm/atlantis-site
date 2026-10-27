@@ -120,7 +120,7 @@ Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-i
 | File | What it is |
 |---|---|
 | `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>`, the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`). Materials are simple PBR, `HERO_<source>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
-| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. |
+| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. `idle_spots` (see "Idle spots" below). |
 | `export_report.json` | Per collection: `instances`, `in_frustum`, `kept`, `dropped_frustum` (= instances − in_frustum), `dropped_occlusion` (= in_frustum − kept), `chunks`, `chunks_kept`. Also band and mesh counts, triangles, glb size, timings. |
 
 Two runs give a byte-identical `hero_raw.glb` and leave the scene's object, material and mesh counts and
@@ -157,6 +157,38 @@ Walk paths keep `WALK_CAMERA_CLEARANCE` (8 m, measured from a walker's chest) fr
 every frame 1–250 (`hero_geom.clear_runs`). Only the avenue pavements have walkers; none circle the
 plaza. Lamp heads are tagged by the head cube's
 own vertices, so only the head carries `NIGHT_Lamp`; `test/hero_glb.test.js` checks both.
+
+### Idle spots
+
+`idle_spots()` finds where idle people can sit or lean, for the page to place static `sit` / `lean` poses
+(see People). It probes the BVH of the culled scene (skywalks, trees and the `Text` skipped) with a
+`IDLE_GRID` (0.5 m) downward height map within `IDLE_RANGE` (150 m) of the camera path; a cell counts as
+level ground only if its surface is exported, level, not water and not a facade, roof or street furniture
+(`NOT_GROUND`). Then, between neighbouring cells:
+
+- **sit**: a level ledge a `SIT_DROP` (0.35–0.6 m) step above its neighbour. A sideways ray finds the riser;
+  the ledge must be level `SIT_BEHIND` behind the edge and the ground level `SIT_FRONT` in front
+  (`hero_geom.sit_profile`), with room for knees, head and back. `pos` is the edge point at the ledge top,
+  `heading` faces out over the drop, `drop` = ledge top − ground in front.
+- **lean**: any change from level ground. Rays at `LEAN_CONTACT_HS` (0.9–1.2 m) find the nearest vertical
+  surface, a wall or a railing's handrail; nothing at leg or shoulder height may stick out past it, and the
+  ground `LEAN_FRONT` in front must be level and free (`hero_geom.lean_profile`). `pos` is on the ground at
+  the wall foot, `heading` faces away from the wall.
+
+Kept spots are clear of the camera (`WALK_CAMERA_CLEARANCE` at the chest, every frame, as the walk paths),
+`IDLE_PATH_CLEARANCE` (1.2 m) from every walk path line, within `IDLE_LEVEL` (3 m) of the nearest walk
+path's height (no roofs), in a cull frustum and seen from at least one sample camera, and `IDLE_SPACING`
+(1 m) apart (`hero_geom.thin_spots`, in position order), at most `IDLE_MAX_SPOTS` (400, stride-picked per
+pose). Each is `{pose, pos, heading, drop (sit only), area}` in glTF space; `heading` is walkerPose's yaw
+(`hero_geom.gl_heading`), `area` is `well` (within `WELL_AREA_R`, 20 m: the walkway round it), `avenue` or
+`other`. `export_report.json` has the counts.
+
+v05 result: 147 spots, 33 sit (all on the avenue: the outer pavement edge drops 0.41–0.59 m to the side
+streets between the buildings, so they sit facing out over the side street) and 114 lean (26 on the
+walkway railings round the well, 88 against the avenue facades). v05 has no stepped rings round the well
+(its deck is level, the rings are 2–9 cm inlays), no planter edges (the planting strips are flush) and no
+kerbs (lane and pavement are level), so there are no seats at the well. The spots reach about 150 m up the
+avenue (the camera stays near the well).
 
 Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):
 

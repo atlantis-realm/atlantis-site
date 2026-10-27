@@ -16,9 +16,11 @@ const INSTANCING = "EXT_mesh_gpu_instancing";
 // = LAMP_POLE_H, LAMP_HEAD_H in export_hero.py; WALK_CAMERA_CLEARANCE, WALK_CHEST_H likewise.
 const LAMP_POLE_H = 5.0, LAMP_HEAD_H = 0.6;
 const WALK_CAMERA_CLEARANCE = 8.0, WALK_CHEST_H = 1.3;
+// = SIT_DROP, IDLE_PATH_CLEARANCE, IDLE_SPACING, IDLE_MAX_SPOTS in export_hero.py.
+const SIT_DROP = [0.35, 0.6], IDLE_PATH_CLEARANCE = 1.2, IDLE_SPACING = 1.0, IDLE_MAX_SPOTS = 400, IDLE_LEVEL = 3.0;
 const PROPS_KEYS = {
   "": ["version", "fps", "frames", "base_vfov_deg", "safe_half_tan", "sun", "lantern", "blimps", "walk_paths",
-    "well_water", "night", "night_nodes"],
+    "well_water", "night", "night_nodes", "idle_spots"],
   safe_half_tan: ["f250", "f1"], sun: ["dir"], blimps: ["count", "radius", "altitude", "period_s", "len", "r"],
   night_nodes: ["NIGHT_MAT_AP_Cyan", "NIGHT_WellRing"],
 };
@@ -158,4 +160,71 @@ test("walk paths keep WALK_CAMERA_CLEARANCE from the camera over the whole move"
       assert.ok(d >= WALK_CAMERA_CLEARANCE - 0.05, `path ${k} point ${[x, y, z]} is ${d.toFixed(2)} m from the camera`);
     }
   }
+});
+
+// Camera positions (glTF) at every baked frame of the Hero animation.
+async function cameraPath() {
+  const { root } = await load();
+  const anim = root.listAnimations().find((a) => a.getName() === "Hero");
+  const out = anim.listChannels().find((c) => c.getTargetPath() === "translation").getSampler().getOutput();
+  const cams = [], el = [];
+  for (let i = 0; i < out.getCount(); i++) cams.push([...out.getElement(i, el)]);
+  return cams;
+}
+
+test("idle_spots: schema, both poses, unit headings", { skip: SKIP }, async () => {
+  const { props } = await load();
+  const spots = props.idle_spots;
+  assert.ok(Array.isArray(spots) && spots.length >= 50 && spots.length <= IDLE_MAX_SPOTS, `${spots?.length} spots`);
+  for (const pose of ["sit", "lean"]) assert.ok(spots.some((s) => s.pose === pose), `no ${pose} spot`);
+  for (const [k, s] of spots.entries()) {
+    assert.ok(["sit", "lean"].includes(s.pose), `spot ${k}: pose ${s.pose}`);
+    assert.ok(s.pos.length === 3 && s.pos.every(Number.isFinite), `spot ${k}: pos ${s.pos}`);
+    // radians in (-pi, pi], as Math.atan2 gives (walkerPose's convention), not degrees
+    assert.ok(Number.isFinite(s.heading) && Math.abs(s.heading) <= Math.PI + 1e-3, `spot ${k}: heading ${s.heading}`);
+    if (s.pose === "sit") assert.ok(s.drop >= SIT_DROP[0] - 1e-3 && s.drop <= SIT_DROP[1] + 1e-3, `spot ${k}: drop ${s.drop}`);
+    else assert.equal(s.drop, undefined, `spot ${k}: lean with a drop`);
+  }
+});
+
+test("idle_spots keep clear of the camera, the walk paths and each other, at street level", { skip: SKIP }, async () => {
+  const { props } = await load();
+  const cams = await cameraPath();
+  const spots = props.idle_spots, walkPts = props.walk_paths.flat();
+  for (const [k, s] of spots.entries()) {
+    const [x, y, z] = s.pos, feet = y - (s.drop ?? 0);
+    const street = walkPts.reduce((a, p) => (Math.hypot(p[0] - x, p[2] - z) < Math.hypot(a[0] - x, a[2] - z) ? p : a));
+    assert.ok(Math.abs(feet - street[1]) <= IDLE_LEVEL + 1e-3, `spot ${k} feet at ${feet}, street at ${street[1]}`);
+    const d = Math.min(...cams.map(([cx, cy, cz]) => Math.hypot(x - cx, feet + WALK_CHEST_H - cy, z - cz)));
+    assert.ok(d >= WALK_CAMERA_CLEARANCE - 0.05, `spot ${k} is ${d.toFixed(2)} m from the camera`);
+    for (const path of props.walk_paths)
+      for (let i = 0; i + 1 < path.length; i++) {
+        const [ax, , az] = path[i], [bx, , bz] = path[i + 1];
+        const dx = bx - ax, dz = bz - az, ll = dx * dx + dz * dz;
+        const t = ll ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / ll)) : 0;
+        const e = Math.hypot(x - ax - t * dx, z - az - t * dz);
+        assert.ok(e >= IDLE_PATH_CLEARANCE - 0.01, `spot ${k} is ${e.toFixed(2)} m from a walk path`);
+      }
+    for (let j = 0; j < k; j++) {
+      const o = spots[j].pos;
+      assert.ok(Math.hypot(x - o[0], z - o[2]) >= IDLE_SPACING - 0.01, `spots ${j} and ${k} too close`);
+    }
+  }
+});
+
+test("most lean spots face their nearest walk path (headings not flipped)", { skip: SKIP }, async () => {
+  // Heading h faces (sin h, 0, cos h). Leaners stand at the avenue's facades and the walkway railings with
+  // their backs to them; the pavement and its walk paths lie in front of most of them.
+  const { props } = await load();
+  const leans = props.idle_spots.filter((s) => s.pose === "lean");
+  let ahead = 0;
+  for (const s of leans) {
+    const [x, , z] = s.pos, fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+    const near = props.walk_paths.flat().reduce((best, p) => {
+      const d = Math.hypot(p[0] - x, p[2] - z);
+      return d < best.d ? { d, p } : best;
+    }, { d: Infinity, p: null }).p;
+    if ((near[0] - x) * fx + (near[2] - z) * fz > 0) ahead++;
+  }
+  assert.ok(ahead >= leans.length * 0.6, `${ahead} of ${leans.length} leaners face their nearest walk path`);
 });

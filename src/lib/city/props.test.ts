@@ -59,3 +59,35 @@ test('loadProps rejects with a clear error when a nested key is missing', async 
 test('loadProps rejects on an HTTP error', async () => {
 	await assert.rejects(loadProps('/city/hero_props.json', stubFetch({}, 404)), /404/);
 });
+
+test('loadProps accepts props without idle_spots (older exports)', async () => {
+	const props = await loadProps('/city/hero_props.json', stubFetch(SAMPLE));
+	assert.equal(props.idle_spots, undefined);
+});
+
+test('loadProps keeps well-formed idle_spots', async () => {
+	const idle_spots: HeroProps['idle_spots'] = [
+		{ pose: 'sit', pos: [1, 8.4, 1200], heading: 1.5, drop: 0.45, area: 'well' },
+		{ pose: 'lean', pos: [23, 8.9, 1100], heading: -1.57, area: 'avenue' }
+	];
+	const props = await loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, idle_spots }));
+	assert.deepEqual(props.idle_spots, idle_spots);
+});
+
+test('loadProps rejects a malformed idle spot', async () => {
+	for (const bad of [
+		{ pose: 'stand', pos: [0, 0, 0], heading: 0 },
+		{ pose: 'sit', pos: [0, 0, 0], heading: 0 },
+		{ pose: 'lean', pos: [0, 0], heading: 0 },
+		{ pose: 'lean', pos: [0, 0, 0], heading: 'north' }
+	]) {
+		await assert.rejects(
+			loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, idle_spots: [bad] })),
+			/bad idle_spots\[0\]/
+		);
+	}
+	await assert.rejects(
+		loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, idle_spots: {} })),
+		/idle_spots is not an array/
+	);
+});
