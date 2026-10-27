@@ -27,7 +27,11 @@ function load() {
     return { doc, root: doc.getRoot(), meta: JSON.parse(fs.readFileSync(META, "utf8")) };
   })());
 }
-const meshNodes = (root) => root.listNodes().filter((n) => n.getMesh());
+const LOD = "_LOD";
+const LOD_SHARE = [0.4, 0.75];      // of the variant's triangles (robot_glb.mjs: LOD_ERROR 0.002 leaves about 50-65%)
+const LOD_BOUNDS_TOL = 0.02;         // m, bind pose bounds against the full mesh's (LOD_ERROR is 8 mm)
+const meshNodes = (root) => root.listNodes().filter((n) => n.getMesh() && !n.getName().endsWith(LOD));
+const lodNodes = (root) => root.listNodes().filter((n) => n.getMesh() && n.getName().endsWith(LOD));
 const mul = (a, b) => {   // column-major 4x4
   const o = new Array(16).fill(0);
   for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
@@ -81,6 +85,47 @@ test("one skinned mesh per variant, one primitive each, one shared material with
   const w = (png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19];
   assert.equal(w, PALETTE_W * meta.palettes.length, `strip ${w} px wide`);
   assert.ok(meshNodes(root)[0].getMesh().listPrimitives()[0].getMaterial().getBaseColorTexture(), "no baseColorTexture");
+});
+
+test("a simplified skinned ROBOT_V<i>_LOD per variant: fewer triangles, the same shape", { skip: SKIP }, async () => {
+  const { root, meta } = await load();
+  const lods = lodNodes(root);
+  assert.deepEqual(lods.map((n) => n.getName()).sort(), meta.variants.map((v) => v.name + LOD).sort());
+  for (const v of meta.variants) {
+    const node = lods.find((n) => n.getName() === v.name + LOD);
+    assert.ok(node.getSkin(), `${node.getName()} has no skin`);
+    const prims = node.getMesh().listPrimitives();
+    assert.equal(prims.length, 1, node.getName());
+    for (const a of ["JOINTS_0", "WEIGHTS_0", "TEXCOORD_0", "NORMAL"]) assert.ok(prims[0].getAttribute(a), `${node.getName()} no ${a}`);
+    const share = prims[0].getIndices().getCount() / 3 / v.tris;
+    assert.ok(share >= LOD_SHARE[0] && share <= LOD_SHARE[1], `${node.getName()} ${(share * 100).toFixed(0)}% of the triangles`);
+    const full = await bindBounds(meshNodes(root).find((n) => n.getName() === v.name));
+    const low = await bindBounds(node);
+    for (let k = 0; k < 3; k++) {
+      assert.ok(Math.abs(full.lo[k] - low.lo[k]) <= LOD_BOUNDS_TOL, `${node.getName()} lo[${k}] ${low.lo[k].toFixed(3)} vs ${full.lo[k].toFixed(3)}`);
+      assert.ok(Math.abs(full.hi[k] - low.hi[k]) <= LOD_BOUNDS_TOL, `${node.getName()} hi[${k}] ${low.hi[k].toFixed(3)} vs ${full.hi[k].toFixed(3)}`);
+    }
+  }
+});
+
+// At rest every joint of a vertex must put it in the same place (joint world x inverse bind x position):
+// a skin whose inverse binds don't match its mesh's (maybe quantized) positions comes apart when posed.
+test("every mesh, LOD too, binds consistently: a vertex's joints agree on its rest position", { skip: SKIP }, async () => {
+  const { root } = await load();
+  for (const node of root.listNodes().filter((n) => n.getMesh() && n.getSkin())) {
+    const skin = node.getSkin(), joints = skin.listJoints(), ibm = skin.getInverseBindMatrices();
+    const mats = joints.map((j, k) => mul(j.getWorldMatrix(), ibm.getElement(k, [])));
+    const prim = node.getMesh().listPrimitives()[0];
+    const pos = prim.getAttribute("POSITION"), ji = prim.getAttribute("JOINTS_0"), jw = prim.getAttribute("WEIGHTS_0");
+    let worst = 0;
+    for (let i = 0; i < pos.getCount(); i += 3) {
+      const p = pos.getElement(i, []), js = ji.getElement(i, []), ws = jw.getElement(i, []);
+      const at = (m) => [0, 1, 2].map((k) => m[k] * p[0] + m[4 + k] * p[1] + m[8 + k] * p[2] + m[12 + k]);
+      const ref = at(mats[js[0]]);
+      for (let k = 1; k < 4; k++) if (ws[k] > 0) worst = Math.max(worst, Math.hypot(...at(mats[js[k]]).map((v, a) => v - ref[a])));
+    }
+    assert.ok(worst < 0.01, `${node.getName()}: joints disagree by ${worst.toFixed(3)} m`);
+  }
 });
 
 test("walk and idle animations, looping (first key = last key), on the skin's joints", { skip: SKIP }, async () => {
