@@ -17,10 +17,12 @@ from hero_geom import (  # noqa: E402
     clear_runs,
     cull_aspects,
     disc_offsets,
+    flat_patch,
     frustum_planes,
     gl_heading,
     lean_profile,
     polyline_dist,
+    pool_max,
     ring_crossing,
     safe_vfov,
     seen_ranges,
@@ -338,6 +340,30 @@ class DiscOffsetsTest(unittest.TestCase):
         self.assertNotIn((2, 1), offs)   # 1.118 m out
         self.assertEqual(len(offs), 13)
         self.assertEqual(offs, sorted(offs))
+
+
+class PoolMaxTest(unittest.TestCase):
+    def test_highest_sample_per_cell_row_major(self):
+        # 2 x 2 cells of 10 m from (0, 0): samples in three of them, one outside the grid
+        pts = [(1, 1, 5.0), (9, 9, 7.5), (12, 3, 2.0), (3, 15, -1.0), (25, 5, 99.0)]
+        self.assertEqual(pool_max(pts, (0, 0), 10, 2, 2, 0.0), [7.5, 2.0, 0.0, 0.0])
+
+    def test_box_fills_every_cell_it_overlaps(self):
+        self.assertEqual(pool_max([], (0, 0), 10, 3, 1, 0.0, boxes=[((8, 2), (12, 4), 30.0)]), [30.0, 30.0, 0.0])
+
+
+class FlatPatchTest(unittest.TestCase):
+    def test_level_neighbourhood(self):
+        nan = float("nan")
+        z = [[1.0, 1.0, 1.0, 1.0],
+             [1.0, 1.05, 1.0, 3.0],
+             [1.0, 1.0, 1.0, 1.0],
+             [nan, 1.0, 1.0, 1.0]]
+        self.assertTrue(flat_patch(z, 1, 1, 1, 0.1))
+        self.assertFalse(flat_patch(z, 1, 2, 1, 0.1))    # the 3.0 next to it
+        self.assertFalse(flat_patch(z, 2, 1, 1, 0.1))    # the NaN (nothing hit)
+        self.assertFalse(flat_patch(z, 0, 1, 1, 0.1))    # off the grid
+        self.assertFalse(flat_patch(z, 1, 1, 1, 0.01))
 
 
 if __name__ == "__main__":

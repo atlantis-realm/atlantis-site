@@ -24,6 +24,8 @@ arc_lengths()      cumulative x, y length along a polyline.
 seen_ranges()      per frame, the arc-length range of the points seen from it.
 wall_top()         the height of a wall or railing top from rays scanned up its face.
 disc_offsets()     the grid cells within a radius (flat ground for a conversation circle).
+pool_max()         the highest sample (and box top) per cell of a coarse grid (the drones' sky heights).
+flat_patch()       whether a height map cell and its neighbours are one level (a drone's roof drop).
 
 Tests: python3 -m unittest discover -s test -p "test_*.py"
 """
@@ -312,3 +314,31 @@ def disc_offsets(r, step):
     n = int(r / step)
     return sorted((di, dj) for di in range(-n, n + 1) for dj in range(-n, n + 1)
                   if math.hypot(di, dj) * step <= r + 1e-9)
+
+
+def pool_max(points, origin, cell, nx, ny, empty, boxes=()):
+    """Per cell of an nx x ny grid of `cell` squares from `origin` (x, y), row-major (y then x): the highest
+    `h` of the (x, y, h) points in it and of the ((x0, y0), (x1, y1), h) boxes overlapping it, else `empty`.
+    Points off the grid are ignored."""
+    out = [empty] * (nx * ny)
+    for x, y, h in points:
+        i, j = math.floor((x - origin[0]) / cell), math.floor((y - origin[1]) / cell)
+        if 0 <= i < nx and 0 <= j < ny and h > out[j * nx + i]:
+            out[j * nx + i] = h
+    for (x0, y0), (x1, y1), h in boxes:
+        i0, i1 = max(0, math.floor((x0 - origin[0]) / cell)), min(nx - 1, math.floor((x1 - origin[0]) / cell))
+        j0, j1 = max(0, math.floor((y0 - origin[1]) / cell)), min(ny - 1, math.floor((y1 - origin[1]) / cell))
+        for j in range(j0, j1 + 1):
+            for i in range(i0, i1 + 1):
+                if h > out[j * nx + i]:
+                    out[j * nx + i] = h
+    return out
+
+
+def flat_patch(z, j, i, r, tol):
+    """True if z[j][i] and every cell within `r` cells of it (a square) are on the grid, hit (not NaN) and
+    within `tol` of z[j][i]."""
+    if not (r <= j < len(z) - r and r <= i < len(z[0]) - r):
+        return False
+    c = z[j][i]
+    return all(abs(z[jj][ii] - c) <= tol for jj in range(j - r, j + r + 1) for ii in range(i - r, i + r + 1))

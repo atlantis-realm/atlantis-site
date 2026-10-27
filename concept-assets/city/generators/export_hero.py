@@ -214,6 +214,23 @@ TALK_SPACING = 3.0                      # m between two circles' rims
 TALK_MAX_SPOTS = 60                     # written at most (stride-picked)
 TALK_NOT_GROUND = ("KIT_Ave_lane", "KIT_Ave_median", "KIT_Ave_tram", "KIT_Ave_plant", "RINGAVE_")   # roadway
 
+# Delivery drones (drone_spots, drone_sky): where they drop parcels, and how high they must cruise
+DRONE_SKY_CELL = 8.0                    # m: cells of the sky height grid (the highest surface or tree top in each)
+DRONE_SKY_STEP = 2.0                    # m between the downward probes of the top height map
+DRONE_SKY_AHEAD, DRONE_SKY_BACK = 640.0, 160.0   # m along the avenue from the camera the grid covers
+DRONE_SKY_HALF_W = 260.0                # m either side of the avenue axis
+DRONE_RANGE = 320.0                     # m: drop spots this far (3D) from the camera path at most
+DRONE_ROOF_MIN_H = 4.0                  # m above the nearest walk path point: a roof, not the street
+DRONE_ROOF_TOL = 0.15                   # m: the roof cell and its neighbours within this of each other
+DRONE_ROOF_PATCH = 1                    # cells either side that must be level (a 6 x 6 m pad at DRONE_SKY_STEP)
+DRONE_ROOF_SKIP = FRONTAGE_SKIP + ("Text",)   # not roofs: skywalks, trees, the Text
+DRONE_COLUMN_H = 120.0                  # m above a ground spot that must be free (rays straight up)
+DRONE_COLUMN_R = 1.2                    # m out from the spot: the four extra column rays
+DRONE_VIEW_H = 3.0                      # m above the spot: the point a sample camera must see (the hovering drone)
+DRONE_CAMERA_CLEARANCE = 10.0           # m from the camera path to that point
+DRONE_SPOT_SPACING = 6.0                # m between drop spots
+DRONE_MAX_ROOFS = 60                    # roof spots written at most (stride-picked)
+
 BLIMP_COUNT, BLIMP_PERIOD_S, BLIMP_ALTITUDE = 6, 240.0, 280.0
 BLIMP_RADII = range(600, 1401, 50)
 BLIMP_ORBIT_POINTS = 360
@@ -1144,6 +1161,109 @@ def talk_spots(pr, hm, cam_path, samples, frusta, walk_lines, route_lines, idle,
     return spots, counts
 
 
+def drone_sky(occ, cam_xy, fwd, side, trees):
+    """The top surface (every exported or hidden chunk in the frusta, the Text and skywalks included, trees as
+    their boxes) over the area the delivery drones fly: DRONE_SKY_AHEAD along the avenue from the camera,
+    DRONE_SKY_BACK behind it and DRONE_SKY_HALF_W either side. Returns (the DRONE_SKY_STEP height map (xs, ys,
+    z, nz, tri) with z NaN where nothing was hit, and the DRONE_SKY_CELL grid {origin, cell, nx, nz, h} in
+    glTF space: rows by glTF z (Blender -y), h the highest point per cell rounded up to the metre, 0 where
+    nothing is)."""
+    c = sum(cam_xy, Vector((0, 0))) / len(cam_xy)
+    corners = [c + fwd * a + side * w for a in (-DRONE_SKY_BACK, DRONE_SKY_AHEAD) for w in (-DRONE_SKY_HALF_W, DRONE_SKY_HALF_W)]
+    cell = DRONE_SKY_CELL
+    x0 = math.floor(min(q.x for q in corners) / cell) * cell
+    y0 = math.floor(min(q.y for q in corners) / cell) * cell
+    nx = int(math.ceil((max(q.x for q in corners) - x0) / cell))
+    ny = int(math.ceil((max(q.y for q in corners) - y0) / cell))
+    step = DRONE_SKY_STEP
+    xs = x0 + step / 2 + np.arange(int(round(nx * cell / step))) * step
+    ys = y0 + step / 2 + np.arange(int(round(ny * cell / step))) * step
+    z = np.full((len(ys), len(xs)), np.nan)
+    nz = np.zeros_like(z)
+    tri = np.full(z.shape, -1, np.int64)
+    down = Vector((0, 0, -1))
+    pts = []
+    for j, y in enumerate(ys):
+        for i, x in enumerate(xs):
+            loc, n, t, _d = occ.bvh.ray_cast(Vector((float(x), float(y), GROUND_TOP)), down, 2 * GROUND_TOP)
+            if loc is None:
+                continue
+            z[j, i], nz[j, i], tri[j, i] = loc.z, abs(n.z), t
+            pts.append((float(x), float(y), loc.z))
+    boxes = [((float(t.lo[0]), float(t.lo[1])), (float(t.hi[0]), float(t.hi[1])), float(t.hi[2])) for t in trees]
+    h = hg.pool_max(pts, (x0, y0), cell, nx, ny, 0.0, boxes)
+    # Blender rows run north (+y); glTF z = -y, so the glTF grid's first row is the northmost
+    rows = [[int(math.ceil(v)) for v in h[j * nx:(j + 1) * nx]] for j in range(ny)][::-1]
+    grid = {"origin": [round(x0, 4), round(-(y0 + ny * cell), 4)], "cell": cell, "nx": nx, "nz": ny,
+            "h": [v for row in rows for v in row]}
+    return (xs, ys, z, nz, tri), grid
+
+
+def drone_spots(pr, top, talk, samples, view16, cam_path, walk_lines, trees):
+    """Where the delivery drones drop parcels: the talk spots' centres (open plaza and pavement) with
+    DRONE_COLUMN_H free above them, and roof pads from the top height map `top` (drone_sky): DRONE_ROOF_MIN_H
+    above the street, level over DRONE_ROOF_PATCH cells either side, not a skywalk, tree or water, exported and
+    within DRONE_RANGE. Each is kept if the point DRONE_VIEW_H above it is DRONE_CAMERA_CLEARANCE from the
+    camera path and seen, in the 16:9 view and unoccluded, from some sample frame (all such frames listed),
+    then DRONE_SPOT_SPACING apart (ground first). Returns (spots in glTF space {pos, kind, frames}, counts)."""
+    occ = pr.occ
+    xs, ys, z, nz, tri = top
+    cams = np.array([tuple(q) for q in cam_path])
+    walk_pts = np.array([q for line in walk_lines for q in line])
+    up = Vector((0, 0, 1))
+    tree_boxes = [(t.lo, t.hi) for t in trees]
+
+    def under_tree(p):
+        return any(lo[0] - 1 <= p.x <= hi[0] + 1 and lo[1] - 1 <= p.y <= hi[1] + 1 and hi[2] > p.z for lo, hi in tree_boxes)
+
+    cand, counts = [], {"ground_tried": len(talk), "roof_cells": 0}
+    for sp in talk:
+        p = Vector((sp["pos"][0], -sp["pos"][2], sp["pos"][1]))
+        ring = [p] + [p + Vector((DRONE_COLUMN_R * dx, DRONE_COLUMN_R * dy, 0)) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+        if under_tree(p) or not all(occ.bvh.ray_cast(q + Vector((0, 0, 0.3)), up, DRONE_COLUMN_H)[0] is None for q in ring):
+            continue
+        cand.append(("ground", p))
+    counts["ground_clear"] = len(cand)
+    for j in range(len(ys)):
+        for i in range(len(xs)):
+            t = int(tri[j, i])
+            if t < 0 or nz[j, i] < IDLE_FLAT_NZ:
+                continue
+            owner = occ.src[occ.owner[t]]
+            if owner.startswith(DRONE_ROOF_SKIP) or occ.mat[t] == WATER_MATERIAL or int(occ.owner[t]) not in pr.kept:
+                continue
+            p = Vector((float(xs[i]), float(ys[j]), float(z[j, i])))
+            if np.linalg.norm(cams - np.array(p), axis=1).min() > DRONE_RANGE:
+                continue
+            street = walk_pts[np.argmin(np.sum((walk_pts[:, :2] - (p.x, p.y)) ** 2, axis=1)), 2]
+            if p.z - street < DRONE_ROOF_MIN_H or not hg.flat_patch(z, j, i, DRONE_ROOF_PATCH, DRONE_ROOF_TOL):
+                continue
+            if under_tree(p):
+                continue
+            counts["roof_cells"] += 1
+            cand.append(("roof", p))
+    out = []
+    for kind, p in cand:
+        h = p + Vector((0, 0, DRONE_VIEW_H))
+        if np.linalg.norm(cams - np.array(h), axis=1).min() < DRONE_CAMERA_CLEARANCE:
+            continue
+        lo, hi = (h.x - 0.8, h.y - 0.8, h.z - 0.3), (h.x + 0.8, h.y + 0.8, h.z + 0.3)
+        frames = [f for (f, pos, _f, _u), planes in zip(samples, view16)
+                  if hg.aabb_in_frustum(lo, hi, planes) and seen_from(occ, [Vector(pos)], h)]
+        if frames:
+            out.append((kind, p, frames))
+    counts["seen"] = {k: sum(1 for s in out if s[0] == k) for k in ("ground", "roof")}
+    out.sort(key=lambda s: (s[0] != "ground", round(s[1].x, 3), round(s[1].y, 3)))
+    out = [out[k] for k in hg.thin_spots([(s[1].x, s[1].y) for s in out], DRONE_SPOT_SPACING)]
+    ground = [s for s in out if s[0] == "ground"]
+    roofs = hg.stride_pick([s for s in out if s[0] == "roof"], DRONE_MAX_ROOFS)
+    spots = [{"pos": gl(p), "kind": kind, "frames": frames} for kind, p, frames in ground + roofs]
+    counts["kept"] = {"ground": len(ground), "roof": len(roofs)}
+    if roofs:
+        counts["roof_h"] = [round(min(s[1].z for s in roofs), 2), round(max(s[1].z for s in roofs), 2)]
+    return spots, counts
+
+
 def blimp_radius(occ, centre, mats, vfov, cam_data):
     """Radius in BLIMP_RADII whose orbit at BLIMP_ALTITUDE is most often in the frame-1 view, unoccluded."""
     m1 = mats[hg.FRAME_START]
@@ -1544,13 +1664,20 @@ def run():
                                        well_c, fwd, side, pave_out)
         timing["talk"] = time.time() - t0
         print("export_hero: talk spots", json.dumps(talk_counts), flush=True)
+        tree_insts = [it for it in in_frustum if it.tree]
+        top, sky = drone_sky(occ, cam_xy, fwd, side, tree_insts)
+        drones, drone_counts = drone_spots(pr, top, talk, samples, view16, cam_path, walk_lines, tree_insts)
+        drone_counts["sky"] = {"nx": sky["nx"], "nz": sky["nz"], "max": max(sky["h"])}
+        timing["drones"] = time.time() - t0
+        print("export_hero: drone spots", json.dumps(drone_counts), flush=True)
         if idle_debug is not None:
             np.savez(_g["IDLE_DEBUG"], **idle_debug, cams=np.array([tuple(c) for c in cam_path]),
                      walk=np.array([q for line in walk_lines for q in line]))
         if _g.get("STOP_AFTER") == "idle":
             with open(os.path.join(OUT_DIR, "idle_spots.json"), "w") as fh:
                 json.dump({"counts": idle_counts, "idle_spots": idle, "route_counts": route_counts,
-                           "robot_routes": routes, "talk_counts": talk_counts, "talk_spots": talk}, fh, indent=1)
+                           "robot_routes": routes, "talk_counts": talk_counts, "talk_spots": talk,
+                           "drone_counts": drone_counts, "drone_spots": drones}, fh, indent=1)
             return
 
         # ---- AO bake
@@ -1636,6 +1763,8 @@ def run():
             "idle_spots": idle,
             "robot_routes": routes,
             "talk_spots": talk,
+            "drone_spots": drones,
+            "drone_sky": sky,
         }
         with open(os.path.join(OUT_DIR, "hero_props.json"), "w") as fh:
             json.dump(props, fh, indent=1)
@@ -1673,6 +1802,7 @@ def run():
                 "idle_spots": idle_counts,
                 "robot_routes": route_counts,
                 "talk_spots": talk_counts,
+                "drone_spots": drone_counts,
             },
             "per_collection": dict(sorted(report.items())),
             "glb_bytes": os.path.getsize(glb),
