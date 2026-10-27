@@ -48,6 +48,29 @@ export type TalkSpot = {
 	area?: string;
 };
 
+/** Where a delivery drone can drop a parcel (or take off from): open ground or a roof pad with free sky above. */
+export type DroneSpot = {
+	/** The drop point on the ground or roof. */
+	pos: Vec3;
+	/** 'ground' (a talk spot's centre: plaza or pavement) or 'roof'. */
+	kind: string;
+	/** Blender sample frames (every 5) whose 16:9 view sees a drone hovering DRONE_VIEW_H (3 m) above it. */
+	frames: number[];
+};
+
+/**
+ * The top of the scene over the drones' flying area: `nx` x `nz` square cells of `cell` m from `origin`
+ * (the [x, z] corner with the least x and z), row-major by z; `h` the highest surface or tree top in each
+ * cell, rounded up to the metre (0 where there is nothing).
+ */
+export type DroneSky = {
+	origin: [number, number];
+	cell: number;
+	nx: number;
+	nz: number;
+	h: number[];
+};
+
 export type HeroProps = {
 	version: number;
 	fps: number;
@@ -81,6 +104,10 @@ export type HeroProps = {
 	robot_routes?: RobotRoute[];
 	/** Conversation-circle spots (version 2); absent in older exports. */
 	talk_spots?: TalkSpot[];
+	/** Delivery drone drop spots (version 2); absent in older exports. */
+	drone_spots?: DroneSpot[];
+	/** Sky heights the drones cruise above (version 2); absent in older exports. */
+	drone_sky?: DroneSky;
 };
 
 /** Required keys, nested ones dotted. Checked on load so a stale export fails loudly. */
@@ -125,6 +152,8 @@ export async function loadProps(url: string, fetchFn: typeof fetch = fetch): Pro
 	if (props.idle_spots !== undefined) props.idle_spots = idleSpots(url, props.idle_spots);
 	if (props.robot_routes !== undefined) props.robot_routes = robotRoutes(url, props.robot_routes);
 	if (props.talk_spots !== undefined) props.talk_spots = talkSpots(url, props.talk_spots);
+	if (props.drone_spots !== undefined) props.drone_spots = droneSpots(url, props.drone_spots);
+	if (props.drone_sky !== undefined) props.drone_sky = droneSky(url, props.drone_sky);
 	return props;
 }
 
@@ -168,6 +197,39 @@ function talkSpots(url: string, spots: unknown): TalkSpot[] {
 		if (!ok) throw new Error(`${url}: bad talk_spots[${i}]`);
 	});
 	return spots as TalkSpot[];
+}
+
+/** Validate optional drone_spots: an array of well-formed spots, or a loud error naming the first bad one. */
+function droneSpots(url: string, spots: unknown): DroneSpot[] {
+	if (!Array.isArray(spots)) throw new Error(`${url}: drone_spots is not an array`);
+	spots.forEach((s, i) => {
+		const ok =
+			s !== null &&
+			typeof s === 'object' &&
+			isVec3(s.pos) &&
+			typeof s.kind === 'string' &&
+			Array.isArray(s.frames) &&
+			s.frames.every(Number.isFinite);
+		if (!ok) throw new Error(`${url}: bad drone_spots[${i}]`);
+	});
+	return spots as DroneSpot[];
+}
+
+/** Validate optional drone_sky: a grid whose `h` has nx * nz heights, or a loud error. */
+function droneSky(url: string, sky: unknown): DroneSky {
+	const g = sky as DroneSky;
+	const ok =
+		g !== null &&
+		typeof g === 'object' &&
+		isNums(g.origin, 2) &&
+		g.cell > 0 &&
+		Number.isInteger(g.nx) &&
+		Number.isInteger(g.nz) &&
+		g.nx > 0 &&
+		g.nz > 0 &&
+		isNums(g.h, g.nx * g.nz);
+	if (!ok) throw new Error(`${url}: bad drone_sky`);
+	return g;
 }
 
 /** Validate optional idle_spots: an array of well-formed spots, or a loud error naming the first bad one. */

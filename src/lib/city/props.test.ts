@@ -185,3 +185,54 @@ test('loadProps rejects a malformed talk spot', async () => {
 		/talk_spots is not an array/
 	);
 });
+
+const SKY: NonNullable<HeroProps['drone_sky']> = {
+	origin: [-8, 1100],
+	cell: 8,
+	nx: 2,
+	nz: 2,
+	h: [0, 12, 40, 9]
+};
+const DRONE_SPOT: NonNullable<HeroProps['drone_spots']>[number] = {
+	pos: [4, 9, 1204],
+	kind: 'ground',
+	frames: [1, 6, 11]
+};
+
+test('loadProps accepts props without drone_spots or drone_sky (older exports)', async () => {
+	const props = await loadProps('/city/hero_props.json', stubFetch(SAMPLE));
+	assert.equal(props.drone_spots, undefined);
+	assert.equal(props.drone_sky, undefined);
+});
+
+test('loadProps keeps well-formed drone_spots and drone_sky', async () => {
+	const props = await loadProps(
+		'/city/hero_props.json',
+		stubFetch({ ...SAMPLE, drone_spots: [DRONE_SPOT], drone_sky: SKY })
+	);
+	assert.deepEqual(props.drone_spots, [DRONE_SPOT]);
+	assert.deepEqual(props.drone_sky, SKY);
+});
+
+test('loadProps rejects a malformed drone spot or sky grid', async () => {
+	for (const bad of [
+		{ ...DRONE_SPOT, pos: [1, 2] },
+		{ ...DRONE_SPOT, kind: 3 },
+		{ ...DRONE_SPOT, frames: [1, 'x'] }
+	]) {
+		await assert.rejects(
+			loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, drone_spots: [bad] })),
+			/bad drone_spots\[0\]/
+		);
+	}
+	for (const bad of [
+		{ ...SKY, h: [0, 1, 2] },
+		{ ...SKY, cell: 0 },
+		{ ...SKY, origin: [1] }
+	]) {
+		await assert.rejects(
+			loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, drone_sky: bad })),
+			/bad drone_sky/
+		);
+	}
+});

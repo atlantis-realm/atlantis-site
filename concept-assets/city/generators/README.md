@@ -120,7 +120,7 @@ Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-i
 | File | What it is |
 |---|---|
 | `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>`, the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`). Materials are simple PBR, `HERO_<source>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
-| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. `idle_spots` (see "Idle spots" below), `robot_routes` ("Robot routes") and `talk_spots` ("Talk spots"). `version` is 2 since the last two (and the lean spots' `top`) were added; the page reads all three as optional. |
+| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. `idle_spots` (see "Idle spots" below), `robot_routes` ("Robot routes"), `talk_spots` ("Talk spots") and `drone_spots` / `drone_sky` ("Drone spots"). `version` is 2 since robot routes and talk spots (and the lean spots' `top`) were added; the page reads all of these as optional. |
 | `export_report.json` | Per collection: `instances`, `in_frustum`, `kept`, `dropped_frustum` (= instances − in_frustum), `dropped_occlusion` (= in_frustum − kept), `chunks`, `chunks_kept`. Also band and mesh counts, triangles, glb size, timings. |
 
 Two runs give a byte-identical `hero_raw.glb` and leave the scene's object, material and mesh counts and
@@ -282,6 +282,37 @@ v05 result: 14 spots (10 of radius 2.2 m, 4 smaller): 6 on the walkway deck roun
 avenue pavement at its foot, before the walk paths start (8–17 m out; the one within `WELL_AREA_R` counts as
 `well`, so 7 are `well` and 7 `avenue`), and 4 in the open ground beside the avenue between its facades
 (63–140 m out).
+
+### Drone spots
+
+`drone_sky()` and `drone_spots()` give the page's delivery drones (`src/lib/city/drones.ts`) where to drop
+parcels and how high to cruise. Both run after the talk spots, on the BVH of every in-frustum chunk:
+
+- **Sky** (`drone_sky`): downward rays every `DRONE_SKY_STEP` (2 m) from `GROUND_TOP` find the top surface
+  (anything: the Text, skywalks, hidden chunks) over `DRONE_SKY_AHEAD` (640 m) along the avenue from the camera,
+  `DRONE_SKY_BACK` (160 m) behind it and `DRONE_SKY_HALF_W` (260 m) either side. Per `DRONE_SKY_CELL` (8 m)
+  cell the highest hit or tree top (the trees are not in the BVH, so their boxes count; `hg.pool_max`, tested),
+  rounded up to the metre, 0 where nothing is. `drone_sky` is `{origin: [x, z], cell, nx, nz, h}` in glTF space:
+  `origin` the corner with the least x and z, `h` row-major by z.
+- **Ground spots**: the talk spots' centres (open plaza and pavement, see "Talk spots") with `DRONE_COLUMN_H`
+  (120 m) free straight up from the centre and four points `DRONE_COLUMN_R` (1.2 m) out, and no tree box over them.
+- **Roof pads**: cells of the 2 m top map that are level (`IDLE_FLAT_NZ`), exported, not water, a skywalk, a tree
+  or the Text (`DRONE_ROOF_SKIP`), at least `DRONE_ROOF_MIN_H` (4 m) above the nearest walk path point, level to
+  `DRONE_ROOF_TOL` (0.15 m) over the cells `DRONE_ROOF_PATCH` either side (`hg.flat_patch`, tested: a 6 × 6 m
+  pad), within `DRONE_RANGE` (320 m) of the camera path and under no tree.
+- **Kept**: the point `DRONE_VIEW_H` (3 m) above the spot (a hovering drone) must be `DRONE_CAMERA_CLEARANCE`
+  (10 m) from the camera path and seen, in the 16:9 view and unoccluded, from at least one sample frame; every
+  such frame is listed. Then `DRONE_SPOT_SPACING` (6 m) apart, ground first, at most `DRONE_MAX_ROOFS` (60)
+  roofs (stride-picked).
+
+Each spot is `{pos, kind, frames}` in glTF space: `kind` `ground` or `roof`, `frames` the sample frames that
+see the hovering drone. `export_report.json` has the counts.
+
+v05 result: 15 spots. 7 ground: 5 on the walkway round the well and 2 on the avenue pavement 60–75 m out (the
+other 7 talk spots have a tree or overhang above them, or are within 6 m of a kept one); 8 roof pads, 40–58 m
+up on the avenue frontage 80–280 m out (33 seen before spacing). No spot is seen after sample frame 86: from
+there on the camera looks down into the well. The sky grid is 66 × 101 cells, highest 128 m; it and the spots
+take `hero_props.json` from 41.7 KB to 89.5 KB. `hero_raw.glb` is unchanged (two runs: the same SHA).
 
 Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):
 
@@ -542,6 +573,68 @@ there is no avenue or street in the frame to cross.
 
 The pack's licence allows its use in projects but not redistributing it as a standalone asset. Like the
 people, `robot.glb` and `robot_meta.json` are git-ignored until the user approves the look.
+
+## Drones
+
+The delivery drones need no asset: `src/lib/city/drones.ts` builds a low-poly PSX-style quadcopter in code
+(`droneGeometry`: a six-sided hull with a dark waist band, a raised spine and a camera pod, four arms on the
+diagonals with motors and coloured caps, two skids; 1.2 m across the motors, 1.7 m across the rotors, flat
+shaded, vertex colours tinted per instance) and its rotor
+blur (`rotorGeometry`: a translucent disc, darker at the rim, with one blade ghost across it, spun in steps of
+`DRONE_ROTOR_STEP_ANGLE` `DRONE_ROTOR_STEPS` times a second, neighbours opposite ways). They fly over the
+export's `drone_spots` and `drone_sky` (see "Drone spots"); without the spots there are none.
+
+`DRONE_COUNT` (6) drones each fly one trip after another (`planTrip`, tested), seeded per drone
+(`mulberry32(DRONE_SEED + i)`):
+
+- **Drop spot** (`pickSpot`): not within `DRONE_SPOT_GAP` (12 m) of another drone's drop or take-off spot (so
+  at most two drones work round the well at once); one the camera sees at the current frame if any (a `frames` sample within `DRONE_VIEW_SLACK` 5 frames), weighted by 1 / distance from the
+  camera (`DRONE_NEAR_POWER` 1, at least `DRONE_NEAR_MIN` 15 m), so the near spots come up more without the
+  far roofs dropping out.
+- **Start**: `DRONE_TAKEOFF_CHANCE` (35%) of trips take off from a spot the camera doesn't see at the frame, at
+  least `DRONE_TAKEOFF_MIN` (60 m) away (landed on its skids, rotors spinning up for `DRONE_SPINUP_S`, then a
+  vertical climb paying the line out); the rest come in at cruise height from a point `DRONE_FAR` (220–320 m)
+  out (`farPoint`): of `DRONE_BEARING_TRIES` (12) random bearings, the one the camera's frustum doesn't contain
+  with the lowest sky on the straight line in, so the cruise can stay low. The exit point is picked the same way.
+- **Cruise**: at `DRONE_SPEED` (10–14 m/s) with `DRONE_ACCEL` (2.5 m/s²) at both ends (`moveDuration`,
+  `easedDistance`: from rest to rest). The height is one per trip: `DRONE_CRUISE_AGL` (25–40 m) above a ground
+  drop (`DRONE_ROOF_AGL` 10–18 m above a roof), raised so both legs clear the sky grid by `DRONE_SKY_CLEAR`
+  (8 m) within `DRONE_RADIUS` (1 m) of the path (`skyMaxAlong`).
+- **Glide in** (`pickGlide`, `glideClear`): the inbound quadratic Bezier ends tangent to a straight glide down
+  to `DRONE_HOVER_H` (5 m) over the spot, `DRONE_GLIDE_RATIO` (2.5) metres out per metre lost, on the first of
+  `DRONE_GLIDE_TRIES` (8) bearings whose glide stays `DRONE_GLIDE_CLEAR` (3 m) above the sky grid (but for its
+  last `DRONE_GLIDE_FREE` 8 m, the column the export checked) and that the camera sees half way down, else the
+  first clear one. The drone flies the curve and the glide as one move, braking only at the end. With no clear
+  glide the curve, bowed sideways by up to `DRONE_BEND` (0.3) of its length, ends over the spot, and the drone
+  stops (`DRONE_STOP_S`) and descends straight at `DRONE_DESCENT_SPEED`.
+- **Delivery**: a settle at the hover, the parcel (`DRONE_PARCEL_W` × `DRONE_PARCEL_H`, on a `DRONE_TETHER` 0.5 m
+  line in flight) winched down at `DRONE_WINCH_SPEED` (1.2 m/s) until it sits on the spot, released (it stays
+  there for the rest of the trip), the empty line winched up, then the climb back to cruise height, turning
+  to the way out, and the cruise out.
+- **Pose** (`tripPose`): the heading follows the cruise curve and turns over the stops; the drone leans with
+  its acceleration (a central difference over 0.3 s divided by g, at most `DRONE_TILT_MAX` 0.4 rad), so it
+  noses down speeding up, back braking, and banks into the curves; in the air it wobbles by `DRONE_WOBBLE_M`
+  and `DRONE_WOBBLE_TILT`. A hanging parcel never sinks into the drop spot.
+- **Gaps**: off the exit point a drone is hidden for `DRONE_RESPAWN_GAP` (1–6 s) before its next trip. The
+  first trips start part of the way through.
+
+Everything is a function of the scene clock, so reduced motion freezes the drones (and their rotors) like the
+people and robots. All drones are four InstancedMeshes: bodies (with sun shadows on desktop), rotor discs
+(transparent, no depth write, no shadows), parcels and lines (one unit box scaled per instance; shadows) and
+nav lights (red on the port front motor, green starboard, a white strobe on the tail flashing
+`DRONE_STROBE_ON` 0.1 s every `DRONE_STROBE_PERIOD` 1.3 s; unlit HDR colours above the bloom threshold, shown
+only at night, scaled by mixMode's emissive level). That is 5 draw calls by day with shadows (3 on mobile) and
+6 at night, and 2,880 triangles in the main pass (384 per body, 12 per rotor disc), about 5,300 with the
+shadow pass. Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.05 steps: peak 260 draw calls
+by day (was 255) and 276 at night (was 269), 1.439 M triangles.
+
+The camera stands on the plaza in a canyon of 40–58 m buildings, so a drone cruising over the rooftops is
+above the frame unless it is far down the avenue: hence the entry and exit points over the lowest sky (the
+open avenue, the plaza behind the camera) and the glides in, chosen seen. Over a 300 s sweep, the frustum
+holds on average 2.1 drones at scroll 1 (frame 1), 1.7 at scroll 0.9, 1.5 at 0.8 and 0.3 at 0.7; from about
+scroll 0.62 (frame 96) the view is only the well and its deck, and no drone is in it. Plans depend on the
+order of the updates (a drone sees the others' trips as they stand when it plans), as for the robots; when
+the clock goes back the drones start afresh from their seeds, so the same steps replay the same.
 
 ## Tests
 

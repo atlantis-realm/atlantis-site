@@ -3,7 +3,8 @@
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
 // blimps (blimps.ts), the well's water (water.ts), walking, sitting, leaning and talking people
 // (people.ts: the baked characters of people.glb, or walking capsules without it) and the
-// robots crossing the avenue (robot.ts, robot.glb; none without it). Follows the
+// robots crossing the avenue (robot.ts, robot.glb; none without it) and the delivery
+// drones (drones.ts, procedural; none without the export's drone_spots). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -22,7 +23,7 @@ import {
 	safeFrameFov,
 	scrollToFrame
 } from './heroCamera.ts';
-import { loadProps, type HeroProps } from './props.ts';
+import { loadProps, type HeroProps, type Vec3 } from './props.ts';
 import { createSky, setSkyMoon, setSkySun, type Sky } from './sky.ts';
 import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
 import { createBlimps, updateBlimps } from './blimps.ts';
@@ -46,6 +47,7 @@ import {
 } from './people.ts';
 import { buildShadowProxy, installShadowLayer } from './shadowProxy.ts';
 import { createRobots, loadRobotAsset, type RobotState, type Robots } from './robot.ts';
+import { createDrones, type DroneState, type Drones } from './drones.ts';
 
 /** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
@@ -144,6 +146,13 @@ export class CityHeroScene {
 	private blimps: THREE.InstancedMesh | null = null;
 	private people: People | null = null;
 	private robot: Robots | null = null;
+	private drones: Drones | null = null;
+	/** The camera's view, for the drones' unseen entry and exit points. */
+	private readonly frustum = new THREE.Frustum();
+	private readonly viewProjection = new THREE.Matrix4();
+	private readonly probe = new THREE.Vector3();
+	private readonly inView = (p: Vec3): boolean =>
+		this.frustum.containsPoint(this.probe.set(p[0], p[1], p[2]));
 	/** The well's water material (water.ts), null when the glb has no props.well_water mesh. */
 	private water: THREE.Material | null = null;
 	/** Merged sun-shadow casters near the plaza (shadowProxy.ts), desktop only. */
@@ -161,7 +170,7 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
-	/** Clock of the moving things (clouds, blimps, water, people, robot); frozen with reducedMotion. */
+	/** Clock of the moving things (clouds, blimps, water, people, robot, drones); frozen with reducedMotion. */
 	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
 	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
@@ -293,6 +302,8 @@ export class CityHeroScene {
 			if (this.robot) this.scene.add(this.robot.object);
 			else disposeObject(robot.scene);
 		}
+		this.drones = createDrones(props.drone_spots, props.drone_sky, { shadows: !this.opts.mobile });
+		if (this.drones) this.scene.add(this.drones.object);
 		this.updateMotion();
 		this.applyMix();
 		this.bakeEnvironment();
@@ -335,6 +346,11 @@ export class CityHeroScene {
 	/** Where each robot is: its route, direction, variant, palette and distance (none before load or without robot.glb). */
 	robotState(): RobotState[] {
 		return this.robot?.state() ?? [];
+	}
+
+	/** Where each drone is: its drop spot, take-off spot (-1: flew in), position and whether it has dropped its parcel. */
+	droneState(): DroneState[] {
+		return this.drones?.state() ?? [];
 	}
 
 	/** Current (eased) Blender frame. */
@@ -461,6 +477,7 @@ export class CityHeroScene {
 		this.renderer.toneMappingExposure = mix.exposure;
 		if (this.water) setWaterNight(this.water, mix.emissive);
 		this.robot?.setNight(mix.emissive);
+		this.drones?.setNight(mix.emissive);
 
 		const strength = mix.bloom * (this.opts.mobile ? BLOOM_MOBILE_SCALE : 1);
 		if (strength > 0) this.ensureComposer().strength = strength;
@@ -500,16 +517,24 @@ export class CityHeroScene {
 	}
 
 	/**
-	 * Clouds, blimps, water, people and the robots at motionTime (new robot
-	 * routes picked in view at the frame, the near ones most).
+	 * Clouds, blimps, water, people, the robots and the drones at motionTime (new
+	 * robot routes and drop spots picked in view at the frame, the near ones most).
 	 */
 	private updateMotion(): void {
 		this.sky.update(this.motionTime);
 		if (this.water) setWaterTime(this.water, this.motionTime);
 		this.people?.update(this.motionTime);
-		if (this.robot) {
-			const eye = this.camera.getWorldPosition(this.eye);
-			this.robot.update(this.motionTime, this.frame, [eye.x, eye.y, eye.z]);
+		const eye = this.camera.getWorldPosition(this.eye);
+		if (this.robot) this.robot.update(this.motionTime, this.frame, [eye.x, eye.y, eye.z]);
+		if (this.drones) {
+			this.camera.updateMatrixWorld();
+			this.frustum.setFromProjectionMatrix(
+				this.viewProjection.multiplyMatrices(
+					this.camera.projectionMatrix,
+					this.camera.matrixWorldInverse
+				)
+			);
+			this.drones.update(this.motionTime, this.frame, [eye.x, eye.y, eye.z], this.inView);
 		}
 		const props = this.loadedProps;
 		if (this.blimps && props)
@@ -578,6 +603,7 @@ export class CityHeroScene {
 		if (this.blimps) disposeObject(this.blimps);
 		this.people?.dispose();
 		this.robot?.dispose();
+		this.drones?.dispose();
 		if (this.shadowProxy) disposeObject(this.shadowProxy);
 		this.uninstallShadowLayer?.();
 		this.sky.dispose();
