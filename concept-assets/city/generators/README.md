@@ -280,7 +280,18 @@ On the page (`src/lib/city/people.ts`) each variant is one InstancedMesh with th
 walkers pick a variant by a seeded weighted draw (uniforms at `UNIFORM_WEIGHT` 0.5 against a civilian's 1)
 and show walk key `floor(phase · keys)` for phase = distance walked / (variant `cycle_m` × walker scale),
 one key at 1 and the rest 0. Without `people.glb` or `people_meta.json` the page walks capsules instead.
-At 1280×720 desktop with shadows, 160 walkers keep the frame at ≤ 252 draw calls and ≤ 1.45 M triangles.
+`IDLE_PEOPLE` (40; `IDLE_PEOPLE_MOBILE` 20) more stand still at the export's `idle_spots`, after the
+walkers in the same per-variant InstancedMeshes (no extra draw calls), their `sit` or `lean` key at 1 set
+once and never touched per frame (`planIdlers`, `idlerPose`). A seeded shuffle of the spots gives
+`SIT_SHARE` (0.4) sitters and the rest leaners (leaners fill in when the sit spots run out), `IDLE_GAP`
+(2 m) apart, each with a weighted variant pick and the walkers' height scale. A sitter's origin is the ledge
+edge moved back `sit_edge` (scaled) along its facing and `sit_seat_h` (scaled) below the ledge top; a sit
+spot whose drop misses the picked person's seat height by more than `SIT_DROP_TOLERANCE` (0.12 m) is
+skipped. A leaner's origin is the wall foot moved out `lean_back` (scaled). The capsule fallback has no
+idle people. With v05's spots that is 12 sitters (the avenue's outer pavement edge, 100–160 m out) and
+28 leaners. The idle people took the frame to 1.54 M triangles with 40 walkers per path, so
+`PEOPLE_PER_PATH` is now 30 (120 walkers): at 1280×720 desktop with shadows the frame peaks at 238 draw
+calls by day, 252 by night, and 1.444 M triangles (1.397 M at frame 1).
 
 The pack is the user's own purchased asset. Like the hero, `people.glb` and `people_meta.json` are
 git-ignored until the user approves the look and its use on the site.

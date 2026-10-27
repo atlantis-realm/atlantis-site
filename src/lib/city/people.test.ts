@@ -2,11 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
+	IDLE_GAP,
+	SIT_DROP_TOLERANCE,
 	castFromScene,
 	createCharacterPeople,
 	createPeople,
+	idlerPose,
 	mulberry32,
 	parsePeopleMeta,
+	planIdlers,
 	planWalkers,
 	walkInfluences,
 	walkKey,
@@ -14,7 +18,7 @@ import {
 	weightedPick,
 	type PeopleMeta
 } from './people.ts';
-import type { Vec3 } from './props.ts';
+import type { IdleSpot, Vec3 } from './props.ts';
 
 /** A closed 10 m square (first point == last point): perimeter 40 m. */
 const SQUARE: Vec3[] = [
@@ -263,4 +267,156 @@ test('createCharacterPeople: one instanced mesh per variant, seeded, one key at 
 	assert.ok([0, 2].includes(Math.round(m.elements[13] * 1e6) / 1e6), `y ${m.elements[13]}`);
 	one.dispose();
 	two.dispose();
+});
+
+/** Version 2 meta: sit and lean targets after the 6 walk keys, with each variant's pose measures. */
+const META2: PeopleMeta = {
+	...META,
+	version: 2,
+	poses: { sit: 6, lean: 7 },
+	variants: META.variants.map((v, n) => ({
+		...v,
+		sit_seat_h: 0.45 - n * 0.02,
+		sit_edge: 0.3,
+		lean_back: 0.2
+	}))
+};
+const BODY = { seatH: 0.45, sitEdge: 0.3, leanBack: 0.2 };
+
+/** `n` sit spots along x at z = 0 (facing −Z, drop 0.45) and `n` lean spots at z = 20 (facing +X), 1 m apart. */
+function spots(n: number): IdleSpot[] {
+	const out: IdleSpot[] = [];
+	for (let k = 0; k < n; k++) {
+		out.push({ pose: 'sit', pos: [k, 1, 0], heading: Math.PI, drop: 0.45 });
+		out.push({ pose: 'lean', pos: [k, 0, 20], heading: Math.PI / 2 });
+	}
+	return out;
+}
+
+test('parsePeopleMeta checks the poses and their measures', () => {
+	assert.equal(parsePeopleMeta(META2), META2);
+	assert.throws(() => parsePeopleMeta({ ...META2, poses: { sit: 2, lean: 7 } }));
+	assert.throws(() =>
+		parsePeopleMeta({ ...META2, variants: META2.variants.map(({ lean_back: _, ...v }) => v) })
+	);
+});
+
+test('castFromScene with poses wants keys + 2 targets and reads the measures', () => {
+	const material = new THREE.MeshStandardMaterial();
+	const cast = castFromScene(fakeGlb(['A', 'B', 'C'], 8, material), META2);
+	assert.equal(cast.keys, 6);
+	assert.equal(cast.targets, 8);
+	assert.deepEqual(cast.poses, { sit: 6, lean: 7 });
+	assert.deepEqual(cast.members[1].body, { seatH: 0.43, sitEdge: 0.3, leanBack: 0.2 });
+	assert.throws(() => castFromScene(fakeGlb(['A', 'B', 'C'], 6, material), META2), /6 morph/);
+});
+
+test('idlerPose: a sitter backs off the ledge edge, its seat on it; a leaner steps out from the wall', () => {
+	// Facing +X (heading π/2), ledge top at y = 1.
+	const sit = idlerPose({ pose: 'sit', pos: [5, 1, 3], heading: Math.PI / 2, drop: 0.45 }, BODY, 1);
+	close(sit.position, [5 - 0.3, 1 - 0.45, 3]);
+	assert.equal(sit.heading, Math.PI / 2);
+	// Scaled: the measures scale with the figure.
+	close(idlerPose({ pose: 'sit', pos: [0, 1, 0], heading: 0, drop: 0.5 }, BODY, 1.1).position, [
+		0,
+		1 - 0.495,
+		-0.33
+	]);
+	// Facing −Z (heading π): the leaner's origin is lean_back out, in front of the wall foot.
+	close(
+		idlerPose({ pose: 'lean', pos: [2, 0, 4], heading: Math.PI }, BODY, 1).position,
+		[2, 0, 3.8]
+	);
+});
+
+test('planIdlers is seeded, mixes sit and lean, keeps IDLE_GAP and fits the drops', () => {
+	const bodies = [BODY, { ...BODY, seatH: 0.38 }, BODY];
+	const all = spots(60);
+	const a = planIdlers(all, 40, bodies, [1, 0.5, 1]);
+	assert.deepEqual(a, planIdlers(all, 40, bodies, [1, 0.5, 1]));
+	assert.equal(a.length, 40);
+	assert.equal(a.filter((p) => p.pose === 'sit').length, 16);
+	assert.equal(a.filter((p) => p.pose === 'lean').length, 24);
+	a.forEach((p, i) => {
+		assert.equal(p.pose, p.spot.pose);
+		assert.ok(p.scale >= 0.92 && p.scale <= 1.06, `scale ${p.scale}`);
+		if (p.pose === 'sit')
+			assert.ok(Math.abs(p.spot.drop! - bodies[p.variant].seatH * p.scale) <= SIT_DROP_TOLERANCE);
+		a.slice(i + 1).forEach((o) => {
+			const d = Math.hypot(o.spot.pos[0] - p.spot.pos[0], o.spot.pos[2] - p.spot.pos[2]);
+			assert.ok(d >= IDLE_GAP, `${d} m apart`);
+		});
+	});
+	// Few sit spots: leaners fill in. A drop no seat fits: nobody sits there.
+	const few = planIdlers(
+		spots(60).filter((s) => s.pose === 'lean' || s.pos[0] < 3),
+		20,
+		bodies
+	);
+	assert.equal(few.length, 20);
+	assert.ok(few.filter((p) => p.pose === 'sit').length <= 2);
+	const high = all.map((s) => (s.pose === 'sit' ? { ...s, drop: 1 } : s));
+	assert.equal(planIdlers(high, 20, bodies).filter((p) => p.pose === 'sit').length, 0);
+	assert.deepEqual(planIdlers([], 20, bodies), []);
+});
+
+test('createCharacterPeople places idle people in the walkers meshes, posed once and held still', () => {
+	const opts = { ...OPTS, idle: 20, idleSpots: spots(40) };
+	const make = () =>
+		createCharacterPeople(
+			[SQUARE, LINE],
+			opts,
+			castFromScene(fakeGlb(['A', 'B', 'C'], 8, new THREE.MeshStandardMaterial()), META2)
+		);
+	const one = make();
+	assert.ok(one.meshes.length <= 3, 'no extra meshes');
+	assert.equal(
+		one.meshes.reduce((n, m) => n + m.count, 0),
+		80 + 20
+	);
+	const K = 9; // base influence + 8 targets per instance row
+	const rows = () => one.meshes.map((mesh) => [...(mesh.morphTexture!.image.data as Float32Array)]);
+	const poseKeys = { sit: 0, lean: 0, walk: 0 };
+	for (const mesh of one.meshes) {
+		const data = mesh.morphTexture!.image.data as Float32Array;
+		for (let k = 0; k < mesh.count; k++) {
+			const row = [...data.slice(k * K + 1, k * K + K)];
+			assert.equal(row.filter((v) => v === 1).length, 1, `instance ${k}: ${row}`);
+			assert.equal(row.filter((v) => v === 0).length, 7, `instance ${k}: ${row}`);
+			const key = row.indexOf(1);
+			if (key === 6) poseKeys.sit++;
+			else if (key === 7) poseKeys.lean++;
+			else poseKeys.walk++;
+		}
+	}
+	assert.deepEqual(poseKeys, { sit: 8, lean: 12, walk: 80 });
+
+	// An idle instance (after a mesh's walkers) keeps its matrix and key through update().
+	const idleOf = (mesh: THREE.InstancedMesh) => {
+		const m = new THREE.Matrix4();
+		mesh.getMatrixAt(mesh.count - 1, m);
+		return [...m.elements];
+	};
+	const before = one.meshes.map(idleOf);
+	const morphBefore = rows();
+	one.update(7.3);
+	assert.deepEqual(one.meshes.map(idleOf), before);
+	one.meshes.forEach((mesh, n) => {
+		const data = mesh.morphTexture!.image.data as Float32Array;
+		const last = (mesh.count - 1) * K;
+		assert.deepEqual([...data.slice(last, last + K)], morphBefore[n].slice(last, last + K));
+	});
+	one.dispose();
+
+	// Old meta (no poses) or no spots: walkers only.
+	const old = createCharacterPeople(
+		[SQUARE, LINE],
+		opts,
+		castFromScene(fakeGlb(['A', 'B', 'C'], 6, new THREE.MeshStandardMaterial()), META)
+	);
+	assert.equal(
+		old.meshes.reduce((n, m) => n + m.count, 0),
+		80
+	);
+	old.dispose();
 });
