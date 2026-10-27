@@ -8,7 +8,9 @@ import {
 	MINIBOT_LANE_MAX,
 	MINIBOT_SPREAD,
 	MINIBOT_TALK_HEIGHT,
+	MINIBOT_WALK_RANGE,
 	bakeVariant,
+	canMakeMinibots,
 	boneRows,
 	createMinibots,
 	dodgeOffset,
@@ -100,6 +102,33 @@ test('minibotPose: on its path like a person, offset to its right; standing bots
 		position: SLOTS[0].position,
 		heading: SLOTS[0].heading
 	});
+});
+
+test('a walker on a long path paces its first MINIBOT_WALK_RANGE m, there and back, facing its way', () => {
+	const long: Vec3[][] = [
+		[
+			[0, 0, 0],
+			[0, 0, -600]
+		]
+	];
+	const bots = planMinibots(long, 3, [], META);
+	for (const b of bots) {
+		assert.equal(b.range, MINIBOT_WALK_RANGE);
+		assert.ok(b.s0 >= 0 && b.s0 < 2 * MINIBOT_WALK_RANGE, `${b.s0}`);
+		let back = 0;
+		for (let t = 0; t < 600; t += 0.5) {
+			const p = minibotPose(long, b, t);
+			const q = minibotPose(long, b, t + 0.5);
+			assert.ok(-p.position[2] <= MINIBOT_WALK_RANGE + 1, `t ${t}: ${p.position[2]}`);
+			// Facing the way it moves (but at the turn).
+			const dz = q.position[2] - p.position[2];
+			if (Math.abs(dz) > 0.3) assert.ok(Math.cos(p.heading) * dz > 0, `t ${t}`);
+			if (Math.cos(p.heading) > 0) back++;
+		}
+		assert.ok(back > 300 && back < 900, `${back} half-steps back`);
+	}
+	// A short path is walked whole.
+	assert.ok(planMinibots(PATHS, 2, [], META).every((b, k) => b.range === [100, 80][k]));
 });
 
 test('pathPlace: ping-pong on an open path (back on the way back), wrapping on a loop', () => {
@@ -270,6 +299,9 @@ test('createMinibots: one instanced mesh for all, posed per bot from the clock, 
 	const a = JSON.stringify(bots.state());
 	bots.update(3.1);
 	assert.equal(JSON.stringify(bots.state()), a, 'the same time, the same pose');
+	const version = bots.mesh.instanceMatrix.version;
+	bots.update(3.1);
+	assert.equal(bots.mesh.instanceMatrix.version, version, 'a frozen clock poses nothing again');
 	bots.update(4);
 	assert.notEqual(JSON.stringify(bots.state()), a, 'walkers move on');
 	assert.deepEqual(bots.state()[4].position, SLOTS[0].position);
@@ -282,4 +314,14 @@ test('createMinibots: one instanced mesh for all, posed per bot from the clock, 
 	assert.equal(createMinibots(bare, animations, META, PATHS, SLOTS, { shadows: false }), null);
 	assert.equal(createMinibots(scene, [], META, PATHS, SLOTS, { shadows: false }), null);
 	assert.equal(createMinibots(scene, animations, META, [], [], { shadows: false }), null);
+});
+
+test('canMakeMinibots: the simplified meshes and both clips, else no conversation places are asked for', () => {
+	const { scene, animations } = fakeRobot();
+	assert.equal(canMakeMinibots(scene, animations, META), true);
+	assert.equal(canMakeMinibots(scene, [animations[0]], META), false, 'no idle');
+	assert.equal(canMakeMinibots(scene, [animations[1]], META), false, 'no walk');
+	const bare = new THREE.Group();
+	bare.add(fakeRig('ROBOT_V0').root);
+	assert.equal(canMakeMinibots(bare, animations, META), false, 'an older bake');
 });

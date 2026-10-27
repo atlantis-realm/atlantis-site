@@ -595,9 +595,14 @@ clips, and the hero's `walk_paths` and `talk_spots`.
   tested, seeded per bot from `mulberry32(MINIBOT_SEED + i)`). Each is a variant and palette (every variant and
   palette comes round before any repeats) and a height, `MINIBOT_HEIGHT` 1.2–1.8 m for a walker,
   `MINIBOT_TALK_HEIGHT` 1.25–1.6 m in a conversation (the bake scaled by height / 4.063).
+- **Where they walk**: a walker paces the first `MINIBOT_WALK_RANGE` (120 m) of its path from the plaza end,
+  there and back (a loop is walked whole), spread over that cycle. The paths run 600 m up the avenue, where a
+  1.5 m bot is a few pixels; over the first 120 m (40–160 m from the camera) it is 25–100 px tall at 1271 px.
+  Sampled every 10 s over 1200 s, some walker is over 40 px tall 97% of the time at frames 1, 51, 76 and 88
+  (was 32%, 33% and, at frame 101, 10% on the whole paths); from frame 101 they are below the frame.
 - **Walking**: at the variant's own stride, scaled (`walk_cycle_m` × scale per `walk_duration_s`: 0.93–1.40 m/s,
   inside the people's 0.9–1.5), so the walk clip plays at its own rate and its time follows the distance
-  walked (`robotWalkTime`): no foot slide. They ping-pong on the paths like the people. A walker steps aside
+  walked (`robotWalkTime`): no foot slide. They ping-pong like the people (within their range). A walker steps aside
   round the people on its path (`dodgeOffset`, tested): from each one whose sideways place is within
   `MINIBOT_DODGE_R` (0.8 m) it is pushed to that distance, in full within `MINIBOT_DODGE_NEAR` (1 m) along the
   path and easing out to `MINIBOT_DODGE_FAR` (3 m), clamped to `MINIBOT_LANE_MAX` (0.8 m) from the path line
@@ -605,10 +610,12 @@ clips, and the hero's `walk_paths` and `talk_spots`.
   people's own (stateless) walk, so it replays and freezes with them. Over 300 s a walker overlaps someone 1.6%
   of the time (6.8% without the dodge; people overlap each other 1.7%).
 - **Conversations**: `createCharacterPeople` with `botSlots` leaves out one member of each of that many
-  conversations (`pickBotSlots`, tested: groups of three or more first, so a group keeps two people) and
-  returns their places as `slots`; a minibot stands there facing the circle's centre, playing `idle` from a
+  conversations (`pickBotSlots`, tested: groups of three or more first, so a group keeps two people; in each
+  the member whose nearest neighbour stands furthest off, as a mech's arms reach about 0.87 m from its place)
+  and returns their places as `slots`; a minibot stands there facing the circle's centre, playing `idle` from a
   seeded phase. When its turn to talk comes round the others listen. The page asks for slots only when
-  `robot.glb` has the LOD meshes.
+  `robot.glb` has the LOD meshes and the `walk` and `idle` clips (`canMakeMinibots`, tested), so a bake
+  without them leaves no empty places.
 - **Sitting**: not done. The mech's arms are as long as its legs (its fists hang by its knees), so a seat on
   a ledge needs the fists placed on the ledge or in its lap, which bone turns alone don't give; and the sit
   spots are 100–160 m up the avenue, where a 1.4 m bot is a few pixels tall.
@@ -620,15 +627,17 @@ clips, and the hero's `walk_paths` and `talk_spots`.
   `gl_VertexID` of its variant with the instance's row of a bone texture (43 bones × 4 texels per bot); corners
   past the variant's own count collapse to a point. Each frame one shared rig is posed for each bot in turn and
   its skin matrices (modelMatrix · bindMatrixInverse · bone · boneInverse, `boneRows`) copied into the bot's row:
-  the same sum three's own skinning makes (`skinBaked`, tested against `SkinnedMesh.applyBoneTransform`). The
+  the same sum three's own skinning makes (`skinBaked`, tested against `SkinnedMesh.applyBoneTransform`);
+  when the clock hasn't moved (reduced motion) nothing is posed again. The
   instance's triangles are the largest variant's out (2,540 with V0), so 8 bots draw 20,320 in the main pass and
   as many in the shadow pass. At night the palette glows at `ROBOT_NIGHT_GLOW` like the robots'.
 
-Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.05 steps, with the drones: peak 262 draw
-calls by day (was 261), 278 at night (was 276: the minibots add 2 calls, the rest is where the robots and drones
-happened to be), 1.471 M triangles (was 1.437 M). On mobile they add 1 call. The conversation minibots are in
-view over the first ~60% of the scroll (frames 1–109 at the well, 100–260 px tall at 1271 px); the walkers
-from about frame 100 to 1, small up the avenue.
+Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.05 steps, with the drones: peak 261–264 draw
+calls by day and 276–279 at night over separate sweeps (the base was 255 / 269: drones and minibots together add
+about 9 by day and 10 at night, the rest is where the robots and drones happen to be), 1.474 M triangles at most.
+On mobile they add 1 call. The conversation minibots are in view from frame 1 to about frame 109 (at the well,
+100–260 px tall at 1271 px), the walkers from frame 1 to about frame 100; from about frame 110 on (scroll below
+0.55, the camera looking down into the well) no minibot is in the frame.
 
 ## Drones
 
@@ -665,7 +674,9 @@ export's `drone_spots` and `drone_sky` (see "Drone spots"); without the spots th
   stops (`DRONE_STOP_S`) and descends straight at `DRONE_DESCENT_SPEED`.
 - **Delivery**: a settle at the hover, the parcel (`DRONE_PARCEL_W` × `DRONE_PARCEL_H`, on a `DRONE_TETHER` 0.5 m
   line in flight) winched down at `DRONE_WINCH_SPEED` (1.2 m/s) until it sits on the spot, released (it stays
-  there for the rest of the trip), the empty line winched up, then the climb back to cruise height, turning
+  there for the rest of the trip, and after it while the camera sees it: `keepLeftParcels`, tested, the newest
+  `DRONE_LEFT_PARCELS` 2 a drone, gone once its spot is out of the frustum; a parcel set down on a spot takes
+  the place of one left there), the empty line winched up, then the climb back to cruise height, turning
   to the way out, and the cruise out.
 - **Pose** (`tripPose`): the heading follows the cruise curve and turns over the stops; the drone leans with
   its acceleration (a central difference over 0.3 s divided by g, at most `DRONE_TILT_MAX` 0.4 rad), so it
@@ -676,19 +687,26 @@ export's `drone_spots` and `drone_sky` (see "Drone spots"); without the spots th
 
 Everything is a function of the scene clock, so reduced motion freezes the drones (and their rotors) like the
 people and robots. All drones are four InstancedMeshes: bodies (with sun shadows on desktop), rotor discs
-(transparent, no depth write, no shadows), parcels and lines (one unit box scaled per instance; shadows) and
+(transparent, no depth write, no shadows), parcels, lines and the parcels left lying (one unit box scaled per
+instance; shadows) and
 nav lights (red on the port front motor, green starboard, a white strobe on the tail flashing
 `DRONE_STROBE_ON` 0.1 s every `DRONE_STROBE_PERIOD` 1.3 s; unlit HDR colours above the bloom threshold, shown
 only at night, scaled by mixMode's emissive level). That is 5 draw calls by day with shadows (3 on mobile) and
-6 at night, and 2,880 triangles in the main pass (384 per body, 12 per rotor disc), about 5,300 with the
+6 at night, and about 3,000 triangles in the main pass (384 per body, 12 per rotor disc or parcel), about 5,500 with the
 shadow pass. Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.05 steps: peak 260 draw calls
-by day (was 255) and 276 at night (was 269), 1.439 M triangles.
+by day (was 255) and 276 at night (was 269), 1.439 M triangles (drones alone; with the minibots see "Minibots").
+
+Simulated over 300 s in 0.25 s steps at frames 24, 48, 85 and 99 (frustum only), no parcel lying on a spot
+in view vanishes (before the left parcels: 6–20 per 300 s, the trip's parcel going with the drone's next
+trip); 7.6, 6.2, 5.1 and 2.1 lie in view on average.
 
 The camera stands on the plaza in a canyon of 40–58 m buildings, so a drone cruising over the rooftops is
 above the frame unless it is far down the avenue: hence the entry and exit points over the lowest sky (the
 open avenue, the plaza behind the camera) and the glides in, chosen seen. Over a 300 s sweep, the frustum
 holds on average 2.1 drones at scroll 1 (frame 1), 1.7 at scroll 0.9, 1.5 at 0.8 and 0.3 at 0.7; from about
-scroll 0.62 (frame 96) the view is only the well and its deck, and no drone is in it. Plans depend on the
+scroll 0.62 (frame 96) the view is only the well and its deck, and no drone is in it: the first ~60% of the
+page (scroll 0 is frame 250, the "Welcome to Atlantis" well) shows no drones. A flight across the well would
+cross that title view; not done. Plans depend on the
 order of the updates (a drone sees the others' trips as they stand when it plans), as for the robots; when
 the clock goes back the drones start afresh from their seeds, so the same steps replay the same.
 

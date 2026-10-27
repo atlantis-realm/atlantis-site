@@ -621,6 +621,31 @@ test('pickBotSlots: seeded, one slot per group, groups of three or more first', 
 	assert.deepEqual(pickBotSlots([], 2), []);
 });
 
+test('pickBotSlots: the roomiest place in its group (its nearest neighbour furthest off)', () => {
+	const convos = planConvos(TALK, 6, [1, 1, 1, 1, 1, 1]);
+	const room = (c: (typeof convos)[number], k: number) =>
+		Math.min(
+			...c.members
+				.filter((_, j) => j !== k)
+				.map((m) =>
+					Math.hypot(
+						m.position[0] - c.members[k].position[0],
+						m.position[2] - c.members[k].position[2]
+					)
+				)
+		);
+	const slots = pickBotSlots(convos, 6);
+	assert.ok(
+		slots.some((s) => convos[s.convo].members.length >= 4),
+		'a big group is in the test'
+	);
+	for (const s of slots) {
+		const c = convos[s.convo];
+		const best = Math.max(...c.members.map((_, k) => room(c, k)));
+		assert.ok(room(c, s.member) >= best - 1e-9, `convo ${s.convo}: member ${s.member}`);
+	}
+});
+
 test('createCharacterPeople: botSlots hands conversation places to the minibots, the rest stay', () => {
 	const opts = { ...OPTS, convos: 3, talkSpots: TALK };
 	const cast = () =>

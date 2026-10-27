@@ -116,8 +116,8 @@ export type Walker = {
 };
 /**
  * `meshes`: one InstancedMesh for the capsules, or one per character variant that has walkers;
- * `walkers` the walking layout (the minibots step round them), `slots` the conversation places left
- * for the minibots (opts.botSlots) and `idlers` the idle people.
+ * `walkers` the walking layout (the minibots step round them) and `slots` the conversation places
+ * left for the minibots (opts.botSlots).
  */
 export type People = {
 	meshes: THREE.InstancedMesh[];
@@ -125,7 +125,6 @@ export type People = {
 	dispose(): void;
 	walkers?: Walker[];
 	slots?: ConvoMember[];
-	idlers?: Idler[];
 };
 
 /** people_meta.json, written by export_people.py beside people.glb. */
@@ -597,8 +596,9 @@ export type BotSlot = { convo: number; member: number };
 
 /**
  * `n` seeded conversation places for the minibots, one per group: the groups
- * of three or more first (so a group keeps two people), then the pairs; a
- * random member of each.
+ * of three or more first (so a group keeps two people), then the pairs; in
+ * each the member whose nearest neighbour stands furthest off (a mech's arms
+ * reach wider than a person's shoulders), ties broken at random.
  */
 export function pickBotSlots(convos: Convo[], n: number): BotSlot[] {
 	const rand = mulberry32(BOT_SLOT_SEED);
@@ -609,9 +609,19 @@ export function pickBotSlots(convos: Convo[], n: number): BotSlot[] {
 	}
 	const big = order.filter((k) => convos[k].members.length >= 3);
 	const pairs = order.filter((k) => convos[k].members.length < 3);
-	return [...big, ...pairs]
-		.slice(0, Math.max(0, n))
-		.map((convo) => ({ convo, member: Math.floor(rand() * convos[convo].members.length) }));
+	return [...big, ...pairs].slice(0, Math.max(0, n)).map((convo) => {
+		const ms = convos[convo].members;
+		const room = ms.map((a, k) =>
+			Math.min(
+				...ms
+					.filter((_, j) => j !== k)
+					.map((b) => Math.hypot(b.position[0] - a.position[0], b.position[2] - a.position[2]))
+			)
+		);
+		const best = Math.max(...room);
+		const roomiest = ms.map((_, k) => k).filter((k) => room[k] >= best - 1e-6);
+		return { convo, member: roomiest[Math.floor(rand() * roomiest.length)] };
+	});
 }
 
 /**
@@ -836,8 +846,7 @@ export function createCharacterPeople(
 		update,
 		dispose,
 		walkers,
-		slots: botSlots.map((s) => convos[s.convo].members[s.member]),
-		idlers
+		slots: botSlots.map((s) => convos[s.convo].members[s.member])
 	};
 }
 

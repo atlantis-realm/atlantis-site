@@ -53,8 +53,8 @@ import {
 	MINIBOT_TALKERS,
 	MINIBOT_WALKERS,
 	MINIBOT_WALKERS_MOBILE,
+	canMakeMinibots,
 	createMinibots,
-	hasMinibotMeshes,
 	type MinibotState,
 	type Minibots
 } from './minibots.ts';
@@ -297,8 +297,9 @@ export class CityHeroScene {
 			idleSpots: props.idle_spots,
 			convos: CONVO_GROUPS,
 			talkSpots: props.talk_spots,
-			// Conversation places for the minibots, only when robot.glb has their simplified meshes.
-			botSlots: robot && hasMinibotMeshes(robot.scene, robot.meta) ? MINIBOT_TALKERS : 0
+			// Conversation places for the minibots, only when robot.glb has their simplified meshes and clips.
+			botSlots:
+				robot && canMakeMinibots(robot.scene, robot.animations, robot.meta) ? MINIBOT_TALKERS : 0
 		};
 		this.people = cast
 			? createCharacterPeople(props.walk_paths, peopleOpts, cast)

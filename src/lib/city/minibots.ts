@@ -40,6 +40,11 @@ export const MINIBOT_TALKERS = 2;
 /** Height range (m) of a minibot, drawn per bot; a conversation's are drawn from MINIBOT_TALK_HEIGHT. */
 export const MINIBOT_HEIGHT: [number, number] = [1.2, 1.8];
 export const MINIBOT_TALK_HEIGHT: [number, number] = [1.25, 1.6];
+/**
+ * A walker paces the first MINIBOT_WALK_RANGE m of its path (from its first point, the plaza end), there
+ * and back, rather than the whole avenue: the paths run 600 m up it, where a 1.5 m bot is a few pixels.
+ */
+export const MINIBOT_WALK_RANGE = 120;
 /** Sideways spread (m, ±) from the path line, as the people's. */
 export const MINIBOT_SPREAD = 0.5;
 /**
@@ -61,7 +66,7 @@ export const MINIBOT_TEX_W = 2048;
 /** Vertex texture texels per vertex: position + u, normal + v, joints, weights. */
 const TEXELS_PER_VERTEX = 4;
 
-/** One minibot: walking a path (`path`, `s0`, `speed`, `offset`) or standing at `position` facing `heading`. */
+/** One minibot: walking a path (`path`, `s0`, `speed`, `offset`, `range`) or standing at `position` facing `heading`. */
 export type Minibot = {
 	kind: 'walk' | 'talk';
 	variant: number;
@@ -73,6 +78,8 @@ export type Minibot = {
 	s0: number;
 	speed: number;
 	offset: number;
+	/** Metres of an open path paced there and back from its first point (a loop is walked whole). */
+	range: number;
 	position: Vec3;
 	heading: number;
 	/** Idle clip phase (s) of a standing bot, so a group doesn't sway together. */
@@ -96,8 +103,8 @@ export type Minibots = {
 };
 
 /**
- * The seeded minibots: `walkers` on `paths` (round robin, spread along each
- * path's there-and-back cycle) at the stride-matched pace of their variant
+ * The seeded minibots: `walkers` on `paths` (round robin, pacing the first
+ * MINIBOT_WALK_RANGE m of an open one, spread along that there-and-back cycle) at the stride-matched pace of their variant
  * and height (its walk_cycle_m scaled, per walk_duration_s: about 0.9-1.4 m/s),
  * then one per conversation slot. Variants and palettes come round without
  * repeats while there are any left (pickIndex), so a handful of bots show a
@@ -136,7 +143,8 @@ export function planMinibots(
 		const path = i % paths.length;
 		const { variant, palette, height, scale } = look(rand, MINIBOT_HEIGHT);
 		const length = pathLength(paths[path]);
-		// The k-th bot on its path, of `share`, spread over the there-and-back cycle (2 x length).
+		const range = isClosed(paths[path]) ? length : Math.min(length, MINIBOT_WALK_RANGE);
+		// The k-th bot on its path, of `share`, spread over the there-and-back cycle (2 x range).
 		const k = Math.floor(i / paths.length);
 		const share = Math.ceil((n - path) / paths.length);
 		bots.push({
@@ -146,9 +154,10 @@ export function planMinibots(
 			height,
 			scale,
 			path,
-			s0: (2 * length * (k + rand())) / share,
+			s0: (2 * range * (k + rand())) / share,
 			speed: (meta.variants[variant].walk_cycle_m * scale) / meta.walk_duration_s,
 			offset: (rand() * 2 - 1) * MINIBOT_SPREAD,
+			range,
 			position: [0, 0, 0],
 			heading: 0,
 			phase: 0
@@ -167,6 +176,7 @@ export function planMinibots(
 			s0: 0,
 			speed: 0,
 			offset: 0,
+			range: 0,
 			position: [...slot.position],
 			heading: slot.heading,
 			phase: rand() * (meta.idle_duration_s ?? 1)
@@ -208,7 +218,7 @@ export function dodgeOffset(
 	const path = paths[b.path];
 	const length = lengths[b.path];
 	const closed = isClosed(path);
-	const me = pathPlace(path, length, b.s0 + b.speed * t);
+	const me = botPlace(path, length, b, t);
 	// Sideways places in the path's own frame (+: its right walking from the first point).
 	const mine = me.back ? -b.offset : b.offset;
 	let side = mine;
@@ -228,9 +238,20 @@ export function dodgeOffset(
 	return me.back ? -side : side;
 }
 
+/** Where walking bot `b` is along its path (`length` m) at time `t` (s): pathPlace within its `range`. */
+function botPlace(
+	path: Vec3[],
+	length: number,
+	b: Minibot,
+	t: number
+): { along: number; back: boolean } {
+	return pathPlace(path, isClosed(path) ? length : Math.min(b.range, length), b.s0 + b.speed * t);
+}
+
 /**
- * Where walking bot `b` is at time `t` (s): on its path (ping-pong, as the
- * people), `offset` to its right, or the dodgeOffset round `people` when given.
+ * Where walking bot `b` is at time `t` (s): on its path (ping-pong within its
+ * `range`, as the people over theirs), `offset` to its right, or the
+ * dodgeOffset round `people` when given.
  */
 export function minibotPose(
 	paths: Vec3[][],
@@ -240,7 +261,11 @@ export function minibotPose(
 	lengths?: number[]
 ): { position: Vec3; heading: number } {
 	if (b.kind !== 'walk') return { position: b.position, heading: b.heading };
-	const { position, heading } = walkerPose(paths[b.path], b.s0 + b.speed * t);
+	const path = paths[b.path];
+	const length = lengths?.[b.path] ?? pathLength(path);
+	// walkerPose's distance for that place: 2 x length - along is `along` on the way back.
+	const { along, back } = botPlace(path, length, b, t);
+	const { position, heading } = walkerPose(path, back ? 2 * length - along : along);
 	const offset = people ? dodgeOffset(paths, b, people, t, lengths) : b.offset;
 	return {
 		position: [
@@ -401,10 +426,22 @@ function dataTexture(data: Float32Array, w: number, h: number, format: THREE.Pix
 	return tex;
 }
 
-/** Whether robot.glb's `scene` has a simplified mesh for some variant (an older bake has none). */
-export function hasMinibotMeshes(scene: THREE.Object3D, meta: RobotMeta): boolean {
-	return meta.variants.some(
-		(v) => (scene.getObjectByName(v.name + MINIBOT_LOD_SUFFIX) as THREE.SkinnedMesh)?.isSkinnedMesh
+/**
+ * Whether robot.glb can make minibots (createMinibots needs both): a simplified mesh for some variant
+ * in `scene` (an older bake has none), and the walk and idle clips in `animations`.
+ */
+export function canMakeMinibots(
+	scene: THREE.Object3D,
+	animations: THREE.AnimationClip[],
+	meta: RobotMeta
+): boolean {
+	return (
+		!!THREE.AnimationClip.findByName(animations, ROBOT_WALK_CLIP) &&
+		!!THREE.AnimationClip.findByName(animations, MINIBOT_IDLE_CLIP) &&
+		meta.variants.some(
+			(v) =>
+				(scene.getObjectByName(v.name + MINIBOT_LOD_SUFFIX) as THREE.SkinnedMesh)?.isSkinnedMesh
+		)
 	);
 }
 
@@ -521,7 +558,11 @@ export function createMinibots(
 	}
 	const positions: Vec3[] = bots.map(() => [0, 0, 0]);
 	const lengths = paths.map(pathLength);
+	let posed = NaN;
 	const update = (t: number): void => {
+		// A frozen clock (reduced motion): the poses stand.
+		if (t === posed) return;
+		posed = t;
 		bots.forEach((b, i) => {
 			const { position, heading } = minibotPose(paths, b, t, opts.people, lengths);
 			positions[i] = position;
