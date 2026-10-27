@@ -178,6 +178,48 @@ one position-only mesh, `ShadowProxy` (`src/lib/city/shadowProxy.ts`). It is on 
 sees only while the shadow map renders, so the main pass never draws it. The rendered frames match
 the per-mesh casters (at most 0.002% of pixels differ by more than 8/255).
 
+## People
+
+`export_people.py` bakes the `/city` walkers from the PSX character pack in `Assets/People` (rigged
+Mixamo FBX). It needs no .blend, only reads the pack and never writes to it:
+
+```sh
+cd concept-assets/city/generators
+flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/export_people.py" \
+  -- "$PWD/build/people"                      # [out_dir] [assets=/run/media/.../Assets/People]
+node people_glb.mjs        # [in=build/people/people_raw.glb] [out=../../../static/city/people.glb]
+node --test test/people_glb.test.js   # skip when static/city/people.glb is absent
+```
+
+- **Cast** (`people_cast.py`, tested): `PEOPLE_VARIANTS = 12` from `Models/Rig` and `Extras_Rig`
+  (identical files are taken once): one of each `UNIFORM_SLOTS` (male police, female firefighter, male
+  doctor, female hazmat) and eight civilians, four men and four women, picked by stride over the sorted
+  names, so a rerun picks the same people. No `Killer`, `Monster` or `Exotic_dancer` model is ever
+  picked.
+- **Walk**: a procedural walk posed on the rig and baked to `WALK_KEYS = 6` shape keys `walk_0`…`walk_5`
+  (phase 0 = left heel contact). The page steps through them with **no blending**: the chunky 6-frame
+  look is intended, and the robots added later are the fluid ones. Every bone turns about a world axis
+  through its head, so the files' different bone rolls don't matter: arms down to `ARM_HANG_DEG` (9°)
+  off vertical, thighs ±`THIGH_SWING` (23°), knees `KNEE_STANCE` 5° + `KNEE_SWING` 45° at passing +
+  `KNEE_LOAD` 24° in early stance, feet kept level, arms ±`ARM_SWING` (18°) with a 12–26° elbow bend,
+  hips/chest twist ±`SPINE_TWIST` (6°). Each key is grounded on its lowest vertex, so the hips bob
+  0.7–3.3 cm, lowest at contact. The armature is deleted: the glb holds plain meshes with morph targets.
+- **Atlas**: the 12 pack textures (`Textures/<image>.png`, 512 px, opaque, colours untouched) in a 4×3
+  grid (2048×1536), UVs inset `ATLAS_INSET_PX` (4 px) per tile; saved as JPEG (`ATLAS_JPEG_QUALITY` 90:
+  a PNG atlas alone is 3.4 MB). One material `PEOPLE_Atlas` (roughness 0.85, metallic 0).
+- **Outputs** (`build/people/`): `people_raw.glb` (meshes `PEOPLE_<file>`, facing glTF +Z, feet on
+  y = 0), `people_atlas.jpg`, `people_meta.json` `{version, keys, cycle_m, variants: [{name, height,
+  gender, kind, tile, cycle_m}]}`. `cycle_m` is metres per walk cycle (2 steps, twice the heel-to-heel
+  stride at contact): 1.12–1.52 per person, mean 1.327 (≈1.4 for a 1.75 m person). Two runs give
+  byte-identical files.
+
+`people_glb.mjs` runs `prune`, `quantize` (morph targets included) and `meshopt`, writes
+`static/city/people.glb` and copies `people_meta.json` beside it: 1.58 MB, 14,583 triangles for one of
+each person (about 1,200 each).
+
+The pack is the user's own purchased asset. Like the hero, `people.glb` and `people_meta.json` are
+git-ignored until the user approves the look and its use on the site.
+
 ## Tests
 
 ```sh
