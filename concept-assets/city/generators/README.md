@@ -217,6 +217,12 @@ node --test test/people_glb.test.js   # skip when static/city/people.glb is abse
 `static/city/people.glb` and copies `people_meta.json` beside it: 1.58 MB, 14,583 triangles for one of
 each person (about 1,200 each).
 
+On the page (`src/lib/city/people.ts`) each variant is one InstancedMesh with the shared atlas material;
+walkers pick a variant by a seeded weighted draw (uniforms at `UNIFORM_WEIGHT` 0.5 against a civilian's 1)
+and show walk key `floor(phase · keys)` for phase = distance walked / (variant `cycle_m` × walker scale),
+one key at 1 and the rest 0. Without `people.glb` or `people_meta.json` the page walks capsules instead.
+At 1280×720 desktop with shadows, 160 walkers keep the frame at ≤ 252 draw calls and ≤ 1.45 M triangles.
+
 The pack is the user's own purchased asset. Like the hero, `people.glb` and `people_meta.json` are
 git-ignored until the user approves the look and its use on the site.
 

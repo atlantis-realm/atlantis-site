@@ -2,7 +2,7 @@
 // `Hero` camera animation from the scroll position, and draws the procedural
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
 // blimps (blimps.ts), the well's water (water.ts) and walking people
-// (people.ts). Follows the
+// (people.ts: the baked characters of people.glb, or capsules without it). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -30,8 +30,13 @@ import {
 	PEOPLE_PER_PATH,
 	PEOPLE_PER_PATH_MOBILE,
 	WALK_SPEED,
+	castFromScene,
+	createCharacterPeople,
 	createPeople,
-	type People
+	disposeCast,
+	parsePeopleMeta,
+	type People,
+	type PeopleCast
 } from './people.ts';
 import { buildShadowProxy, installShadowLayer } from './shadowProxy.ts';
 
@@ -40,6 +45,9 @@ export const MAX_PIXEL_RATIO = 1.5;
 /** Name of the camera node and its animation clip in hero.glb. */
 export const HERO_CAMERA_NODE = 'HeroCamera';
 export const HERO_CLIP = 'Hero';
+/** The baked walkers (export_people.py, people_glb.mjs); optional, capsules without them. */
+export const PEOPLE_GLB_URL = '/city/people.glb';
+export const PEOPLE_META_URL = '/city/people_meta.json';
 /**
  * Opening framing: the baked frame-250 shot has "Welcome to Atlantis" above the
  * middle of the screen, so the camera tilts up by this much at frame 250. The
@@ -189,12 +197,22 @@ export class CityHeroScene {
 		return this.loadedRoot;
 	}
 
-	async load(glbUrl: string, propsUrl: string): Promise<void> {
+	async load(
+		glbUrl: string,
+		propsUrl: string,
+		peopleUrl = PEOPLE_GLB_URL,
+		peopleMetaUrl = PEOPLE_META_URL
+	): Promise<void> {
 		const loader = new GLTFLoader();
 		loader.setMeshoptDecoder(MeshoptDecoder);
-		const [props, gltf] = await Promise.all([loadProps(propsUrl), loader.loadAsync(glbUrl)]);
+		const [props, gltf, cast] = await Promise.all([
+			loadProps(propsUrl),
+			loader.loadAsync(glbUrl),
+			loadCast(loader, peopleUrl, peopleMetaUrl)
+		]);
 		if (this.destroyed) {
 			disposeObject(gltf.scene);
+			if (cast) disposeCast(cast);
 			return;
 		}
 
@@ -231,13 +249,18 @@ export class CityHeroScene {
 		this.setupShadows();
 		this.blimps = createBlimps(props.blimps);
 		this.scene.add(this.blimps);
-		this.people = createPeople(props.walk_paths, {
+		const peopleOpts = {
 			perPath: this.opts.mobile ? PEOPLE_PER_PATH_MOBILE : PEOPLE_PER_PATH,
 			speed: WALK_SPEED
-		});
-		// Small casters near the camera; the shadow map only covers the plaza anyway.
-		this.people.mesh.castShadow = this.people.mesh.receiveShadow = !this.opts.mobile;
-		this.scene.add(this.people.mesh);
+		};
+		this.people = cast
+			? createCharacterPeople(props.walk_paths, peopleOpts, cast)
+			: createPeople(props.walk_paths, peopleOpts);
+		for (const mesh of this.people.meshes) {
+			// Small casters near the camera; the shadow map only covers the plaza anyway.
+			mesh.castShadow = mesh.receiveShadow = !this.opts.mobile;
+			this.scene.add(mesh);
+		}
 		this.updateMotion();
 		this.applyMix();
 		this.bakeEnvironment();
@@ -508,7 +531,7 @@ export class CityHeroScene {
 		this.mixer?.stopAllAction();
 		if (this.loadedRoot) disposeObject(this.loadedRoot);
 		if (this.blimps) disposeObject(this.blimps);
-		if (this.people) disposeObject(this.people.mesh);
+		this.people?.dispose();
 		if (this.shadowProxy) disposeObject(this.shadowProxy);
 		this.uninstallShadowLayer?.();
 		this.sky.dispose();
@@ -522,6 +545,30 @@ export class CityHeroScene {
 		this.renderer.dispose();
 		// Release the WebGL context now rather than at garbage collection, so repeat visits don't pile them up.
 		this.renderer.forceContextLoss();
+	}
+}
+
+/** The baked walkers from people.glb + people_meta.json, or null (with one warning) when either fails. */
+async function loadCast(
+	loader: GLTFLoader,
+	glbUrl: string,
+	metaUrl: string
+): Promise<PeopleCast | null> {
+	let root: THREE.Object3D | null = null;
+	try {
+		const [meta, gltf] = await Promise.all([
+			fetch(metaUrl).then((res) => {
+				if (!res.ok) throw new Error(`${metaUrl}: HTTP ${res.status}`);
+				return res.json().then(parsePeopleMeta);
+			}),
+			loader.loadAsync(glbUrl)
+		]);
+		root = gltf.scene;
+		return castFromScene(root, meta);
+	} catch (err) {
+		if (root) disposeObject(root);
+		console.warn('City hero: no baked people, walking capsules instead.', err);
+		return null;
 	}
 }
 
