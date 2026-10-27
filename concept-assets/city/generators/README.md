@@ -154,8 +154,8 @@ calls), `FAR_DECIMATE = 0.25`, `SUBDIV_NEAR, SUBDIV_MID = 4, 12`, trees unchange
 the portrait view a little tighter).
 
 Walk paths keep `WALK_CAMERA_CLEARANCE` (8 m, measured from a walker's chest) from the camera at
-every frame 1–250, so the plaza ring, which passes under the camera, is exported as an open arc
-round the far side of the well (`hero_geom.clear_runs`). Lamp heads are tagged by the head cube's
+every frame 1–250 (`hero_geom.clear_runs`). Only the avenue pavements have walkers; none circle the
+plaza. Lamp heads are tagged by the head cube's
 own vertices, so only the head carries `NIGHT_Lamp`; `test/hero_glb.test.js` checks both.
 
 Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):

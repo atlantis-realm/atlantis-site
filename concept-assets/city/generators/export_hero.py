@@ -40,9 +40,8 @@ Stages
                LAMP_RING_STEP_DEG round the plaza ring (clear of the camera), linked duplicates.
   camera       HeroCamera, no parent, world matrix keyed every frame 1-250 (linear), action `Hero`.
   props        sun (dir: from the scene toward the sun), Lantern, blimp orbit (radius searched for the
-               visible sky above the frontage), walk paths (the plaza ring and the avenue pavements,
-               cut where they pass within WALK_CAMERA_CLEARANCE of the camera path, so the ring is an
-               arc round the far side of the well), well water node, night material names and
+               visible sky above the frontage), walk paths (the avenue pavements, cut where they pass
+               within WALK_CAMERA_CLEARANCE of the camera path; no walkers circle the plaza), well water node, night material names and
                night_nodes (the nodes allowed NIGHT_MAT_AP_Cyan / NIGHT_WellRing). glTF space: (x, z, -y).
 
 Pure cull geometry lives in hero_geom.py (tested). Tuning knobs are the constants below.
@@ -124,10 +123,9 @@ LAMP_AVENUE_SPACING = 18.0
 LAMP_RING_STEP_DEG = 15.0
 LAMP_KERB_INSET = 0.5                   # m in from the kerb edge of each pavement
 LAMP_CAMERA_CLEARANCE = 10.0            # m: no lamp this close (horizontally) to the camera path
-PLAZA_LAMP_R, PLAZA_WALK_R = 11.3, 10.0 # m round the well centre, on the walkway deck
+PLAZA_LAMP_R = 11.3                     # m round the well centre, on the walkway deck
 WALK_CAMERA_CLEARANCE = 8.0             # m: walk path points this close to the camera path are dropped
 WALK_CHEST_H = 1.3                      # m above the ground: where a walker is measured from the camera
-WALK_RING_POINTS = 48
 AVENUE_START, AVENUE_LEN, AVENUE_STEP = 20.0, 600.0, 20.0   # m along the avenue from the well centre
 AVENUE_PROBE = 60.0                     # m along the avenue where the pavement is measured
 PAVEMENT_OBJECT = "KIT_Ave_walk"
@@ -499,16 +497,24 @@ class Builder:
 
     def __init__(self):
         self.co, self.lv, self.ls, self.mi, self.mats, self.nv, self.nl = [], [], [], [], [], 0, 0
+        self.vmap = {}   # id(co) -> (co, new vertex index per source vertex, -1 = not added yet)
 
     def add(self, co, lv, ls, lt, sel, mat_idx):
+        """Add the polygons `sel`. Adds that pass the same `co` array (chunks of one instance) share their
+        vertices, so normals and AO stay continuous across the chunk boundaries."""
         loops, starts = poly_loops(ls, lt, sel)
         vids = lv[loops]
         uniq, inv = np.unique(vids, return_inverse=True)
-        self.co.append(co[uniq])
-        self.lv.append(inv.ravel() + self.nv)
+        if id(co) not in self.vmap:   # co is kept in the entry so its id can't be reused
+            self.vmap[id(co)] = (co, np.full(len(co), -1, np.int64))
+        vmap = self.vmap[id(co)][1]
+        fresh = uniq[vmap[uniq] < 0]
+        vmap[fresh] = self.nv + np.arange(len(fresh))
+        self.co.append(co[fresh])
+        self.lv.append(vmap[uniq][inv.ravel()])
         self.ls.append(starts + self.nl)
         self.mi.append(mat_idx)
-        self.nv += len(uniq)
+        self.nv += len(fresh)
         self.nl += len(loops)
 
     def mat_index(self, m):
@@ -765,6 +771,9 @@ def run():
             return "near" if d < NEAR_DIST else "mid" if d < FAR_DIST else "far"
 
         tile_size = {"near": NEAR_TILE, "mid": MID_TILE, "far": FAR_TILE}
+        # Tiles are centred on the well, so no tile seam runs through the plaza in the hero shot.
+        wo = bpy.data.objects[WELL_OBJECT]
+        well_c = sum((wo.matrix_world @ Vector(b) for b in wo.bound_box), Vector()) / 8
         buckets, specials = {}, {}
         band_count = {"near": 0, "mid": 0, "far": 0}
         backfaces = 0
@@ -791,7 +800,7 @@ def run():
             if not len(polys):
                 continue
             ts = tile_size[band]
-            tiles = np.floor(c.cent[polys, :2] / ts).astype(np.int64)
+            tiles = np.floor((c.cent[polys, :2] - np.array(well_c.to_2d())) / ts + 0.5).astype(np.int64)
             mis = g.mi[polys]
             for (tx, ty, m) in {(int(a), int(b_), int(mm)) for a, b_, mm in zip(tiles[:, 0], tiles[:, 1], mis)}:
                 sel = polys[(tiles[:, 0] == tx) & (tiles[:, 1] == ty) & (mis == m)]
@@ -860,8 +869,6 @@ def run():
         timing["decimate"] = time.time() - t0
 
         # ---- well water: a disc over the water seen through the well below the Text at frame 250
-        wo = bpy.data.objects[WELL_OBJECT]
-        well_c = sum((wo.matrix_world @ Vector(b) for b in wo.bound_box), Vector()) / 8
         e250 = mats[hg.FRAME_END].translation
         water_hits = []
         for i in range(-WELL_PROBE_N, WELL_PROBE_N + 1):
@@ -934,7 +941,7 @@ def run():
             n_lamps += 1
 
         # Walkers keep clear of the camera along the whole move (every frame, in 3D), so none fills
-        # the frame: the plaza ring passes under the camera, and is cut into an arc round the far side.
+        # the frame: pavement paths are cut where they pass near the camera.
         cam_path = [mats[f].translation for f in range(hg.FRAME_START, hg.FRAME_END + 1)]
 
         def walk_clear(p):
@@ -949,8 +956,7 @@ def run():
                     pts.append(Vector((q.x, q.y, z)))
             return [[gl(p) for p in run] for run in hg.clear_runs(pts, closed, walk_clear)]
 
-        walk_paths = paths([centre2 + Vector((math.cos(a), math.sin(a))) * PLAZA_WALK_R
-                            for a in np.linspace(0, 2 * math.pi, WALK_RING_POINTS, endpoint=False)], True)
+        walk_paths = []   # avenue pavements only: no walkers circle the plaza
         for sgn in (1, -1):
             a, b_ = pave[sgn]
             for f in (1 / 3, 2 / 3):

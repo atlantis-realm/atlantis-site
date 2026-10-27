@@ -249,7 +249,7 @@ Pure logic lives in small modules with unit tests:
     - Count 6, period 240 s.
     - `len`/`r` are the median of `o.blimps` from `node citygen_cli.js plan.json build/build.json` (`build.json` has no blimps, so read them via a small `node -e` call that prints `CityGen.generate(plan).blimps`).
   - **Walk paths:**
-    - the plaza ring centreline as a 48-point loop;
+    - ~~the plaza ring centreline as a 48-point loop~~ (dropped at the user's request: no walkers circle the plaza);
     - two straight lines along each avenue pavement, from the plaza to 600 m out;
     - all at walking-surface height, found with downward `ray_cast`.
   - `well_water`: the exported node name of `KIT_Walkway_ring1_water`, or of the well's water mesh if that differs. Find the visible water disc below the `Text` at frame 250 with `ray_cast`.
@@ -489,7 +489,7 @@ Pure logic lives in small modules with unit tests:
   - Heading points along the segment direction.
   - The same seed gives the same layout.
 - Modify: `CityHeroScene.ts`: add people at load and update them each frame (frozen with `reducedMotion`).
-- [ ] Steps: failing test → implement → PASS → the browser shows people walking on the plaza ring and pavements at progress 1 → commit "City hero: people".
+- [ ] Steps: failing test → implement → PASS → the browser shows people walking on the pavements at progress 1 (none on the plaza ring) → commit "City hero: people".
 
 ### Task 11: Final verification and the reviewed glb
 

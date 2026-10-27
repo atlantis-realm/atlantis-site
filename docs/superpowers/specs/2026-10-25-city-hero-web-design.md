@@ -127,8 +127,8 @@ render what isnt seen by that view"**.
     scene coordinates.
 - **The well's water:** an animated water surface in the well (scrolling normals or a gentle shader). It
   matters most around frame 250, where it sits behind the welcome text.
-- **People:** low-poly or billboard figures walking set paths on the plaza ring and the avenue pavements, in
-  the hundreds at most. They are instanced, so they cost one or a few draw calls.
+- **People:** low-poly or billboard figures walking set paths on the avenue pavements, in the hundreds at
+  most. None circle the plaza (user, after the first build). They are instanced, so they cost one or a few draw calls.
 
 ### Sky
 

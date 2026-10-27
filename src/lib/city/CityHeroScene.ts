@@ -335,15 +335,12 @@ export class CityHeroScene {
 		this.uninstallShadowLayer = installShadowLayer(this.renderer);
 	}
 
-	/** The well (props.well_water) marks the plaza; fall back to the first walk path's centre (the plaza ring arc: roughly). */
+	/** The well (props.well_water) marks the plaza; the export always writes it, so the origin is only a last resort. */
 	private plazaCentre(root: THREE.Object3D, centre: THREE.Vector3): THREE.Vector3 {
 		root.updateMatrixWorld(true);
 		centre.set(0, 0, 0);
 		const water = this.loadedProps && root.getObjectByName(this.loadedProps.well_water);
-		if (water) return new THREE.Box3().setFromObject(water).getCenter(centre);
-		const ring = this.loadedProps?.walk_paths[0] ?? [];
-		for (const p of ring) centre.add(new THREE.Vector3(...p));
-		return ring.length ? centre.divideScalar(ring.length) : centre;
+		return water ? new THREE.Box3().setFromObject(water).getCenter(centre) : centre;
 	}
 
 	/** Horizontal direction from the camera's start (frame 250) toward the Lantern. */

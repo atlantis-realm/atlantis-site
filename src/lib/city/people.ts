@@ -1,7 +1,6 @@
 // Greybox people for the /city hero: figures walking the export's walk paths
-// (hero_props.json `walk_paths`: the plaza ring around the well, cut into an
-// open arc where it passes near the camera, and the avenue pavements, open
-// lines; a path left whole as a loop is walked round). Spec "Moving things": low-poly,
+// (hero_props.json `walk_paths`: the avenue pavements, open lines; a path left
+// whole as a loop is walked round). No walkers circle the plaza. Spec "Moving things": low-poly,
 // instanced, the hundreds at most. Every figure is one capsule body plus a
 // head, all in one InstancedMesh with colours from a muted palette. The layout
 // is seeded per path index (mulberry32), so every load looks the same.
