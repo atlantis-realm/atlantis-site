@@ -296,6 +296,62 @@ calls by day, 252 by night, and 1.444 M triangles (1.397 M at frame 1).
 The pack is the user's own purchased asset. Like the hero, `people.glb` and `people_meta.json` are
 git-ignored until the user approves the look and its use on the site.
 
+## Robot
+
+`export_robot.py` bakes the `/city` robot, one mech from the Mech_00 pack in `Assets/Robot` (FBX: a modular
+skinned mesh and a separate animation file on the same 87-bone rig, 60 fps). It needs no .blend, only
+reads the pack and never writes to it:
+
+```sh
+cd concept-assets/city/generators
+flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/export_robot.py" \
+  -- "$PWD/build/robot"                       # [out_dir] [assets=/run/media/.../Assets/Robot]
+node robot_glb.mjs         # [in=build/robot/robot_raw.glb] [out=../../../static/city/robot.glb]
+node --test test/robot_glb.test.js    # skip when static/city/robot.glb is absent
+# contact sheet of the walk, side (ground stripes sliding at the meta speed) and front (build/robot/, git-ignored;
+# Blender can't read meshopt, so decode.mjs writes a plain copy first):
+node build/robot/decode.mjs ../../../static/city/robot.glb build/robot/robot_decoded.glb
+flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/build/robot/check_walk.py" \
+  -- "$PWD/build/robot/robot_decoded.glb" "$PWD/../../../static/city/robot_meta.json" "$PWD/build/robot/walk_sheet.png"
+```
+
+- **Parts** (`robot_rig.pick_parts`, tested): the medium body set `Base_M_*` with the plain forearms (not
+  `LimbGun`, which the `Core_Palm` hands exclude) and every shared `Core_*` part, 22 meshes. Every part
+  carries an inverted-hull `OutLine` copy of itself (half its faces); those faces are deleted. The parts are
+  joined into one mesh `ROBOT_Mech` in metres: 2,694 triangles, 1,477 vertices, at most 2 bone weights a
+  vertex.
+- **Rig**: the animation file's armature, whose bones rest where the mesh file's do (only the unweighted
+  `c_traj` root is turned), so its actions play as authored. Its object transform (90° about X, scale 0.01)
+  is applied to the bones and the bone location keys scaled by 0.01; the actions' object-level curves are
+  dropped. Bones nothing is weighted to (attachment sockets, finger tips, `lookAt`, twist helpers) are
+  deleted, keeping every ancestor of a weighted bone (`robot_rig.keep_bones`, tested): 43 of 87 remain.
+  The rest pose is lowered 1.9 cm so the soles sit on y = 0 (the outline hull reached lower).
+- **Animations**: `Mech_Walk` (in place, not `Mech_Walk_Root`) as `walk`, 70 frames = 1.1667 s, and
+  `Mech_Idle` as `idle`, 80 frames = 1.3333 s, both sampled every frame with linear keys and looping (last
+  frame = first). The robot's walk is the fluid one, played continuously on the page; the people's is
+  stepped.
+- **Material**: one `ROBOT_Mech`, the pack's palette `TexturePallets/SimplePalette/SimplePalette0014.png`
+  (80 × 48, green, purple and grey swatches; the FBX points at a missing `D:/` copy) as base colour with
+  nearest filtering, roughness `ROUGHNESS` 0.85, metallic 0. No emission: the pack's readme suggests the
+  palette as emissive, but it has no light swatches, so emitting it would only flatten the shading.
+- **Measures**: the bind (T) pose is 4.063 m tall (the pack's size, kept: inside `HEIGHT_RANGE` 2.5–4.5 m),
+  facing glTF +Z, the origin at the rig root between the feet. `walk_cycle_m` is measured from the planted
+  feet (`robot_rig.stance_cycle_m`, tested): a foot bone within `CONTACT_EPS` (5 mm) of its lowest slides
+  back at the ground speed in the in-place walk, so the mean slide over neighbouring planted frames times
+  the loop's 70 frames is 3.69 m per loop (3.16 m/s; the pack's own `_Root` walk moves 3.52 m, and its feet
+  slip a little). At that speed a planted foot drifts at most 2.1 cm against the ground per stance
+  (`robot_rig.skate_m`). Some foot is on the ground in every walk frame: the lowest vertex stays at y = 0.
+- **Outputs** (`build/robot/`): `robot_raw.glb` (`ROBOT_Rig` armature, skinned `ROBOT_Mech`, animations
+  `walk` and `idle`) and `robot_meta.json` `{version: 1, height, walk_cycle_m, walk_duration_s,
+  idle_duration_s}`. Two runs give byte-identical files.
+
+`robot_glb.mjs` runs `prune`, `dedup`, `weld`, `resample` (drops keys a linear blend of their neighbours
+gives within 1e-4; walk 9,159 → 1,763 keys, idle 10,449 → 1,021), `quantize` and `meshopt`, writes
+`static/city/robot.glb` and copies `robot_meta.json` beside it: 134.5 KB (137,740 bytes).
+
+The pack's licence allows its use in projects but not redistributing it as a standalone asset. Like the
+people, `robot.glb` and `robot_meta.json` are git-ignored until the user approves the look.
+
 ## Tests
 
 ```sh

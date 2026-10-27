@@ -22,3 +22,5 @@ vite.config.ts.timestamp-*
 static/city/*.glb
 static/city/hero_props.json
 static/city/people_meta.json
+static/city/robot.glb
+static/city/robot_meta.json
