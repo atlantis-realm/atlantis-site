@@ -15,25 +15,29 @@ Stages
                angles. Every rotation is about a world axis through the bone's head (the characters face
                Blender +X, left is +Y), so the files' differing bone rolls don't matter: legs and arms swing
                about Y, the pelvis and chest twist about Z, the feet counter-rotate to stay level.
-  poses        two static poses after the walk (POSE_KEYS, people_cast.py): sit_pose seats the character on a
-               ledge edge (thighs level or drooping, shins down, hands on the thighs; the thigh droop or shin
+  poses        five static poses after the walk (POSE_KEYS, people_cast.py): sit_pose seats the character on
+               a ledge edge (thighs level or drooping, shins down, hands on the thighs; the thigh droop or shin
                tilt is solved so the seat lands SIT_SEAT_H above the soles), lean_pose stands it back to a
-               wall (tilted LEAN_TILT back, right foot flat on the wall, hands in the pockets). The limbs are
-               placed by two_bone IK and aim(); measures in sit_measure / lean_measure.
+               wall (tilted LEAN_TILT back, right foot flat on the wall, hands in the pockets), lean_fwd_pose
+               faces a railing (tipped and bent forward, forearms crossed on the rail top), stand_pose stands
+               easy and talk_pose adds a right-arm gesture. The limbs are placed by two_bone IK, aim() and
+               limb_dir(); measures in sit_measure / lean_measure / rail_measure.
   bake         each pose's deformed vertices (world space, turned to face -Y = glTF +Z, centred on the rest
-               hips, lowest vertex on the ground) become shape keys walk_<i>, sit, lean; the basis is walk_0.
-               The armature is deleted, so the glb holds plain meshes with WALK_KEYS + 2 morph targets. The
+               hips, lowest vertex on the ground) become shape keys walk_<i>, then POSE_KEYS; basis walk_0.
+               The armature is deleted, so the glb holds plain meshes with WALK_KEYS + 5 morph targets. The
                ground lock gives the hip bob (lowest at contact) for free.
   atlas        the variants' 512 px textures (Textures/<image>.png) packed into ATLAS_COLS x ATLAS_ROWS tiles,
                UVs moved into each tile with an ATLAS_INSET_PX inset; one material PEOPLE_Atlas (roughness
                ROUGHNESS, metallic 0). The pack's colours are kept as they are.
-  meta         people_meta.json {version, keys, poses: {sit: 6, lean: 7}, cycle_m, variants: [{name, height,
-               gender, kind, tile, cycle_m, sit_seat_h, sit_edge, sit_reach, lean_back}]}. keys = the walk
+  meta         people_meta.json {version, keys, poses: {sit: 6, lean: 7, lean_fwd: 8, stand: 9, talk: 10},
+               cycle_m, variants: [{name, height, gender, kind, tile, cycle_m, sit_seat_h, sit_edge,
+               sit_reach, lean_back, lean_fwd_front, lean_fwd_top}]}. keys = the walk
                keys only; poses = the morph target index of each static pose. cycle_m = 2 steps: twice the
                heel-to-heel stride at contact, the mean over the cast. All the sit/lean lengths are metres in
                the character's frame (origin = the mesh origin, forward = its facing): sit_seat_h = the seat
                contact above the soles, sit_edge = the ledge edge forward of the origin, sit_reach = the feet
-               or knees forward of that edge, lean_back = the wall plane behind the origin.
+               or knees forward of that edge, lean_back = the wall plane behind the origin, lean_fwd_front /
+               lean_fwd_top = the forward lean's rail face ahead of the origin and its top above the soles.
 
 The walk is deliberately chunky: the page steps through the WALK_KEYS poses with no blending (the robots added
 later are the fluid ones). The pure parts (cast, walk curves, atlas UVs) are in people_cast.py (tested).
@@ -51,12 +55,12 @@ OUT_DIR = os.path.abspath(_args[0]) if _args else os.path.join(_here, "build", "
 ASSETS = os.path.abspath(_args[1]) if len(_args) > 1 else "/run/media/dracky/e97d0aa9-5c45-460a-a682-b57cd6302030/Assets/People"
 
 # ---------------------------------------------------------------- constants
-VERSION = 2
+VERSION = 3
 RIG_DIRS = (("Models/Rig/Male", "M"), ("Models/Rig/Female", "F"), ("Extras_Rig/Male", "M"), ("Extras_Rig/Female", "F"))
 TEXTURES = "Textures"
 PEOPLE_VARIANTS = pc.PEOPLE_VARIANTS    # 12
 WALK_KEYS = pc.WALK_KEYS                # 6 poses per cycle, stepped on the page (no blending)
-POSE_KEYS = pc.POSE_KEYS                # ("sit", "lean"), morph targets WALK_KEYS, WALK_KEYS + 1
+POSE_KEYS = pc.POSE_KEYS                # ("sit", "lean", "lean_fwd", "stand", "talk"): targets WALK_KEYS + i
 SIT_DROOP_MAX = 15.0                    # deg: most the thighs droop below level to raise the seat
 SIT_SOLVE_STEPS = 16                    # bisection steps for the seat height (~0.05 deg)
 ARM_HANG_DEG = 9.0                      # deg off vertical (outward) the arms hang at, clear of the hips
@@ -187,12 +191,23 @@ def sit_pose(arm, src, x):
     bpy.context.view_layer.update()
 
 
-def lower_legs(src):
-    """Mask of the vertices mostly weighted to a shin, foot or toe bone."""
+def weighted_to(src, parts):
+    """Mask of the vertices mostly weighted to one of the Left/Right `parts` bones (or a finger of a Hand)."""
+    names = {s + b for s in ("Left", "Right") for b in parts}
     groups = {g.index for g in src.vertex_groups
-              if g.name[len(B):] in {s + b for s in ("Left", "Right") for b in ("Leg", "Foot", "ToeBase", "Toe_End")}}
+              if g.name[len(B):] in names or any(g.name[len(B):].startswith(n) for n in names if n.endswith("Hand"))}
     return np.array([bool(v.groups) and max(v.groups, key=lambda g: g.weight).group in groups
                      for v in src.data.vertices])
+
+
+def lower_legs(src):
+    """Mask of the vertices mostly weighted to a shin, foot or toe bone."""
+    return weighted_to(src, ("Leg", "Foot", "ToeBase", "Toe_End"))
+
+
+def forearms(src):
+    """Mask of the vertices mostly weighted to a forearm or hand (fingers too)."""
+    return weighted_to(src, ("ForeArm", "Hand"))
 
 
 def sit_measure(co, lower):
@@ -236,6 +251,54 @@ def lean_pose(arm, src):
     target = Vector((wall + ankle_h, head(arm, "RightUpLeg").y, ground + pc.LEAN_FOOT_H))
     reach(arm, "RightUpLeg", "RightLeg", target, Vector((1, 0, 0.3)))
     aim(arm, "RightFoot", Matrix.Rotation(math.radians(90), 3, "Y") @ feet["Right"])
+    bpy.context.view_layer.update()
+
+
+def relax_leg(arm, side, knee):
+    """Bend side's knee by knee deg, the thigh forward half that, the foot back to level."""
+    turn(arm, side + "UpLeg", Y, -knee / 2)
+    turn(arm, side + "Leg", Y, knee)
+    turn(arm, side + "Foot", Y, -knee / 2)
+
+
+def lean_fwd_pose(arm):
+    """Facing a railing: tipped LEAN_FWD_TILT forward about the hips (feet re-levelled), bent forward at the
+    spine, the head up, the forearms crossing in front at rail height, palms down, the right knee relaxed.
+    The rail is measured afterwards where the forearms land (rail_measure)."""
+    rest(arm)
+    feet = {side: tail(arm, side + "Foot") - head(arm, side + "Foot") for side in ("Left", "Right")}
+    turn(arm, "Hips", Y, pc.LEAN_FWD_TILT)
+    for side in ("Left", "Right"):
+        aim(arm, side + "Foot", feet[side])
+    for bone, deg in zip(("Spine", "Spine1", "Spine2"), pc.LEAN_FWD_SPINE):
+        turn(arm, bone, Y, deg)
+    turn(arm, "Neck", Y, pc.LEAN_FWD_NECK)
+    for side, s in (("Left", 1), ("Right", -1)):
+        aim(arm, side + "Arm", Vector(pc.limb_dir(*pc.LEAN_FWD_ARM, s)))
+        aim(arm, side + "ForeArm", Vector(pc.limb_dir(*pc.LEAN_FWD_FOREARM, s)))
+        aim(arm, side + "Hand", Vector(pc.limb_dir(*pc.LEAN_FWD_HAND, s)))
+        roll(arm, side + "Hand", X)   # palm down on the rail: the thumb forward, the way the forearm crosses
+    relax_leg(arm, "Right", pc.LEAN_FWD_KNEE)
+    bpy.context.view_layer.update()
+
+
+def stand_pose(arm):
+    """Standing easy: arms down with the elbows a little bent, the weight on the left leg."""
+    rest(arm)
+    for side in ("Left", "Right"):
+        turn(arm, side + "ForeArm", Y, -pc.STAND_ELBOW)
+    relax_leg(arm, "Right", pc.STAND_KNEE)
+    bpy.context.view_layer.update()
+
+
+def talk_pose(arm):
+    """stand_pose with the right arm out in front in a gesture, palm up, the head tipped to the right."""
+    stand_pose(arm)
+    aim(arm, "RightArm", Vector(pc.limb_dir(*pc.TALK_ARM, -1)))
+    aim(arm, "RightForeArm", Vector(pc.limb_dir(*pc.TALK_FOREARM, -1)))
+    aim(arm, "RightHand", Vector(pc.limb_dir(*pc.TALK_HAND, -1)))
+    roll(arm, "RightHand", Vector((0, -1, 0)))   # palm up: the thumb outward
+    turn(arm, "Head", X, pc.TALK_HEAD)
     bpy.context.view_layer.update()
 
 
@@ -315,6 +378,17 @@ def bake(v, tile, path):
     lean_pose(arm, src)
     keys.append(grounded())
     lean = lean_measure(keys[-1])
+    lean_fwd_pose(arm)
+    keys.append(grounded())
+    ground = world_coords(src)[:, 2].min()
+    joints = min((FACING @ head(arm, side + b)).z for side in ("Left", "Right") for b in ("ForeArm", "Hand"))
+    fwd = pc.rail_measure(keys[-1], forearms(src), joints - ground)
+    if fwd["lean_fwd_clear"] < 0:
+        raise RuntimeError(f"{path}: the forward lean's body crosses the rail by {-fwd['lean_fwd_clear']:.3f} m")
+    stand_pose(arm)
+    keys.append(grounded())
+    talk_pose(arm)
+    keys.append(grounded())
 
     me = src.data.copy()
     me.name = PREFIX + v["name"]
@@ -347,7 +421,8 @@ def bake(v, tile, path):
     bob = max(hip_z) - min(hip_z)
     return obj, img, {"name": v["name"], "height": round(height, 4), "gender": v["gender"], "kind": v["kind"],
                       "tile": tile, "cycle_m": round(2 * stride, 4),
-                      **{k: round(v, 4) for k, v in {**sit, **lean}.items()}, "sit_x": x}, bob
+                      **{k: round(v, 4) for k, v in {**sit, **lean, **fwd}.items() if k != "lean_fwd_clear"},
+                      "sit_x": x, "fwd_clear": fwd["lean_fwd_clear"]}, bob
 
 
 def atlas(images):
@@ -404,11 +479,12 @@ def run():
     for tile, v in enumerate(cast):
         obj, img, info, bob = bake(v, tile, files[(v["gender"], v["name"])])
         objs.append(obj); images.append(img); meta.append(info); bobs.append(bob)
-        x = info.pop("sit_x")
+        x, clear = info.pop("sit_x"), info.pop("fwd_clear")
         print(f"people: {obj.name} h {info['height']:.3f} cycle {info['cycle_m']:.3f} bob {bob * 100:.1f} cm "
               f"verts {len(obj.data.vertices)} tex {img}; sit {'droop' if x > 0 else 'shin'} {abs(x):.1f} deg "
               f"seat {info['sit_seat_h']:.3f} edge {info['sit_edge']:.3f} reach {info['sit_reach']:.3f}, "
-              f"lean_back {info['lean_back']:.3f}")
+              f"lean_back {info['lean_back']:.3f}; lean_fwd front {info['lean_fwd_front']:.3f} top "
+              f"{info['lean_fwd_top']:.3f} clear {clear:.3f}")
     mat = material(atlas(images))
     for o in objs:
         o.data.materials.clear()

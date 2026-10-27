@@ -1,7 +1,7 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
-// blimps (blimps.ts), the well's water (water.ts), walking, sitting and leaning people
+// blimps (blimps.ts), the well's water (water.ts), walking, sitting, leaning and talking people
 // (people.ts: the baked characters of people.glb, or walking capsules without it) and the
 // robots crossing the avenue (robot.ts, robot.glb; none without it). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
@@ -28,8 +28,11 @@ import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
 import { createBlimps, updateBlimps } from './blimps.ts';
 import { applyWater, setWaterLights, setWaterNight, setWaterTime, waterLights } from './water.ts';
 import {
-	IDLE_PEOPLE,
-	IDLE_PEOPLE_MOBILE,
+	CONVO_GROUPS,
+	IDLE_LEANERS,
+	IDLE_LEANERS_MOBILE,
+	IDLE_SITTERS,
+	IDLE_SITTERS_MOBILE,
 	PEOPLE_PER_PATH,
 	PEOPLE_PER_PATH_MOBILE,
 	WALK_SPEED,
@@ -264,9 +267,14 @@ export class CityHeroScene {
 		const peopleOpts = {
 			perPath: this.opts.mobile ? PEOPLE_PER_PATH_MOBILE : PEOPLE_PER_PATH,
 			speed: WALK_SPEED,
-			// Sitting and leaning at the export's idle spots; the capsules leave them out.
-			idle: this.opts.mobile ? IDLE_PEOPLE_MOBILE : IDLE_PEOPLE,
-			idleSpots: props.idle_spots
+			// Sitting and leaning at the export's idle spots, talking at its talk spots; the capsules
+			// leave them out.
+			idle: this.opts.mobile
+				? { sit: IDLE_SITTERS_MOBILE, lean: IDLE_LEANERS_MOBILE }
+				: { sit: IDLE_SITTERS, lean: IDLE_LEANERS },
+			idleSpots: props.idle_spots,
+			convos: CONVO_GROUPS,
+			talkSpots: props.talk_spots
 		};
 		this.people = cast
 			? createCharacterPeople(props.walk_paths, peopleOpts, cast)

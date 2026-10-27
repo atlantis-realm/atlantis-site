@@ -9,8 +9,8 @@ const SKIP = fs.existsSync(GLB) ? false : `no ${path.relative(process.cwd(), GLB
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const VARIANTS = 12, WALK_KEYS = 6;   // = PEOPLE_VARIANTS, WALK_KEYS in people_cast.py
-const POSES = { sit: 6, lean: 7 };    // POSE_KEYS in people_cast.py, morph targets after the walk keys
-const TARGETS = [...Array.from({ length: WALK_KEYS }, (_, i) => `walk_${i}`), "sit", "lean"];
+const POSES = { sit: 6, lean: 7, lean_fwd: 8, stand: 9, talk: 10 };   // POSE_KEYS in people_cast.py, after the walk keys
+const TARGETS = [...Array.from({ length: WALK_KEYS }, (_, i) => `walk_${i}`), ...Object.keys(POSES)];
 const HEIGHT = [1.4, 2.0];            // m
 const SIT_SEAT_H = 0.45;              // m, people_cast.py: the seat aimed for (short people sit lower)
 const EXCLUDED = /Killer|Monster|Exotic/i;
@@ -57,7 +57,7 @@ test("12 PEOPLE_ meshes, none of them a Killer, Monster or Exotic_dancer", { ski
   }
 });
 
-test("every mesh has the walk keys then sit and lean as morph targets (positions + normals)", { skip: SKIP }, async () => {
+test("every mesh has the walk keys then the static poses as morph targets (positions + normals)", { skip: SKIP }, async () => {
   const { root } = await load();
   for (const n of meshNodes(root)) {
     assert.deepEqual(n.getMesh().getExtras().targetNames, TARGETS, n.getName());
@@ -90,6 +90,8 @@ test("each person 1.4-2.0 m tall with feet on y = 0, in every walk key; lower wh
       const [lo, hi] = worldY(n, prim, t);
       assert.ok(Math.abs(lo) <= 0.01, `${n.getName()}: feet at ${lo.toFixed(3)}`);
       if (t === targets[POSES.sit]) assert.ok(hi - lo >= 0.9 && hi - lo <= 1.6, `${n.getName()} sitting: ${(hi - lo).toFixed(3)} m`);
+      // Bent over a rail: the shortest person stoops below the standing range.
+      else if (t === targets[POSES.lean_fwd]) assert.ok(hi - lo >= 1.3 && hi - lo <= HEIGHT[1], `${n.getName()} leaning forward: ${(hi - lo).toFixed(3)} m`);
       else assert.ok(hi - lo >= HEIGHT[0] && hi - lo <= HEIGHT[1], `${n.getName()}: ${(hi - lo).toFixed(3)} m`);
     }
   }
@@ -97,13 +99,14 @@ test("each person 1.4-2.0 m tall with feet on y = 0, in every walk key; lower wh
 
 test("people_meta.json matches the glb", { skip: SKIP }, async () => {
   const { root, meta } = await load();
+  assert.equal(meta.version, 3);   // 3: lean_fwd, stand and talk
   assert.equal(meta.keys, WALK_KEYS);
   assert.ok(meta.cycle_m > 1 && meta.cycle_m < 2, `cycle_m ${meta.cycle_m}`);
   assert.deepEqual(meta.variants.map((v) => "PEOPLE_" + v.name).sort(), meshNodes(root).map((n) => n.getName()).sort());
   for (const v of meta.variants) assert.ok(v.height >= HEIGHT[0] && v.height <= HEIGHT[1], `${v.name} ${v.height}`);
 });
 
-test("people_meta.json gives the pose keys and each variant's sit and lean measures", { skip: SKIP }, async () => {
+test("people_meta.json gives the pose keys and each variant's sit, lean and forward lean measures", { skip: SKIP }, async () => {
   const { meta } = await load();
   assert.deepEqual(meta.poses, POSES);
   for (const v of meta.variants) {
@@ -113,5 +116,8 @@ test("people_meta.json gives the pose keys and each variant's sit and lean measu
     assert.ok(v.sit_edge >= 0.1 && v.sit_edge <= 0.5, `${v.name} sit_edge ${v.sit_edge}`);
     assert.ok(v.sit_reach >= 0.15 && v.sit_reach <= 0.6, `${v.name} sit_reach ${v.sit_reach}`);
     assert.ok(v.lean_back >= 0.08 && v.lean_back <= 0.35, `${v.name} lean_back ${v.lean_back}`);
+    // Forward lean: the rail a forearm's reach ahead, its top about elbow height (a railing's 0.9-1.25 m).
+    assert.ok(v.lean_fwd_front >= 0.15 && v.lean_fwd_front <= 0.4, `${v.name} lean_fwd_front ${v.lean_fwd_front}`);
+    assert.ok(v.lean_fwd_top >= 0.9 && v.lean_fwd_top <= 1.25, `${v.name} lean_fwd_top ${v.lean_fwd_top}`);
   }
 });

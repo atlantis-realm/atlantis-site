@@ -317,6 +317,10 @@ node --test test/people_glb.test.js   # skip when static/city/people.glb is abse
 # contact sheets of the sit and lean poses against a ledge and a wall (build/people/check_poses.py, git-ignored):
 flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/build/people/check_poses.py" \
   -- "$PWD/build/people/people_raw.glb" "$PWD/build/people/people_meta.json" "$PWD/build/people/sheets"
+# one sheet of lean, lean_fwd (against its measured rail), stand and talk, side / front / three-quarter rows
+# (build/people/check_poses2.py, git-ignored; [variants 0,3,..] [cell px]):
+flatpak run --command=blender org.blender.Blender --factory-startup -b --python "$PWD/build/people/check_poses2.py" \
+  -- "$PWD/build/people/people_raw.glb" "$PWD/build/people/people_meta.json" "$PWD/build/people/poses.png" 0,1,3,6,7,9,10,11 180
 ```
 
 - **Cast** (`people_cast.py`, tested): `PEOPLE_VARIANTS = 12` from `Models/Rig` and `Extras_Rig`
@@ -332,8 +336,8 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
   `KNEE_LOAD` 24° in early stance, feet kept level, arms ±`ARM_SWING` (18°) with a 12–26° elbow bend,
   hips/chest twist ±`SPINE_TWIST` (6°). Each key is grounded on its lowest vertex, so the hips bob
   0.7–3.3 cm, lowest at contact. The armature is deleted: the glb holds plain meshes with morph targets.
-- **Idle poses**: two static keys after the walk, `sit` (target 6) and `lean` (target 7), held still on
-  the page (`POSE_KEYS`). Limbs are placed with two-bone IK (`two_bone`, tested) on the rig. **Sit**: on a
+- **Idle poses**: five static keys after the walk, `sit` (target 6), `lean` (7), `lean_fwd` (8), `stand` (9)
+  and `talk` (10), each held still on the page (`POSE_KEYS`; the first two keep their old targets). Limbs are placed with two-bone IK (`two_bone`, tested) on the rig. **Sit**: on a
   ledge edge, thighs level, shins down, back `SIT_SPINE_FWD` (6°) forward, hands palm down on the thighs;
   the thighs droop up to 15° to bring the seat contact to `SIT_SEAT_H` (0.45 m) above the soles, and the
   short legs that can't reach it sit lower (0.37–0.45 m over the cast). The ledge edge is
@@ -341,43 +345,79 @@ flatpak run --command=blender org.blender.Blender --factory-startup -b --python 
   point behind it, so nothing dips into the ledge. **Lean**: back to a wall, body tilted `LEAN_TILT` (7°)
   back, the left foot flat, the right foot's sole flat on the wall with the ankle `LEAN_FOOT_H` (0.42 m)
   up, hands in the front pockets (the wrist just inside the thigh's front, measured on the mesh). The
-  wall plane is the rearmost point of the upper body (head, back, buttocks).
+  wall plane is the rearmost point of the upper body (head, back, buttocks). **Forward lean**
+  (`lean_fwd_pose`): facing a railing, the body tipped `LEAN_FWD_TILT` (4°) forward about the hips (feet
+  re-levelled) and bent `LEAN_FWD_SPINE` (9°, 9°, 7° at Spine, Spine1, Spine2), the head back up 14°, the
+  upper arms 40° forward and out, the forearms crossing in front just above level, palms down, the right knee
+  relaxed. Every limb direction is `limb_dir(pitch, yaw)` (tested). The rail is then measured where the
+  forearms land (`rail_measure`, tested): its centre 0.3 of the way from the forearms' rearmost to foremost
+  point, `LEAN_FWD_RAIL_D` (6 cm) deep, its top the forearms' lowest point over it (forearm vertices more
+  than `LEAN_FWD_ARM_BAND`, 10 cm, below the elbow and wrist joints are cloth, such as a jacket hem, and count
+  as body). The bake fails if any body point below the top crosses the rail's face (clearance 2–14 cm over
+  the cast). **Stand**: arms down with the elbows bent `STAND_ELBOW` (10°), the right knee relaxed
+  `STAND_KNEE` (9°). **Talk**: the stand with the right arm out in front in a gesture (`TALK_ARM`,
+  `TALK_FOREARM`, `TALK_HAND`), palm up, the head tipped `TALK_HEAD` (6°) to the right.
 - **Atlas**: the 12 pack textures (`Textures/<image>.png`, 512 px, opaque, colours untouched) in a 4×3
   grid (2048×1536), UVs inset `ATLAS_INSET_PX` (4 px) per tile; saved as JPEG (`ATLAS_JPEG_QUALITY` 90:
   a PNG atlas alone is 3.4 MB). One material `PEOPLE_Atlas` (roughness 0.85, metallic 0).
 - **Outputs** (`build/people/`): `people_raw.glb` (meshes `PEOPLE_<file>`, facing glTF +Z, feet on
-  y = 0, origin under the rest hips; morph targets `walk_0`…`walk_5`, `sit`, `lean`), `people_atlas.jpg`,
-  `people_meta.json` `{version: 2, keys: 6, poses: {sit: 6, lean: 7}, cycle_m, variants: [{name, height,
-  gender, kind, tile, cycle_m, sit_seat_h, sit_edge, sit_reach, lean_back}]}`. `keys` counts the walk
+  y = 0, origin under the rest hips; morph targets `walk_0`…`walk_5`, `sit`, `lean`, `lean_fwd`, `stand`,
+  `talk`), `people_atlas.jpg`, `people_meta.json` `{version: 3, keys: 6, poses: {sit: 6, lean: 7, lean_fwd: 8,
+  stand: 9, talk: 10}, cycle_m, variants: [{name, height, gender, kind, tile, cycle_m, sit_seat_h, sit_edge,
+  sit_reach, lean_back, lean_fwd_front, lean_fwd_top}]}`. `keys` counts the walk
   keys only; `poses` gives each static pose's morph target index. `cycle_m` is metres per walk cycle (2
   steps, twice the heel-to-heel stride at contact): 1.12–1.52 per person, mean 1.327 (≈1.4 for a 1.75 m
   person). The pose measures are metres in the character's frame (forward = its facing):
   `sit_seat_h` the seat contact above the soles (0.37–0.45), `sit_edge` the ledge edge forward of the
   origin (0.25–0.35), `sit_reach` the feet/knees forward of that edge (0.28–0.33), `lean_back` the wall
-  behind the origin (0.15–0.23). To sit someone on a ledge whose front edge is at P (facing out over the
+  behind the origin (0.15–0.23), `lean_fwd_front` the forward lean's rail face ahead of the origin
+  (0.20–0.28) and `lean_fwd_top` its top above the soles (0.94–1.19; the shortest person, 1.52 m, rests
+  her elbows at 0.94). To sit someone on a ledge whose front edge is at P (facing out over the
   drop): origin = P − facing · `sit_edge`, y = ledge top − `sit_seat_h`; to lean someone on a wall whose
-  foot is at P (facing away): origin = P + facing · `lean_back`. Two runs give byte-identical files.
+  foot is at P (facing away): origin = P + facing · `lean_back`; to lean someone forward on a rail whose
+  foot is at P (facing it): origin = P − facing · `lean_fwd_front`, scaled so `lean_fwd_top` meets the rail
+  top. Two runs give byte-identical files.
 
 `people_glb.mjs` runs `prune`, `quantize` (morph targets included) and `meshopt`, writes
-`static/city/people.glb` and copies `people_meta.json` beside it: 1.83 MB (8 morph targets), 14,583
+`static/city/people.glb` and copies `people_meta.json` beside it: 2.20 MB (11 morph targets), 14,583
 triangles for one of each person (about 1,200 each).
 
 On the page (`src/lib/city/people.ts`) each variant is one InstancedMesh with the shared atlas material;
 walkers pick a variant by a seeded weighted draw (uniforms at `UNIFORM_WEIGHT` 0.5 against a civilian's 1)
 and show walk key `floor(phase · keys)` for phase = distance walked / (variant `cycle_m` × walker scale),
 one key at 1 and the rest 0. Without `people.glb` or `people_meta.json` the page walks capsules instead.
-`IDLE_PEOPLE` (40; `IDLE_PEOPLE_MOBILE` 20) more stand still at the export's `idle_spots`, after the
-walkers in the same per-variant InstancedMeshes (no extra draw calls), their `sit` or `lean` key at 1 set
-once and never touched per frame (`planIdlers`, `idlerPose`). A seeded shuffle of the spots gives
-`SIT_SHARE` (0.4) sitters and the rest leaners (leaners fill in when the sit spots run out), `IDLE_GAP`
-(2 m) apart, each with a weighted variant pick and the walkers' height scale. A sitter's origin is the ledge
-edge moved back `sit_edge` (scaled) along its facing and `sit_seat_h` (scaled) below the ledge top; a sit
-spot whose drop misses the picked person's seat height by more than `SIT_DROP_TOLERANCE` (0.12 m) is
-skipped. A leaner's origin is the wall foot moved out `lean_back` (scaled). The capsule fallback has no
-idle people. With v05's spots that is 12 sitters (the avenue's outer pavement edge, 100–160 m out) and
-28 leaners. The idle people took the frame to 1.54 M triangles with 40 walkers per path, so
-`PEOPLE_PER_PATH` is now 30 (120 walkers): at 1280×720 desktop with shadows the frame peaks at 238 draw
-calls by day, 252 by night, and 1.444 M triangles (1.397 M at frame 1).
+More people stay put at the export's `idle_spots` and `talk_spots`, after the walkers in the same per-variant
+InstancedMeshes (no extra draw calls):
+
+- **Idle** (`planIdlers`, `idlerPose`): `IDLE_SITTERS` (12; `IDLE_SITTERS_MOBILE` 8) sitters and
+  `IDLE_LEANERS` (3; `IDLE_LEANERS_MOBILE` 1: a tenth of the 28 and 12 there were) leaners, from a seeded
+  shuffle of the spots, each kind `IDLE_GAP` (2 m) from its own kind, with a weighted variant pick and the
+  walkers' height scale; their `sit`, `lean` or `lean_fwd` key is set once and never touched per frame.
+  Neither kind fills in for the other. A sitter's origin is the ledge edge moved back `sit_edge` (scaled)
+  along its facing and `sit_seat_h` (scaled) below the ledge top; a sit spot whose drop misses the picked
+  person's seat height by more than `SIT_DROP_TOLERANCE` (0.12 m) is skipped. Of the leaners,
+  round(`LEAN_FWD_SHARE` 0.5 × leaners) lean forward where the spot's `top` fits the picked person:
+  `leanFwdScale` scales them (within the walkers' range) so `lean_fwd_top` meets the rail top, within
+  `LEAN_FWD_TOLERANCE` (3 cm); they turn round to face the rail, their origin `lean_fwd_front` (scaled) out
+  from it. The rest lean back, their origin the wall foot moved out `lean_back` (scaled). With v05's spots
+  that is the same 8 sitters on mobile and 12 of the 13 that fit on desktop (the avenue's outer pavement
+  edge, 100–160 m out), 2 forward leaners on the well railings and 1 back leaner on an avenue facade
+  (mobile: 1 forward leaner).
+- **Conversations** (`planConvos`, `convoTalkers`): `CONVO_GROUPS` (4) groups of a seeded `CONVO_SIZE` (2–5)
+  people at distinct talk spots, each a different variant while the cast has any left, spaced round a
+  circle about `CONVO_GAP` (0.95 m) apart (at least `CONVO_MIN_R` 0.55 m radius) and facing its centre,
+  with a little seeded jitter in radius, angle and facing. Each group loops a seeded schedule of
+  `CONVO_TURNS` (24) turns of `CONVO_TURN_S` (2.5–6 s): one talker per turn, a different one each turn, with
+  a `CONVO_OVERLAP` (0.3) chance of a second chipping in, so never more than two at once. A talker steps
+  between `talk` and `stand` in beats of `CONVO_BEAT_S` (0.5–1.1 s: talk, talk, stand…), everyone else
+  stands; update() writes a member's key only when it changes. With v05's spots (`CONVO_SEED` picked for a
+  spread) the groups are 2, 3 and 5 on the well walkway and 4 at the avenue's foot.
+
+Reduced motion freezes the scene clock, so the conversations hold their first beat. The capsule fallback and
+an old (version 2) meta have no conversations or forward leans. `PEOPLE_PER_PATH` stays 30
+(120 walkers; 40 per path took the frame to 1.54 M triangles when the idle people came in). With the robots,
+at 2908×1271 desktop with shadows the frame peaks at 253 draw calls by day and 269 by night, and 1.432 M
+triangles (scroll 0, 0.3, 0.6, 0.75, 0.85, 0.95, 1).
 
 The pack is the user's own purchased asset. Like the hero, `people.glb` and `people_meta.json` are
 git-ignored until the user approves the look and its use on the site.

@@ -6,6 +6,8 @@ pick_variants()  the PEOPLE_VARIANTS cast from the pack's rigged files, a fixed 
                  so reruns pick the same people whatever order the folders list in.
 walk_pose()      joint angles (degrees) at a walk phase 0..1; key_phases() are the WALK_KEYS baked phases.
 two_bone()       the elbow/knee point of a two-bone limb reaching a target (the sit and lean poses).
+limb_dir()       a limb's direction from its pitch off straight down and yaw out from forward (the static poses).
+rail_measure()   the railing a forward lean's forearms rest on: its near face, top and the body's clearance.
 solve_increasing() bisection for the input of an increasing function that gives a target value.
 atlas_uv()       a variant's UV moved into its tile of the shared atlas, inset so mips don't bleed.
 
@@ -34,7 +36,7 @@ SPINE_TWIST = 6.0       # deg: shoulders turn against the hips (about the vertic
 
 # Static poses, baked as morph targets after the walk keys (walk_0..walk_5, then these): POSE_KEYS[i] is
 # target WALK_KEYS + i. The page holds them still (one key at 1), like the walk with no blending.
-POSE_KEYS = ("sit", "lean")
+POSE_KEYS = ("sit", "lean", "lean_fwd", "stand", "talk")
 # Sit: on a ledge edge, thighs level (knees SIT_KNEE_SPREAD m apart each side of the hips' line), shins
 # down, tilted forward as needed so the seat lands SIT_SEAT_H above the soles; back SIT_SPINE_FWD forward.
 SIT_SEAT_H = 0.45       # m: target seat contact above the feet (short people get what vertical shins give)
@@ -48,6 +50,27 @@ SIT_EDGE_CLEAR = 0.03   # m: the ledge edge this far behind the calves (so the s
 LEAN_TILT = 7.0         # deg: whole body back from vertical, pivoting on the standing foot
 LEAN_FOOT_H = 0.42      # m: the raised (right) ankle above the ground
 LEAN_POCKET = (0.03, 0.04, 0.08)    # m: wrist inside the thigh's front, out from the hip joint, below it
+# Forward lean: facing a railing, the body tipped LEAN_FWD_TILT forward and bent LEAN_FWD_SPINE at the spine
+# bones, the forearms on the rail top. The limbs are (pitch, yaw) for limb_dir: the upper arms forward and out,
+# the forearms crossing in front, the hands on. The rail is where the forearms land (rail_measure).
+LEAN_FWD_TILT = 4.0                 # deg: whole body forward of vertical, pivoting on the feet
+LEAN_FWD_SPINE = (9.0, 9.0, 7.0)    # deg: Spine, Spine1, Spine2 forward
+LEAN_FWD_NECK = -14.0               # deg: the head back up, looking out over the rail
+LEAN_FWD_ARM = (40.0, 22.0)         # upper arm: pitch, yaw out
+LEAN_FWD_FOREARM = (93.0, -48.0)    # forearm: just above level, crossing in
+LEAN_FWD_HAND = (98.0, -62.0)
+LEAN_FWD_KNEE = 12.0                # deg: the right knee relaxed (thigh forward half that, foot level)
+LEAN_FWD_RAIL_D = 0.06              # m: rail depth under the forearms
+LEAN_FWD_ARM_BAND = 0.1            # m: forearm vertices this far below the joints are cloth, not forearm
+LEAN_FWD_RAIL_AT = 0.3              # the rail's centre this far from the forearms' rearmost to foremost point
+# Stand and talk: a relaxed stand (elbows a little bent, the right knee relaxed), and the same with the right
+# arm out in a gesture, forearm up and palm up. A conversation steps between the two.
+STAND_ELBOW = 10.0                  # deg: elbow flex
+STAND_KNEE = 9.0                    # deg: right knee flex (the weight on the left leg)
+TALK_ARM = (34.0, 28.0)             # right upper arm: pitch, yaw out
+TALK_FOREARM = (96.0, 12.0)         # right forearm: out in front, a little up
+TALK_HAND = (110.0, 18.0)
+TALK_HEAD = 6.0                     # deg: the head tipped toward the listener on the right
 
 # Atlas: one 512 px tile per variant.
 TILE_PX = 512
@@ -133,6 +156,33 @@ def two_bone(root, target, l1, l2, pole):
     w = _sub(pole, tuple(x * _dot(pole, u) for x in u))   # the pole without its along-limb part
     n = math.sqrt(_dot(w, w)) or 1.0
     return tuple(r + a * ui + h * wi / n for r, ui, wi in zip(root, u, w))
+
+
+def limb_dir(pitch, yaw, s=1):
+    """Unit direction of a limb in the rig's frame (forward +X, left +Y, up +Z): pitch degrees up from straight
+    down (90 = level), the level part yaw degrees from forward toward the outside of side s (1 left, -1 right;
+    negative yaw crosses the body)."""
+    p, y = math.radians(pitch), math.radians(yaw)
+    return (math.sin(p) * math.cos(y), s * math.sin(p) * math.sin(y), -math.cos(p))
+
+
+def rail_measure(co, arm, arm_z=None, depth=LEAN_FWD_RAIL_D, at=LEAN_FWD_RAIL_AT, band=LEAN_FWD_ARM_BAND):
+    """On baked forward-lean coords (grounded, facing -Y: forward = -y) with arm marking the forearm and hand
+    vertices: the rail under the forearms, its centre `at` of the way from their rearmost to foremost point.
+    lean_fwd_front = its near face forward of the origin, lean_fwd_top = the forearms' lowest point over it
+    (the rail top they rest on), lean_fwd_clear = the near face minus the foremost body point below the top
+    (negative: the body crosses the rail). With arm_z (the elbows' and wrists' lowest joint height), arm
+    vertices more than band below it (a jacket hem skinned to the forearm) count as body, not forearm."""
+    import numpy as np
+    fwd, up = -co[:, 1], co[:, 2]
+    if arm_z is not None:
+        arm = arm & (up >= arm_z - band)
+    lo, hi = float(fwd[arm].min()), float(fwd[arm].max())
+    front = lo + (hi - lo) * at - depth / 2
+    over = arm & (fwd >= front) & (fwd <= front + depth)
+    top = float(up[over].min())
+    below = ~arm & (up < top)
+    return {"lean_fwd_front": front, "lean_fwd_top": top, "lean_fwd_clear": front - float(fwd[below].max())}
 
 
 def solve_increasing(f, lo, hi, target, steps=40):

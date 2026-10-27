@@ -7,23 +7,51 @@
 // they fall back to greybox capsules (a body plus a head, one InstancedMesh,
 // colours from a muted palette). The layout is seeded per path index
 // (mulberry32), so every load looks the same. With the baked characters,
-// IDLE_PEOPLE more stand still at the export's idle spots (hero_props.json
-// `idle_spots`), sitting on a ledge or leaning on a wall in the cast's static
-// `sit` / `lean` pose, drawn by the walkers' InstancedMeshes (no extra calls).
+// IDLE_SITTERS and IDLE_LEANERS more stay still at the export's idle spots
+// (hero_props.json `idle_spots`), sitting on a ledge, leaning back on a wall or
+// forward on a railing in the cast's static `sit` / `lean` / `lean_fwd` pose,
+// and CONVO_GROUPS conversations of 2-5 people stand in a circle at the export's
+// `talk_spots`, stepping between `stand` and `talk`. All of them are drawn by
+// the walkers' InstancedMeshes (no extra calls).
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { IdleSpot, Vec3 } from './props.ts';
+import type { IdleSpot, TalkSpot, Vec3 } from './props.ts';
 
 /** Figures per walk path, desktop and mobile, and their walking speeds (m/s). */
 export const PEOPLE_PER_PATH = 30;
 export const PEOPLE_PER_PATH_MOBILE = 20;
 export const WALK_SPEED: [number, number] = [0.9, 1.5];
 
-/** Idle (sitting or leaning) people, desktop and mobile; about SIT_SHARE of them sit. */
-export const IDLE_PEOPLE = 40;
-export const IDLE_PEOPLE_MOBILE = 20;
-export const SIT_SHARE = 0.4;
+/**
+ * Idle people, desktop and mobile: sitters (the 12 and 8 there were) and leaners (a tenth of the 28
+ * and 12 there were: a facade of leaners read as a queue).
+ */
+export const IDLE_SITTERS = 12;
+export const IDLE_SITTERS_MOBILE = 8;
+export const IDLE_LEANERS = 3;
+export const IDLE_LEANERS_MOBILE = 1;
+/** Share of the leaners that lean forward on a railing (rounded), where a rail top fits them. */
+export const LEAN_FWD_SHARE = 0.5;
+/** A forward leaner is scaled (within SCALE_RANGE) so its forearms meet the rail top; it may miss by this much (m). */
+export const LEAN_FWD_TOLERANCE = 0.03;
+/** Conversation groups at the export's talk spots, of CONVO_SIZE people (inclusive, seeded; v05: 2, 3, 4, 5 round the well). */
+export const CONVO_GROUPS = 4;
+export const CONVO_SIZE: [number, number] = [2, 5];
+/** Neighbours in a conversation circle stand about this far (m) apart; the circle is at least CONVO_MIN_R across. */
+const CONVO_GAP = 0.95;
+const CONVO_MIN_R = 0.55;
+/** Seeded jitter: radius (m, ±), angle round the circle and facing (rad, ±). */
+const CONVO_JITTER_R = 0.06;
+const CONVO_JITTER_ANGLE = 0.18;
+const CONVO_JITTER_FACING = 0.2;
+/** Turns per schedule (it loops), each CONVO_TURN_S long with gesture beats of CONVO_BEAT_S (s). */
+const CONVO_TURNS = 24;
+const CONVO_TURN_S: [number, number] = [2.5, 6];
+const CONVO_BEAT_S: [number, number] = [0.5, 1.1];
+/** Chance a turn has a second talker (someone chipping in): never more than two at once. */
+const CONVO_OVERLAP = 0.3;
+const CONVO_SEED = 0xc0b5;
 /** Idle people stand at least this far (m) apart, so a facade gets a few, not a row. */
 export const IDLE_GAP = 2;
 /** A sitter's seat height (scaled) may miss the spot's drop by this much (m): feet a little short of or into the ground. */
@@ -64,9 +92,12 @@ export type PeopleOptions = {
 	perPath: number;
 	speed: [number, number];
 	variantWeights?: number[];
-	/** Idle people placed at `idleSpots` (baked characters only; default none). */
-	idle?: number;
+	/** Idle sitters and leaners placed at `idleSpots` (baked characters only; default none). */
+	idle?: { sit: number; lean: number };
 	idleSpots?: IdleSpot[];
+	/** Conversation groups at `talkSpots` (baked characters with stand/talk only; default none). */
+	convos?: number;
+	talkSpots?: TalkSpot[];
 };
 /** One figure: its path, start distance s0 (m), speed (m/s), direction, offset and look (colour or character variant). */
 export type Walker = {
@@ -89,10 +120,11 @@ export type PeopleMeta = {
 	keys: number;
 	/** Metres per walk cycle (two steps), mean over the cast. */
 	cycle_m: number;
-	/** Morph target index of each static pose, after the walk keys (version 2). */
-	poses?: { sit: number; lean: number };
+	/** Morph target index of each static pose, after the walk keys (version 2; lean_fwd, stand, talk version 3). */
+	poses?: PosesMeta;
 	/** Pose measures in the character's frame, forward = its facing (version 2): seat contact above the
-	 * soles, ledge edge forward of the origin, wall plane behind the origin. */
+	 * soles, ledge edge forward of the origin, wall plane behind the origin; version 3: the rail's near
+	 * face forward of the origin and its top above the soles for the forward lean. */
 	variants: {
 		name: string;
 		height: number;
@@ -101,10 +133,25 @@ export type PeopleMeta = {
 		sit_seat_h?: number;
 		sit_edge?: number;
 		lean_back?: number;
+		lean_fwd_front?: number;
+		lean_fwd_top?: number;
 	}[];
 };
-/** A variant's static-pose measures (m, unscaled): see PeopleMeta. */
-export type PoseBody = { seatH: number; sitEdge: number; leanBack: number };
+export type PosesMeta = {
+	sit: number;
+	lean: number;
+	lean_fwd?: number;
+	stand?: number;
+	talk?: number;
+};
+/** A variant's static-pose measures (m, unscaled): see PeopleMeta. fwdFront/fwdTop with version 3. */
+export type PoseBody = {
+	seatH: number;
+	sitEdge: number;
+	leanBack: number;
+	fwdFront?: number;
+	fwdTop?: number;
+};
 /** One character variant: its geometry (with the walk morph targets), the glb node's transform and its cycle (m). */
 export type CastMember = {
 	name: string;
@@ -121,10 +168,21 @@ export type PeopleCast = {
 	material: THREE.Material;
 	keys: number;
 	targets: number;
-	poses?: { sit: number; lean: number };
+	poses?: PosesMeta;
 };
 /** One idle person: pose, character variant, height scale and the spot it's placed at. */
-export type Idler = { pose: 'sit' | 'lean'; variant: number; scale: number; spot: IdleSpot };
+export type Idler = {
+	pose: 'sit' | 'lean' | 'lean_fwd';
+	variant: number;
+	scale: number;
+	spot: IdleSpot;
+};
+/** One person in a conversation: character variant, height scale, where it stands and its heading. */
+export type ConvoMember = { variant: number; scale: number; position: Vec3; heading: number };
+/** One talk turn of a conversation: its start (s, into the loop), length, gesture beat and talkers (1 or 2). */
+export type ConvoTurn = { start: number; length: number; beat: number; talkers: number[] };
+/** A conversation: its spot, members round it and the looping talk schedule (`period` s long). */
+export type Convo = { spot: TalkSpot; members: ConvoMember[]; turns: ConvoTurn[]; period: number };
 /** Mesh name prefix of the variants in people.glb. */
 export const PEOPLE_MESH_PREFIX = 'PEOPLE_';
 
@@ -287,6 +345,16 @@ export function parsePeopleMeta(json: unknown): PeopleMeta {
 		throw new Error(
 			'people_meta.json: poses need sit/lean targets after the keys and per-variant measures'
 		);
+	const more = m.poses && [m.poses.lean_fwd, m.poses.stand, m.poses.talk];
+	if (
+		more &&
+		more.some((k) => k !== undefined) &&
+		(!more.every((k) => Number.isInteger(k) && k! >= m.keys) ||
+			m.variants.some((v) => !(v.lean_fwd_front! > 0 && v.lean_fwd_top! > 0)))
+	)
+		throw new Error(
+			'people_meta.json: lean_fwd/stand/talk need targets after the keys and per-variant forward lean measures'
+		);
 	return m;
 }
 
@@ -300,7 +368,9 @@ export function castFromScene(root: THREE.Object3D, meta: PeopleMeta): PeopleCas
 	root.updateMatrixWorld(true);
 	let material: THREE.Material | null = null;
 	const poses = meta.poses;
-	const targets = poses ? Math.max(meta.keys, poses.sit + 1, poses.lean + 1) : meta.keys;
+	const targets = poses
+		? Math.max(meta.keys, ...Object.values(poses).map((k) => (k ?? 0) + 1))
+		: meta.keys;
 	const members = meta.variants.map((v): CastMember => {
 		const mesh = root.getObjectByName(PEOPLE_MESH_PREFIX + v.name) as THREE.Mesh | undefined;
 		if (!mesh?.isMesh) throw new Error(`people.glb: no mesh ${PEOPLE_MESH_PREFIX}${v.name}`);
@@ -315,7 +385,14 @@ export function castFromScene(root: THREE.Object3D, meta: PeopleMeta): PeopleCas
 			cycleM: v.cycle_m ?? meta.cycle_m,
 			uniform: v.kind != null,
 			body: poses
-				? { seatH: v.sit_seat_h!, sitEdge: v.sit_edge!, leanBack: v.lean_back! }
+				? {
+						seatH: v.sit_seat_h!,
+						sitEdge: v.sit_edge!,
+						leanBack: v.lean_back!,
+						...(poses.lean_fwd !== undefined
+							? { fwdFront: v.lean_fwd_front!, fwdTop: v.lean_fwd_top! }
+							: {})
+					}
 				: undefined
 		};
 	});
@@ -332,9 +409,16 @@ export function castWeights(cast: PeopleCast): number[] {
  * Where an idle person stands: a sitter's origin is the ledge edge (spot pos)
  * moved back by the scaled `sitEdge` along its facing, `seatH` below the ledge
  * top; a leaner's is the wall foot moved out by the scaled `leanBack`. The
- * heading is the spot's (walkerPose's yaw: facing (sin h, 0, cos h)).
+ * heading is the spot's (walkerPose's yaw: facing (sin h, 0, cos h)). With
+ * `forward`, the leaner turns round to face the rail (heading + π), its origin
+ * the scaled `fwdFront` out from the rail's foot.
  */
-export function idlerPose(spot: IdleSpot, body: PoseBody, scale: number): WalkerPose {
+export function idlerPose(
+	spot: IdleSpot,
+	body: PoseBody,
+	scale: number,
+	forward = false
+): WalkerPose {
 	const [x, y, z] = spot.pos;
 	const fx = Math.sin(spot.heading);
 	const fz = Math.cos(spot.heading);
@@ -345,8 +429,22 @@ export function idlerPose(spot: IdleSpot, body: PoseBody, scale: number): Walker
 			heading: spot.heading
 		};
 	}
-	const out = body.leanBack * scale;
-	return { position: [x + fx * out, y, z + fz * out], heading: spot.heading };
+	const out = (forward ? body.fwdFront! : body.leanBack) * scale;
+	return {
+		position: [x + fx * out, y, z + fz * out],
+		heading: forward ? spot.heading + Math.PI : spot.heading
+	};
+}
+
+/**
+ * The scale that sets a forward leaner's forearms on the spot's rail top
+ * (clamped to SCALE_RANGE), or null when the spot has no rail top, the body
+ * has no forward lean, or the clamped scale misses by more than LEAN_FWD_TOLERANCE.
+ */
+export function leanFwdScale(spot: IdleSpot, body: PoseBody): number | null {
+	if (spot.top == null || !(body.fwdTop! > 0)) return null;
+	const scale = Math.min(SCALE_RANGE[1], Math.max(SCALE_RANGE[0], spot.top / body.fwdTop!));
+	return Math.abs(body.fwdTop! * scale - spot.top) <= LEAN_FWD_TOLERANCE ? scale : null;
 }
 
 /** Whether a sitter's seat height (scaled) matches the spot's drop within SIT_DROP_TOLERANCE. */
@@ -355,15 +453,17 @@ export function sitFits(spot: IdleSpot, body: PoseBody, scale: number): boolean 
 }
 
 /**
- * The seeded idle layout: up to `count` people at `spots` in a seeded order,
- * round(count · SIT_SHARE) sitting and the rest leaning (leaners fill in when
- * the sits run out, and the other way round), IDLE_GAP apart, each with a
- * weighted variant pick and a height scale. A sit spot whose drop the picked
- * person's seat doesn't fit (sitFits) is skipped.
+ * The seeded idle layout: up to `want.sit` sitters and `want.lean` leaners at
+ * `spots` in a seeded order (neither fills in for the other), each IDLE_GAP
+ * from its own kind, with a weighted variant pick and a height scale. A sit
+ * spot whose drop the picked person's seat doesn't fit (sitFits) is skipped.
+ * Of the leaners, round(want.lean · LEAN_FWD_SHARE) lean forward where a rail
+ * top fits the picked person (leanFwdScale, which also sets their scale); any
+ * the rails can't take, and the rest, lean back.
  */
 export function planIdlers(
 	spots: IdleSpot[],
-	count: number,
+	want: { sit: number; lean: number },
 	bodies: PoseBody[],
 	weights?: number[]
 ): Idler[] {
@@ -378,28 +478,125 @@ export function planIdlers(
 		variant: weightedPick(weights, rand()),
 		scale: SCALE_RANGE[0] + (SCALE_RANGE[1] - SCALE_RANGE[0]) * rand()
 	}));
-	const idlers: Idler[] = [];
-	const used = new Set<number>();
-	const sits = Math.round(count * SIT_SHARE);
-	const want = { sit: sits, lean: count - sits };
+	const fwd = Math.round(want.lean * LEAN_FWD_SHARE);
+	const left = { sit: want.sit, lean: want.lean - fwd, lean_fwd: fwd };
+	// Sitters and leaners keep IDLE_GAP from their own kind only (the ledges and the walls barely
+	// meet), so the number of leaners never moves a sitter.
+	const placed: Record<IdleSpot['pose'], Idler[]> = { sit: [], lean: [] };
 	const free = (spot: IdleSpot) =>
-		idlers.every(
+		placed[spot.pose].every(
 			(o) => Math.hypot(o.spot.pos[0] - spot.pos[0], o.spot.pos[2] - spot.pos[2]) >= IDLE_GAP
 		);
-	// First pass keeps the sit/lean mix; the second fills up with whatever is left.
-	for (const mix of [true, false]) {
-		order.forEach((k, n) => {
-			const spot = spots[k];
-			if (idlers.length >= count || used.has(k)) return;
-			if (mix && idlers.filter((o) => o.pose === spot.pose).length >= want[spot.pose]) return;
-			const { variant, scale } = draws[n];
-			if (spot.pose === 'sit' && !sitFits(spot, bodies[variant], scale)) return;
-			if (!free(spot)) return;
-			used.add(k);
-			idlers.push({ pose: spot.pose, variant, scale, spot });
-		});
+	const place = (spot: IdleSpot, n: number, forwardOk: boolean): void => {
+		const { variant, scale } = draws[n];
+		const body = bodies[variant];
+		let idler: Idler | null = null;
+		if (spot.pose === 'sit') {
+			if (left.sit > 0 && sitFits(spot, body, scale)) idler = { pose: 'sit', variant, scale, spot };
+		} else {
+			const fit = forwardOk && left.lean_fwd > 0 ? leanFwdScale(spot, body) : null;
+			if (fit !== null) idler = { pose: 'lean_fwd', variant, scale: fit, spot };
+			else if (left.lean > 0) idler = { pose: 'lean', variant, scale, spot };
+		}
+		if (!idler || !free(spot)) return;
+		left[idler.pose]--;
+		placed[spot.pose].push(idler);
+	};
+	order.forEach((k, n) => place(spots[k], n, true));
+	// Forward leans no rail could take become back leans on the spots left, in the same order.
+	left.lean += left.lean_fwd;
+	left.lean_fwd = 0;
+	const taken = new Set(placed.lean.map((o) => o.spot));
+	order.forEach(
+		(k, n) => spots[k].pose === 'lean' && !taken.has(spots[k]) && place(spots[k], n, false)
+	);
+	const rank = new Map(order.map((k, n) => [spots[k], n]));
+	return [...placed.sit, ...placed.lean].sort((a, b) => rank.get(a.spot)! - rank.get(b.spot)!);
+}
+
+/**
+ * The seeded conversations: `groups` of CONVO_SIZE people (inclusive) at
+ * distinct talk spots in a seeded order, each a different variant (weighted,
+ * while the cast has any left) with a height scale, spaced round a circle
+ * about CONVO_GAP apart (at least CONVO_MIN_R radius, inside the spot's
+ * radius) and facing its centre, with a little seeded jitter. Each group gets
+ * a looping talk schedule of CONVO_TURNS turns (convoTalkers).
+ */
+export function planConvos(spots: TalkSpot[], groups: number, weights?: number[]): Convo[] {
+	const rand = mulberry32(CONVO_SEED);
+	const order = spots.map((_, k) => k);
+	for (let k = order.length - 1; k > 0; k--) {
+		const j = Math.floor(rand() * (k + 1));
+		[order[k], order[j]] = [order[j], order[k]];
 	}
-	return idlers;
+	const kinds = weights?.length || 1;
+	const jitter = () => rand() * 2 - 1;
+	return order.slice(0, groups).map((k): Convo => {
+		const spot = spots[k];
+		const n = CONVO_SIZE[0] + Math.floor(rand() * (CONVO_SIZE[1] - CONVO_SIZE[0] + 1));
+		const ring = Math.min(
+			spot.radius - 0.35 - CONVO_JITTER_R,
+			Math.max(CONVO_MIN_R, CONVO_GAP / (2 * Math.sin(Math.PI / n)))
+		);
+		const a0 = rand() * 2 * Math.PI;
+		const used = new Set<number>();
+		const [x, y, z] = spot.pos;
+		const members = Array.from({ length: n }, (_, i): ConvoMember => {
+			// A fresh variant while the cast has any left (a few tries, so the draws stay seeded).
+			let variant = weightedPick(weights, rand());
+			for (let t = 0; t < 16 && used.has(variant) && used.size < kinds; t++)
+				variant = weightedPick(weights, rand());
+			used.add(variant);
+			const a = a0 + (2 * Math.PI * i) / n + jitter() * CONVO_JITTER_ANGLE;
+			const r = ring + jitter() * CONVO_JITTER_R;
+			return {
+				variant,
+				scale: SCALE_RANGE[0] + (SCALE_RANGE[1] - SCALE_RANGE[0]) * rand(),
+				position: [x + r * Math.sin(a), y, z + r * Math.cos(a)],
+				// Facing the centre, (−sin a, 0, −cos a), give or take.
+				heading: a + Math.PI + jitter() * CONVO_JITTER_FACING
+			};
+		});
+		const turns: ConvoTurn[] = [];
+		let start = 0;
+		let last = -1;
+		for (let t = 0; t < CONVO_TURNS; t++) {
+			// A different talker from the last turn's.
+			let talker = Math.floor(rand() * (last < 0 ? n : n - 1));
+			if (last >= 0 && talker >= last) talker++;
+			const talkers = [talker];
+			if (n > 2 && rand() < CONVO_OVERLAP)
+				talkers.push((talker + 1 + Math.floor(rand() * (n - 1))) % n);
+			const length = CONVO_TURN_S[0] + (CONVO_TURN_S[1] - CONVO_TURN_S[0]) * rand();
+			const beat = CONVO_BEAT_S[0] + (CONVO_BEAT_S[1] - CONVO_BEAT_S[0]) * rand();
+			turns.push({ start, length, beat, talkers });
+			start += length;
+			last = talker;
+		}
+		return { spot, members, turns, period: start };
+	});
+}
+
+/**
+ * Who in conversation `c` shows the `talk` pose at time `t` (s, looping over
+ * the schedule): the turn's talkers gesture in stepped beats (talk, talk,
+ * stand, …; a second talker a beat out of step), everyone else stands. At
+ * most two at once.
+ */
+export function convoTalkers(c: Convo, t: number): boolean[] {
+	const u = ((t % c.period) + c.period) % c.period;
+	let lo = 0;
+	let hi = c.turns.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (c.turns[mid].start <= u) lo = mid;
+		else hi = mid - 1;
+	}
+	const turn = c.turns[lo];
+	const beat = Math.floor((u - turn.start) / turn.beat);
+	const out = c.members.map(() => false);
+	turn.talkers.forEach((k, i) => (out[k] = (beat + i) % 3 !== 2));
+	return out;
 }
 
 /** One figure, feet at y = 0, PERSON_HEIGHT tall. */
@@ -473,7 +670,10 @@ export function createPeople(paths: Vec3[][], opts: PeopleOptions): People {
  * capsule's step bob (the walk keys bob the hips), and shows each walker's
  * walk key for the distance it has walked. With `opts.idle` and the cast's
  * poses, the idle people (planIdlers) follow the walkers in their variant's
- * mesh: placed once with their pose key at 1, never touched by update().
+ * mesh: placed once with their pose key at 1, never touched by update(). With
+ * `opts.convos` and the cast's stand/talk poses, the conversations
+ * (planConvos) come last: placed once, update(t) switching each member's key
+ * between stand and talk (convoTalkers) only when it changes.
  */
 export function createCharacterPeople(
 	paths: Vec3[][],
@@ -488,49 +688,76 @@ export function createCharacterPeople(
 		poses && opts.idle && opts.idleSpots && bodies.every((b) => b)
 			? planIdlers(opts.idleSpots, opts.idle, bodies as PoseBody[], weights)
 			: [];
+	const convos =
+		poses?.stand !== undefined && poses.talk !== undefined && opts.convos && opts.talkSpots
+			? planConvos(opts.talkSpots, opts.convos, weights)
+			: [];
+	// Every conversation member, with its group and index in it.
+	const talkers = convos.flatMap((c) => c.members.map((m, i) => ({ ...m, convo: c, index: i })));
 	const groups = cast.members
 		.map((member, v) => ({
 			member,
 			walkers: walkers.filter((w) => w.variant === v),
-			idlers: idlers.filter((p) => p.variant === v)
+			idlers: idlers.filter((p) => p.variant === v),
+			talkers: talkers.filter((p) => p.variant === v)
 		}))
-		.filter((g) => g.walkers.length + g.idlers.length > 0)
+		.filter((g) => g.walkers.length + g.idlers.length + g.talkers.length > 0)
 		.map((g) => {
 			const mesh = new THREE.InstancedMesh(
 				g.member.geometry,
 				cast.material,
-				g.walkers.length + g.idlers.length
+				g.walkers.length + g.idlers.length + g.talkers.length
 			);
 			mesh.name = `People_${g.member.name}`;
 			// The figures spread over the whole avenue and move; bounds would need recomputing every frame.
 			mesh.frustumCulled = false;
-			// Key shown per instance; −1 forces the first write.
-			return { ...g, mesh, shown: new Int8Array(g.walkers.length).fill(-1) };
+			// Key shown per walker and per talker; −1 forces the first write.
+			return {
+				...g,
+				mesh,
+				shown: new Int8Array(g.walkers.length).fill(-1),
+				talking: new Int8Array(g.talkers.length).fill(-1)
+			};
 		});
 
 	const influences = walkInfluences(0, targets);
 	// setMorphAt reads only morphTargetInfluences off the object it's given.
 	const morph = new THREE.Mesh();
 	morph.morphTargetInfluences = influences;
+	const stand = (
+		index: number,
+		position: Vec3,
+		heading: number,
+		scale: number,
+		member: CastMember,
+		mesh: THREE.InstancedMesh
+	) => {
+		_position.set(...position);
+		_quaternion.setFromAxisAngle(_up, heading);
+		_scale.setScalar(scale);
+		mesh.setMatrixAt(
+			index,
+			_matrix.compose(_position, _quaternion, _scale).multiply(member.matrix)
+		);
+	};
 
-	// The idle people, after the walkers: placed and posed once.
-	for (const { member, walkers: ws, idlers: ps, mesh } of groups) {
+	// The idle people, after the walkers, and the conversations after them: placed once; the idle
+	// people posed once too.
+	for (const { member, walkers: ws, idlers: ps, talkers: cs, mesh } of groups) {
 		ps.forEach((p, k) => {
-			const { position, heading } = idlerPose(p.spot, member.body!, p.scale);
-			_position.set(...position);
-			_quaternion.setFromAxisAngle(_up, heading);
-			_scale.setScalar(p.scale);
-			mesh.setMatrixAt(
-				ws.length + k,
-				_matrix.compose(_position, _quaternion, _scale).multiply(member.matrix)
-			);
-			walkInfluences(poses![p.pose], targets, influences);
+			const { position, heading } = idlerPose(p.spot, member.body!, p.scale, p.pose === 'lean_fwd');
+			stand(ws.length + k, position, heading, p.scale, member, mesh);
+			walkInfluences(poses![p.pose]!, targets, influences);
 			mesh.setMorphAt(ws.length + k, morph);
 		});
+		cs.forEach((p, k) =>
+			stand(ws.length + ps.length + k, p.position, p.heading, p.scale, member, mesh)
+		);
 	}
 
 	const update = (t: number): void => {
-		for (const { member, walkers: ws, mesh, shown } of groups) {
+		const now = convos.map((c) => convoTalkers(c, t));
+		for (const { member, walkers: ws, idlers: ps, talkers: cs, mesh, shown, talking } of groups) {
 			let changed = false;
 			ws.forEach((w, k) => {
 				walkerMatrix(paths, w, t, false, _matrix);
@@ -544,11 +771,21 @@ export function createCharacterPeople(
 				mesh.setMorphAt(k, morph);
 				changed = true;
 			});
-			mesh.instanceMatrix.needsUpdate = true;
+			cs.forEach((p, k) => {
+				const on = now[convos.indexOf(p.convo)][p.index] ? 1 : 0;
+				if (on === talking[k]) return;
+				talking[k] = on;
+				walkInfluences(on ? poses!.talk! : poses!.stand!, targets, influences);
+				mesh.setMorphAt(ws.length + ps.length + k, morph);
+				changed = true;
+			});
+			if (ws.length) mesh.instanceMatrix.needsUpdate = true;
 			if (changed && mesh.morphTexture) mesh.morphTexture.needsUpdate = true;
 		}
 	};
 	update(0);
+	// The first update placed the walkers; flag the idle and conversation matrices placed above too.
+	for (const { mesh } of groups) mesh.instanceMatrix.needsUpdate = true;
 	const dispose = (): void => {
 		for (const { mesh } of groups) mesh.dispose();
 		disposeCast(cast);

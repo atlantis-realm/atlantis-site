@@ -19,7 +19,9 @@ from people_cast import (  # noqa: E402
     allowed,
     atlas_uv,
     key_phases,
+    limb_dir,
     pick_variants,
+    rail_measure,
     solve_increasing,
     two_bone,
     uniform_kind,
@@ -105,7 +107,41 @@ class WalkTest(unittest.TestCase):
 
 class PoseTest(unittest.TestCase):
     def test_pose_keys_follow_the_walk(self):
-        self.assertEqual(POSE_KEYS, ("sit", "lean"))
+        # The first two keep their targets (6, 7); the new ones go after them.
+        self.assertEqual(POSE_KEYS, ("sit", "lean", "lean_fwd", "stand", "talk"))
+
+    def test_limb_dir(self):
+        for pitch, yaw, s in ((0, 0, 1), (28, 25, 1), (92, -45, -1), (180, 10, 1)):
+            d = limb_dir(pitch, yaw, s)
+            self.assertAlmostEqual(math.hypot(*d), 1.0, places=9)
+        self.assertEqual(tuple(round(c, 9) for c in limb_dir(0, 30, 1)), (0, 0, -1))   # straight down
+        self.assertEqual(tuple(round(c, 9) for c in limb_dir(90, 0, 1)), (1, 0, 0))   # straight forward (+X)
+        self.assertGreater(limb_dir(60, 20, 1)[1], 0.1)    # out: left (+Y) for the left side
+        self.assertLess(limb_dir(60, 20, -1)[1], -0.1)     # and right (-Y) for the right
+        self.assertLess(limb_dir(60, -20, 1)[1], -0.1)     # in: across the body
+
+    def test_rail_measure(self):
+        import numpy as np
+        # Facing -Y (forward = -y), z up. A body column 0.15 m deep up to 1.4 m, and forearms reaching
+        # forward at 1.1 m from 0.25 to 0.5 m out, their underside 1.08 m.
+        body = [(0.0, -f, z) for f in np.linspace(-0.1, 0.15, 6) for z in np.linspace(0, 1.4, 15)]
+        arms = [(0.0, -f, z) for f in np.linspace(0.25, 0.5, 11) for z in (1.08, 1.12)]
+        co = np.array(body + arms)
+        mask = np.array([False] * len(body) + [True] * len(arms))
+        m = rail_measure(co, mask)
+        self.assertAlmostEqual(m["lean_fwd_top"], 1.08, places=6)
+        # The rail's near face is under the forearms, between their rearmost and foremost points.
+        self.assertTrue(0.25 <= m["lean_fwd_front"] <= 0.4, m)
+        self.assertAlmostEqual(m["lean_fwd_clear"], m["lean_fwd_front"] - 0.15, places=6)
+        # A belly in front of the rail's face below its top shows as negative clearance.
+        co2 = np.vstack([co, [(0.0, -0.45, 0.9)]])
+        self.assertLess(rail_measure(co2, np.append(mask, False))["lean_fwd_clear"], 0)
+        # A hem skinned to the forearm hanging well below the joints is body: it neither sets the top nor
+        # escapes the clearance check.
+        co3 = np.vstack([co, [(0.2, -0.3, 0.9)]])
+        m3 = rail_measure(co3, np.append(mask, True), arm_z=1.1)
+        self.assertAlmostEqual(m3["lean_fwd_top"], 1.08, places=6)
+        self.assertLess(m3["lean_fwd_clear"], 0)
 
     def test_two_bone_reaches_with_bone_lengths(self):
         root, target, pole = (0.0, 0.0, 1.0), (0.3, 0.1, 0.6), (-1.0, 0.0, 0.0)

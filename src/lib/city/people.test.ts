@@ -2,14 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
+	CONVO_SIZE,
 	IDLE_GAP,
+	LEAN_FWD_TOLERANCE,
 	SIT_DROP_TOLERANCE,
 	castFromScene,
+	convoTalkers,
 	createCharacterPeople,
 	createPeople,
 	idlerPose,
 	mulberry32,
 	parsePeopleMeta,
+	planConvos,
 	planIdlers,
 	planWalkers,
 	walkInfluences,
@@ -18,7 +22,7 @@ import {
 	weightedPick,
 	type PeopleMeta
 } from './people.ts';
-import type { IdleSpot, Vec3 } from './props.ts';
+import type { IdleSpot, TalkSpot, Vec3 } from './props.ts';
 
 /** A closed 10 m square (first point == last point): perimeter 40 m. */
 const SQUARE: Vec3[] = [
@@ -282,6 +286,7 @@ const META2: PeopleMeta = {
 	}))
 };
 const BODY = { seatH: 0.45, sitEdge: 0.3, leanBack: 0.2 };
+const FWD_BODY = { ...BODY, fwdFront: 0.25, fwdTop: 1.1 };
 
 /** `n` sit spots along x at z = 0 (facing −Z, drop 0.45) and `n` lean spots at z = 20 (facing +X), 1 m apart. */
 function spots(n: number): IdleSpot[] {
@@ -329,11 +334,11 @@ test('idlerPose: a sitter backs off the ledge edge, its seat on it; a leaner ste
 	);
 });
 
-test('planIdlers is seeded, mixes sit and lean, keeps IDLE_GAP and fits the drops', () => {
+test('planIdlers is seeded, takes the sit and lean counts asked for, keeps IDLE_GAP and fits the drops', () => {
 	const bodies = [BODY, { ...BODY, seatH: 0.38 }, BODY];
 	const all = spots(60);
-	const a = planIdlers(all, 40, bodies, [1, 0.5, 1]);
-	assert.deepEqual(a, planIdlers(all, 40, bodies, [1, 0.5, 1]));
+	const a = planIdlers(all, { sit: 16, lean: 24 }, bodies, [1, 0.5, 1]);
+	assert.deepEqual(a, planIdlers(all, { sit: 16, lean: 24 }, bodies, [1, 0.5, 1]));
 	assert.equal(a.length, 40);
 	assert.equal(a.filter((p) => p.pose === 'sit').length, 16);
 	assert.equal(a.filter((p) => p.pose === 'lean').length, 24);
@@ -347,21 +352,124 @@ test('planIdlers is seeded, mixes sit and lean, keeps IDLE_GAP and fits the drop
 			assert.ok(d >= IDLE_GAP, `${d} m apart`);
 		});
 	});
-	// Few sit spots: leaners fill in. A drop no seat fits: nobody sits there.
+	// Few sit spots: no leaners fill in for the missing sitters. A drop no seat fits: nobody sits there.
 	const few = planIdlers(
 		spots(60).filter((s) => s.pose === 'lean' || s.pos[0] < 3),
-		20,
+		{ sit: 8, lean: 3 },
 		bodies
 	);
-	assert.equal(few.length, 20);
 	assert.ok(few.filter((p) => p.pose === 'sit').length <= 2);
+	assert.equal(few.filter((p) => p.pose === 'lean').length, 3);
 	const high = all.map((s) => (s.pose === 'sit' ? { ...s, drop: 1 } : s));
-	assert.equal(planIdlers(high, 20, bodies).filter((p) => p.pose === 'sit').length, 0);
-	assert.deepEqual(planIdlers([], 20, bodies), []);
+	assert.equal(
+		planIdlers(high, { sit: 8, lean: 4 }, bodies).filter((p) => p.pose === 'sit').length,
+		0
+	);
+	assert.deepEqual(planIdlers([], { sit: 8, lean: 4 }, bodies), []);
+	// Fewer leaners don't change the sitters (they're only ever kept IDLE_GAP from each other).
+	const sitters = (lean: number) =>
+		planIdlers(all, { sit: 16, lean }, bodies, [1, 0.5, 1]).filter((p) => p.pose === 'sit');
+	assert.deepEqual(sitters(3), sitters(24));
+});
+
+test('planIdlers: about LEAN_FWD_SHARE of the leaners lean forward, only on a rail top that fits', () => {
+	const bodies = [FWD_BODY, { ...FWD_BODY, fwdTop: 0.95 }, FWD_BODY];
+	// Half the lean spots are railings 1.127 m high, the rest walls too tall to lean over.
+	const all = spots(60).map((s, k) =>
+		s.pose === 'lean' ? { ...s, top: k % 4 === 1 ? 1.127 : null } : s
+	);
+	const a = planIdlers(all, { sit: 0, lean: 6 }, bodies, [1, 1, 1]);
+	assert.deepEqual(a, planIdlers(all, { sit: 0, lean: 6 }, bodies, [1, 1, 1]));
+	const fwd = a.filter((p) => p.pose === 'lean_fwd');
+	assert.equal(fwd.length, 3);
+	assert.equal(a.filter((p) => p.pose === 'lean').length, 3);
+	for (const p of fwd) {
+		assert.equal(p.spot.top, 1.127);
+		assert.ok(p.scale >= 0.92 && p.scale <= 1.06, `scale ${p.scale}`);
+		// The figure is scaled so its forearms land on the rail.
+		assert.ok(Math.abs(bodies[p.variant].fwdTop! * p.scale - 1.127) <= LEAN_FWD_TOLERANCE);
+	}
+	// No rail tops (an old export) or no forward measures (an old bake): every leaner leans back.
+	const tall = spots(60).map((s) => (s.pose === 'lean' ? { ...s, top: null } : s));
+	assert.ok(planIdlers(tall, { sit: 0, lean: 6 }, bodies).every((p) => p.pose === 'lean'));
+	assert.ok(
+		planIdlers(all, { sit: 0, lean: 6 }, [BODY, BODY, BODY]).every((p) => p.pose === 'lean')
+	);
+});
+
+test('idlerPose: a forward leaner faces the rail, its origin lean_fwd_front out from it', () => {
+	// The spot faces away from the rail (+X); the forward leaner turns round to face it (−X).
+	const p = idlerPose(
+		{ pose: 'lean', pos: [2, 1, 4], heading: Math.PI / 2, top: 1.1 },
+		FWD_BODY,
+		1.1,
+		true
+	);
+	close(p.position, [2 + 0.25 * 1.1, 1, 4]);
+	close([Math.sin(p.heading), Math.cos(p.heading)], [-1, 0]);
+});
+
+/** Talk spots of radius 2.2 m on a line, 10 m apart. */
+const TALK: TalkSpot[] = Array.from({ length: 6 }, (_, k) => ({
+	pos: [k * 10, 0.5, -30] as Vec3,
+	radius: 2.2
+}));
+
+test('planConvos: seeded groups of CONVO_SIZE people in a loose circle facing its centre', () => {
+	const a = planConvos(TALK, 4, [1, 0.5, 1, 1, 1, 1]);
+	assert.deepEqual(a, planConvos(TALK, 4, [1, 0.5, 1, 1, 1, 1]));
+	assert.equal(a.length, 4);
+	assert.equal(new Set(a.map((c) => c.spot)).size, 4, 'one group per spot');
+	assert.ok(new Set(a.map((c) => c.members.length)).size > 1, 'sizes vary');
+	for (const c of a) {
+		const n = c.members.length;
+		assert.ok(n >= CONVO_SIZE[0] && n <= CONVO_SIZE[1], `${n} people`);
+		assert.equal(new Set(c.members.map((m) => m.variant)).size, n, 'different people');
+		const [cx, cy, cz] = c.spot.pos;
+		c.members.forEach((m, i) => {
+			const [x, y, z] = m.position;
+			assert.equal(y, cy);
+			const r = Math.hypot(x - cx, z - cz);
+			assert.ok(r >= 0.4 && r + 0.35 <= c.spot.radius, `r ${r}`);
+			// Facing the centre, give or take a little.
+			const facing = (Math.sin(m.heading) * (cx - x) + Math.cos(m.heading) * (cz - z)) / r;
+			assert.ok(facing > Math.cos((25 * Math.PI) / 180), `facing ${facing}`);
+			assert.ok(m.scale >= 0.92 && m.scale <= 1.06);
+			c.members.slice(i + 1).forEach((o) => {
+				const d = Math.hypot(o.position[0] - x, o.position[2] - z);
+				assert.ok(d >= 0.6, `${d} m apart`);
+			});
+		});
+	}
+	// Fewer spots than groups: one group per spot.
+	assert.equal(planConvos(TALK.slice(0, 2), 4).length, 2);
+	assert.deepEqual(planConvos([], 4), []);
+});
+
+test('convoTalkers: stepped, seeded, at most two talking at once, everyone gets a turn', () => {
+	const [c] = planConvos(TALK, 4, [1, 1, 1, 1, 1, 1]).filter((g) => g.members.length >= 3);
+	assert.ok(c, 'a group of three or more');
+	const spoke = new Set<number>();
+	let changes = 0;
+	let last = '';
+	for (let t = 0; t < 600; t += 0.1) {
+		const talk = convoTalkers(c, t);
+		assert.equal(talk.length, c.members.length);
+		assert.ok(talk.filter(Boolean).length <= 2, `t ${t}: ${talk}`);
+		talk.forEach((on, k) => on && spoke.add(k));
+		const key = talk.join();
+		if (key !== last) changes++;
+		last = key;
+	}
+	assert.equal(spoke.size, c.members.length, 'everyone talks some time');
+	// Changes now and then, not every frame.
+	assert.ok(changes > 50 && changes < 3000, `${changes} changes`);
+	assert.deepEqual(convoTalkers(c, 123.4), convoTalkers(c, 123.4));
+	assert.ok(convoTalkers(c, 0).some(Boolean), 'someone is talking from the start');
 });
 
 test('createCharacterPeople places idle people in the walkers meshes, posed once and held still', () => {
-	const opts = { ...OPTS, idle: 20, idleSpots: spots(40) };
+	const opts = { ...OPTS, idle: { sit: 8, lean: 12 }, idleSpots: spots(40) };
 	const make = () =>
 		createCharacterPeople(
 			[SQUARE, LINE],
@@ -419,4 +527,79 @@ test('createCharacterPeople places idle people in the walkers meshes, posed once
 		80
 	);
 	old.dispose();
+});
+
+/** Version 3 meta: lean_fwd, stand and talk after sit and lean, with the forward lean measures. */
+const META3: PeopleMeta = {
+	...META2,
+	version: 3,
+	poses: { sit: 6, lean: 7, lean_fwd: 8, stand: 9, talk: 10 },
+	variants: META2.variants.map((v) => ({ ...v, lean_fwd_front: 0.25, lean_fwd_top: 1.1 }))
+};
+
+test('parsePeopleMeta and castFromScene read the version 3 poses and forward lean measures', () => {
+	assert.equal(parsePeopleMeta(META3), META3);
+	assert.throws(() =>
+		parsePeopleMeta({ ...META3, variants: META3.variants.map(({ lean_fwd_top: _, ...v }) => v) })
+	);
+	assert.throws(() => parsePeopleMeta({ ...META3, poses: { ...META3.poses!, talk: 3 } }));
+	const cast = castFromScene(fakeGlb(['A', 'B', 'C'], 11, new THREE.MeshStandardMaterial()), META3);
+	assert.equal(cast.targets, 11);
+	assert.deepEqual(cast.members[0].body, { ...FWD_BODY, seatH: 0.45 });
+	cast.members.forEach((m) => m.geometry.dispose());
+});
+
+test('createCharacterPeople: conversations in the walkers meshes, stepping between stand and talk', () => {
+	const rails = spots(40).map((s) => (s.pose === 'lean' ? { ...s, top: 1.1 } : s));
+	const opts = { ...OPTS, idle: { sit: 4, lean: 4 }, idleSpots: rails, convos: 3, talkSpots: TALK };
+	const one = createCharacterPeople(
+		[SQUARE, LINE],
+		opts,
+		castFromScene(fakeGlb(['A', 'B', 'C'], 11, new THREE.MeshStandardMaterial()), META3)
+	);
+	assert.ok(one.meshes.length <= 3, 'no extra meshes');
+	const K = 12; // base influence + 11 targets per instance row
+	const keys = () => {
+		const n: Record<number, number> = {};
+		for (const mesh of one.meshes) {
+			const data = mesh.morphTexture!.image.data as Float32Array;
+			for (let k = 0; k < mesh.count; k++) {
+				const row = [...data.slice(k * K + 1, k * K + K)];
+				assert.equal(row.filter((v) => v === 1).length, 1, `instance ${k}: ${row}`);
+				const key = row.indexOf(1);
+				if (key >= 6) n[key] = (n[key] ?? 0) + 1;
+			}
+		}
+		return n;
+	};
+	const total = one.meshes.reduce((n, m) => n + m.count, 0);
+	const talkers = total - 80 - 8;
+	// Three groups of 2..5, each with 1-2 talking at the start; 4 sit, 2 lean back, 2 forward.
+	assert.ok(talkers >= 6 && talkers <= 15, `${talkers} in conversations`);
+	const start = keys();
+	assert.deepEqual([start[6], start[7], start[8]], [4, 2, 2]);
+	assert.equal((start[9] ?? 0) + (start[10] ?? 0), talkers);
+	assert.ok(start[10] >= 3 && start[10] <= 6, `${start[10]} talking`);
+	// The talkers change over time (one key at 1 each still); the seated and leaning stay put.
+	const snap = () =>
+		one.meshes
+			.flatMap((m) => {
+				const data = m.morphTexture!.image.data as Float32Array;
+				return Array.from({ length: m.count }, (_, k) =>
+					data.slice(k * K + 1, k * K + K).indexOf(1)
+				);
+			})
+			.filter((key) => key >= 9)
+			.join();
+	const before = snap();
+	let changed = false;
+	for (let t = 0.5; t < 30 && !changed; t += 0.5) {
+		one.update(t);
+		const now = keys();
+		assert.deepEqual([now[6], now[7], now[8]], [4, 2, 2]);
+		assert.equal((now[9] ?? 0) + (now[10] ?? 0), talkers);
+		changed = snap() !== before;
+	}
+	assert.ok(changed, 'someone switched between stand and talk');
+	one.dispose();
 });
