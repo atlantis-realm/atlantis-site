@@ -84,6 +84,7 @@ FAR_DECIMATE = 0.25                     # Decimate (collapse) ratio for far mesh
 SUBDIV_NEAR, SUBDIV_MID = 4.0, 12.0     # m: split edges longer than this before the AO bake
 SUBDIV_MAX_EDGE = 200.0                 # m: faces with longer edges (sea, ground sheets) are not split
 SUBDIV_MAX_PASSES = 6
+SMOOTH_ANGLE_DEG = 30.0                  # smooth by angle: edges between faces closer than this shade smooth
 AO_SAMPLES, AO_DISTANCE = 32, 8.0
 NO_AO_MATERIALS = {"MAT_AP_Water"}      # water gets white AO and no subdivision
 
@@ -271,7 +272,6 @@ class Geo:
         self.lt = np.empty(npoly, np.int64); me.polygons.foreach_get("loop_total", self.lt)
         self.lv = np.empty(nl, np.int64); me.loops.foreach_get("vertex_index", self.lv)
         self.mi = np.empty(npoly, np.int64); me.polygons.foreach_get("material_index", self.mi)
-        self.smooth = np.empty(npoly, bool); me.polygons.foreach_get("use_smooth", self.smooth)
         self.pn = np.empty(npoly * 3, np.float32); me.polygons.foreach_get("normal", self.pn)
         self.pn = self.pn.reshape(-1, 3).astype(np.float64)
         me.calc_loop_triangles()
@@ -497,9 +497,9 @@ class Builder:
     """Accumulates polygons from many chunks into one mesh."""
 
     def __init__(self):
-        self.co, self.lv, self.ls, self.mi, self.smooth, self.mats, self.nv, self.nl = [], [], [], [], [], [], 0, 0
+        self.co, self.lv, self.ls, self.mi, self.mats, self.nv, self.nl = [], [], [], [], [], 0, 0
 
-    def add(self, co, lv, ls, lt, sel, smooth, mat_idx):
+    def add(self, co, lv, ls, lt, sel, mat_idx):
         loops, starts = poly_loops(ls, lt, sel)
         vids = lv[loops]
         uniq, inv = np.unique(vids, return_inverse=True)
@@ -507,7 +507,6 @@ class Builder:
         self.lv.append(inv.ravel() + self.nv)
         self.ls.append(starts + self.nl)
         self.mi.append(mat_idx)
-        self.smooth.append(smooth[sel])
         self.nv += len(uniq)
         self.nl += len(loops)
 
@@ -525,13 +524,21 @@ class Builder:
         ls = np.concatenate(self.ls)
         me.polygons.add(len(ls)); me.polygons.foreach_set("loop_start", ls.astype(np.int32))
         me.polygons.foreach_set("material_index", np.concatenate(self.mi).astype(np.int32))
-        me.polygons.foreach_set("use_smooth", np.concatenate(self.smooth))
         me.update(calc_edges=True)
         if me.validate(verbose=False):
             print("export_hero: fixed invalid geometry in", name, flush=True)
+        smooth_by_angle(me)
         for m in self.mats:
             me.materials.append(m)
         return me
+
+
+def smooth_by_angle(me):
+    """Shade smooth, with edges sharper than SMOOTH_ANGLE_DEG kept hard. Replaces the source faces' own
+    smooth flags: the merged meshes lose the sources' sharp edges, so a face flagged smooth otherwise
+    blends its normals across 90-degree corners."""
+    me.shade_smooth()
+    me.set_sharp_from_angle(angle=math.radians(SMOOTH_ANGLE_DEG))
 
 
 def ao_white(me):
@@ -608,6 +615,7 @@ def lamp_mesh(mats):
     me = tag(bpy.data.meshes.new("HERO_Lamp"))
     bm.to_mesh(me)
     bm.free()
+    smooth_by_angle(me)
     me.materials.append(mats.get("HERO_LampPole", None))
     me.materials.append(mats.get(NIGHT_LAMP, None))
     ao_white(me)
@@ -745,7 +753,7 @@ def run():
                     sel = c.polys[g.mi[c.polys] == m]
                     src = g.mat_name(m)
                     out = M.out_name(src, it.special)
-                    b.add(c.co, c.lv, g.ls, g.lt, sel, g.smooth, np.full(len(sel), b.mat_index(M.get(out, src))))
+                    b.add(c.co, c.lv, g.ls, g.lt, sel, np.full(len(sel), b.mat_index(M.get(out, src))))
                 continue
             band = band_of(c.lo, c.hi)
             band_count[band] += 1
@@ -767,7 +775,7 @@ def run():
                 src = g.mat_name(m)
                 out = M.out_name(src, None)
                 b = buckets.setdefault((band, tx, ty, out), Builder())
-                b.add(c.co, c.lv, g.ls, g.lt, sel, g.smooth, np.zeros(len(sel), np.int64))
+                b.add(c.co, c.lv, g.ls, g.lt, sel, np.zeros(len(sel), np.int64))
                 if not b.mats:
                     b.mat_index(M.get(out, src))
         timing["buckets"] = time.time() - t0
@@ -799,7 +807,7 @@ def run():
                 for m in np.unique(g.mi):
                     sel = np.nonzero(g.mi == m)[0]
                     src = g.mat_name(m)
-                    b.add(g.co, g.lv, g.ls, g.lt, sel, g.smooth, np.full(len(sel), b.mat_index(M.get(M.out_name(src, None), src))))
+                    b.add(g.co, g.lv, g.ls, g.lt, sel, np.full(len(sel), b.mat_index(M.get(M.out_name(src, None), src))))
                 me = species[it.species] = b.mesh("HERO_tree_" + it.species)
                 ao_white(me)
             link(f"HERO_tree_{it.species}_{it.idx}", me, Matrix(it.M.tolist()))
