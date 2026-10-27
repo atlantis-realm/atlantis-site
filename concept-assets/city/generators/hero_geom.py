@@ -16,6 +16,14 @@ thin_spots()       greedy minimum spacing, first come first kept.
 stride_pick()      an even, deterministic subset.
 sit_profile()      the drop in front of a ledge, from downward probes behind and in front of its edge.
 lean_profile()     whether the ground in front of a wall is level and free.
+side_dirs()        the two horizontal directions square to a facing; side_points() the points either side.
+walk_run()         the run of walkable ground heights round a point of a line (robot routes).
+bands()            the runs of true flags at least a given length (cross streets along the avenue).
+ring_crossing()    where a ray first meets a circle (a ring avenue across the hero avenue).
+arc_lengths()      cumulative x, y length along a polyline.
+seen_ranges()      per frame, the arc-length range of the points seen from it.
+wall_top()         the height of a wall or railing top from rays scanned up its face.
+disc_offsets()     the grid cells within a radius (flat ground for a conversation circle).
 
 Tests: python3 -m unittest discover -s test -p "test_*.py"
 """
@@ -226,3 +234,81 @@ def side_dirs(fx, fy):
 def side_points(p, face, off):
     """The points `off` to the left and right of p (x, y), square to the facing `face` (x, y)."""
     return [(p[0] + sx * off, p[1] + sy * off) for sx, sy in side_dirs(*face)]
+
+
+def walk_run(zs, i, max_step):
+    """(first, last) indices of the run of `zs` round index i a walker can follow: no None (blocked) and no
+    step between neighbours higher than `max_step`. None if zs[i] itself is blocked."""
+    if zs[i] is None:
+        return None
+    a = b = i
+    while a > 0 and zs[a - 1] is not None and abs(zs[a - 1] - zs[a]) <= max_step:
+        a -= 1
+    while b + 1 < len(zs) and zs[b + 1] is not None and abs(zs[b + 1] - zs[b]) <= max_step:
+        b += 1
+    return a, b
+
+
+def bands(flags, min_len):
+    """(first, last) indices of each run of true flags at least `min_len` long, in order."""
+    out, start = [], None
+    for k, f in enumerate(list(flags) + [False]):
+        if f and start is None:
+            start = k
+        elif not f and start is not None:
+            if k - start >= min_len:
+                out.append((start, k - 1))
+            start = None
+    return out
+
+
+def ring_crossing(o, d, c, r):
+    """Smallest t >= 0 with |o + t d - c| = r in x, y (`d` a unit vector), or None if the ray misses the circle."""
+    px, py = o[0] - c[0], o[1] - c[1]
+    b = px * d[0] + py * d[1]
+    disc = b * b - (px * px + py * py - r * r)
+    if disc < 0:
+        return None
+    for t in (-b - math.sqrt(disc), -b + math.sqrt(disc)):
+        if t >= 0:
+            return t
+    return None
+
+
+def arc_lengths(points):
+    """Cumulative x, y distance from the first point to each point of a polyline."""
+    out, acc = [], 0.0
+    for k, p in enumerate(points):
+        if k:
+            acc += math.hypot(p[0] - points[k - 1][0], p[1] - points[k - 1][1])
+        out.append(acc)
+    return out
+
+
+def seen_ranges(ts, per_frame):
+    """[[frame, t_lo, t_hi]] for each (frame, flags) of `per_frame` with some flag set: the range of the
+    arc lengths `ts` of the points seen from that frame. Frames seeing nothing are left out."""
+    out = []
+    for frame, flags in per_frame:
+        seen = [t for t, f in zip(ts, flags) if f]
+        if seen:
+            out.append([frame, min(seen), max(seen)])
+    return out
+
+
+def wall_top(hs, hits):
+    """The first height of `hs` (rising) whose ray toward a wall missed it, after the ray at hs[0] (the contact)
+    hit: the wall or railing top lies just below it. None if the contact ray missed or every ray hit (a tall wall)."""
+    if not hits or not hits[0]:
+        return None
+    for h, hit in zip(hs, hits):
+        if not hit:
+            return h
+    return None
+
+
+def disc_offsets(r, step):
+    """Integer (di, dj) grid offsets (cells `step` apart) within `r` of the centre cell, sorted."""
+    n = int(r / step)
+    return sorted((di, dj) for di in range(-n, n + 1) for dj in range(-n, n + 1)
+                  if math.hypot(di, dj) * step <= r + 1e-9)

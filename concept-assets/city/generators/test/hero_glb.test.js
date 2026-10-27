@@ -19,9 +19,14 @@ const WALK_CAMERA_CLEARANCE = 8.0, WALK_CHEST_H = 1.3;
 // = SIT_DROP, IDLE_PATH_CLEARANCE, IDLE_SPACING, IDLE_MAX_SPOTS, IDLE_LEVEL, IDLE_BODY_REACH in export_hero.py.
 const SIT_DROP = [0.35, 0.6], IDLE_PATH_CLEARANCE = 1.2, IDLE_SPACING = 1.0, IDLE_MAX_SPOTS = 400, IDLE_LEVEL = 3.0;
 const IDLE_BODY_REACH = 0.4;
+// = ROUTE_PAD, ROBOT_STEP_MAX, ROBOT_VIEW_H, ROBOT_CAMERA_CLEARANCE, ROUTE_LAMP_CLEAR, ROUTE_IDLE_CLEAR, LEAN_TOP_HS[-1],
+// TALK_RADII, TALK_IDLE_GAP, TALK_SPACING in export_hero.py.
+const ROUTE_PAD = 8.0, ROBOT_STEP_MAX = 0.7, ROBOT_VIEW_H = 2.0, ROBOT_CAMERA_CLEARANCE = 12.0;
+const ROUTE_LAMP_CLEAR = 3.0, ROUTE_IDLE_CLEAR = 3.0, LEAN_TOP_MAX = 1.8;
+const TALK_RADII = [2.2, 1.9, 1.6], TALK_IDLE_GAP = 1.0, TALK_SPACING = 3.0;
 const PROPS_KEYS = {
   "": ["version", "fps", "frames", "base_vfov_deg", "safe_half_tan", "sun", "lantern", "blimps", "walk_paths",
-    "well_water", "night", "night_nodes", "idle_spots"],
+    "well_water", "night", "night_nodes", "idle_spots", "robot_routes", "talk_spots"],
   safe_half_tan: ["f250", "f1"], sun: ["dir"], blimps: ["count", "radius", "altitude", "period_s", "len", "r"],
   night_nodes: ["NIGHT_MAT_AP_Cyan", "NIGHT_WellRing"],
 };
@@ -232,4 +237,90 @@ test("most lean spots face their nearest walk path (headings not flipped)", { sk
     if ((near[0] - x) * fx + (near[2] - z) * fz > 0) ahead++;
   }
   assert.ok(ahead >= leans.length * 0.6, `${ahead} of ${leans.length} leaners face their nearest walk path`);
+});
+
+// Horizontal (x, z) distance from (x, z) to a glTF polyline.
+function lineDist(x, z, line) {
+  let best = Infinity;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const [ax, , az] = line[i], [bx, , bz] = line[i + 1];
+    const dx = bx - ax, dz = bz - az, ll = dx * dx + dz * dz;
+    const t = ll ? Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / ll)) : 0;
+    best = Math.min(best, Math.hypot(x - ax - t * dx, z - az - t * dz));
+  }
+  return best;
+}
+
+test("lean spots carry a wall top: null (tall) or a height up to the scan's 1.8 m", { skip: SKIP }, async () => {
+  const { props } = await load();
+  const leans = props.idle_spots.filter((s) => s.pose === "lean");
+  for (const [k, s] of leans.entries())
+    assert.ok(s.top === null || (s.top > 0 && s.top <= LEAN_TOP_MAX + 1e-3), `lean ${k}: top ${s.top}`);
+  assert.ok(leans.some((s) => s.top !== null), "no lean spot with a top (the well railings have one)");
+});
+
+test("robot_routes: at least 3, walkable, clear of the camera, walking in and out unseen", { skip: SKIP }, async () => {
+  const { props } = await load();
+  const cams = await cameraPath();
+  const routes = props.robot_routes;
+  assert.ok(Array.isArray(routes) && routes.length >= 3, `${routes?.length} routes`);
+  for (const r of routes) {
+    assert.ok(r.points.length >= 2 && r.points.every((p) => p.length === 3 && p.every(Number.isFinite)), r.name);
+    let len = 0;
+    for (let i = 1; i < r.points.length; i++) {
+      const [ax, ay, az] = r.points[i - 1], [bx, by, bz] = r.points[i];
+      len += Math.hypot(bx - ax, bz - az);
+      assert.ok(Math.abs(by - ay) <= ROBOT_STEP_MAX + 1e-3, `${r.name}: step of ${(by - ay).toFixed(2)} m at ${i}`);
+    }
+    assert.ok(Math.abs(len - r.len) <= 0.05, `${r.name}: len ${r.len}, points ${len.toFixed(2)}`);
+    assert.ok(r.seen[0] >= ROUTE_PAD - 1e-3 && r.seen[1] <= r.len - ROUTE_PAD + 1e-3, `${r.name}: seen ${r.seen} of ${r.len}`);
+    assert.ok(r.view.length > 0 && r.view.every(([f, a, b]) => f >= FRAMES[0] && f <= FRAMES[1] && a <= b), `${r.name}: view`);
+    for (const [x, y, z] of r.points) {
+      const d = Math.min(...cams.map(([cx, cy, cz]) => Math.hypot(x - cx, y + ROBOT_VIEW_H - cy, z - cz)));
+      assert.ok(d >= ROBOT_CAMERA_CLEARANCE - 0.05, `${r.name}: ${[x, y, z]} is ${d.toFixed(2)} m from the camera`);
+    }
+  }
+});
+
+test("no lamp post and no idle spot on a robot route", { skip: SKIP }, async () => {
+  const { root, props } = await load();
+  const routes = props.robot_routes;
+  // lamp feet: plain HERO_lamp_* nodes, or the instances of a lamp mesh (instance in hero_glb.mjs)
+  const lamps = [];
+  for (const n of meshNodes(root)) {
+    if (!matNames(n).includes("NIGHT_Lamp")) continue;
+    const inst = n.getExtension(INSTANCING), t = inst?.getAttribute("TRANSLATION"), el = [];
+    if (t) for (let i = 0; i < t.getCount(); i++) lamps.push([...t.getElement(i, el)]);
+    else lamps.push(n.getWorldTranslation());
+  }
+  assert.ok(lamps.length > 0, "no lamps");
+  for (const [k, [x, , z]] of lamps.entries())
+    for (const r of routes)
+      assert.ok(lineDist(x, z, r.points) >= ROUTE_LAMP_CLEAR - 0.01, `lamp ${k} at ${[x, z]} is on ${r.name}`);
+  for (const [k, s] of props.idle_spots.entries())
+    for (const r of routes)
+      assert.ok(lineDist(s.pos[0], s.pos[2], r.points) >= ROUTE_IDLE_CLEAR - 0.01, `idle spot ${k} is on ${r.name}`);
+});
+
+test("talk_spots: at least 12 circles, clear of the camera, paths, routes, idle spots and each other", { skip: SKIP }, async () => {
+  const { props } = await load();
+  const cams = await cameraPath();
+  const spots = props.talk_spots;
+  assert.ok(Array.isArray(spots) && spots.length >= 12, `${spots?.length} talk spots`);
+  for (const [k, s] of spots.entries()) {
+    const [x, y, z] = s.pos, r = s.radius;
+    assert.ok(TALK_RADII.includes(r), `talk ${k}: radius ${r}`);
+    const d = Math.min(...cams.map(([cx, cy, cz]) => Math.hypot(x - cx, y + WALK_CHEST_H - cy, z - cz)));
+    assert.ok(d - r >= WALK_CAMERA_CLEARANCE - 0.05, `talk ${k} is ${d.toFixed(2)} m from the camera`);
+    for (const path of props.walk_paths)
+      assert.ok(lineDist(x, z, path) >= r + IDLE_PATH_CLEARANCE - 0.01, `talk ${k} on a walk path`);
+    for (const route of props.robot_routes)
+      assert.ok(lineDist(x, z, route.points) >= r + ROUTE_IDLE_CLEAR - 0.01, `talk ${k} on ${route.name}`);
+    for (const i of props.idle_spots)
+      assert.ok(Math.hypot(x - i.pos[0], z - i.pos[2]) >= r + TALK_IDLE_GAP - 0.01, `talk ${k} on an idle spot`);
+    for (let j = 0; j < k; j++) {
+      const o = spots[j];
+      assert.ok(Math.hypot(x - o.pos[0], z - o.pos[2]) >= r + o.radius + TALK_SPACING - 0.01, `talk ${j} and ${k} overlap`);
+    }
+  }
 });

@@ -91,3 +91,97 @@ test('loadProps rejects a malformed idle spot', async () => {
 		/idle_spots is not an array/
 	);
 });
+
+test('loadProps keeps a lean spot top: a height or null (tall wall)', async () => {
+	const idle_spots: HeroProps['idle_spots'] = [
+		{ pose: 'lean', pos: [-11.9, 8.62, 1209], heading: 1.57, top: 1.128, area: 'well' },
+		{ pose: 'lean', pos: [23, 8.9, 1100], heading: -1.57, top: null, area: 'avenue' }
+	];
+	const props = await loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, idle_spots }));
+	assert.deepEqual(props.idle_spots, idle_spots);
+	await assert.rejects(
+		loadProps(
+			'/city/hero_props.json',
+			stubFetch({ ...SAMPLE, idle_spots: [{ ...idle_spots[0], top: 'high' }] })
+		),
+		/bad idle_spots\[0\]/
+	);
+});
+
+const ROUTE: NonNullable<HeroProps['robot_routes']>[number] = {
+	name: 'street_57',
+	kind: 'street',
+	along: 57,
+	points: [
+		[-28, 9.07, 1153],
+		[0, 9.69, 1153],
+		[28, 9.07, 1153]
+	],
+	len: 56,
+	seen: [8, 48],
+	view: [
+		[1, 8, 48],
+		[96, 12, 44]
+	]
+};
+
+test('loadProps accepts props without robot_routes or talk_spots (older exports)', async () => {
+	const props = await loadProps('/city/hero_props.json', stubFetch(SAMPLE));
+	assert.equal(props.robot_routes, undefined);
+	assert.equal(props.talk_spots, undefined);
+});
+
+test('loadProps keeps well-formed robot_routes and talk_spots', async () => {
+	const talk_spots: HeroProps['talk_spots'] = [
+		{ pos: [8.5, 8.62, 1210], radius: 2.2, area: 'well' }
+	];
+	const props = await loadProps(
+		'/city/hero_props.json',
+		stubFetch({ ...SAMPLE, version: 2, robot_routes: [ROUTE], talk_spots })
+	);
+	assert.deepEqual(props.robot_routes, [ROUTE]);
+	assert.deepEqual(props.talk_spots, talk_spots);
+});
+
+test('loadProps rejects a malformed robot route', async () => {
+	for (const bad of [
+		{ ...ROUTE, points: [[0, 0, 0]] },
+		{
+			...ROUTE,
+			points: [
+				[0, 0, 0],
+				[1, 0]
+			]
+		},
+		{ ...ROUTE, len: 'long' },
+		{ ...ROUTE, seen: [8] },
+		{ ...ROUTE, view: [[1, 8]] },
+		{ ...ROUTE, name: 3 }
+	]) {
+		await assert.rejects(
+			loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, robot_routes: [bad] })),
+			/bad robot_routes\[0\]/
+		);
+	}
+	await assert.rejects(
+		loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, robot_routes: {} })),
+		/robot_routes is not an array/
+	);
+});
+
+test('loadProps rejects a malformed talk spot', async () => {
+	for (const bad of [
+		{ pos: [0, 0], radius: 2 },
+		{ pos: [0, 0, 0], radius: 0 },
+		{ pos: [0, 0, 0] }
+	]) {
+		await assert.rejects(
+			loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, talk_spots: [bad] })),
+			/bad talk_spots\[0\]/
+		);
+	}
+	await assert.rejects(
+		loadProps('/city/hero_props.json', stubFetch({ ...SAMPLE, talk_spots: 'none' })),
+		/talk_spots is not an array/
+	);
+});

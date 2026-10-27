@@ -13,7 +13,38 @@ export type IdleSpot = {
 	heading: number;
 	/** sit only: ledge top minus the ground in front, in metres. */
 	drop?: number;
+	/** lean only (version 2): the wall or railing top above the ground, in metres; null for a wall taller than
+	 * the export scans (1.8 m). A forward lean (forearms on the top) suits about 0.95-1.25 m. */
+	top?: number | null;
 	/** Which part of the scene: 'well' (within WELL_AREA_R of the well: the walkway round it), 'avenue' or 'other'. */
+	area?: string;
+};
+
+/** A line the robot can walk across the hero view, on a ring avenue or cross street (version 2). */
+export type RobotRoute = {
+	/** e.g. 'street_57', 'ring_belt_1_in' (inner half of that ring avenue's road). */
+	name: string;
+	/** 'ring' (along a ring avenue's arc) or 'street' (a straight cross street). */
+	kind: string;
+	/** Metres from the well centre along the hero avenue where the route crosses its axis. */
+	along: number;
+	/** Ground points ROUTE_STEP (2 m) apart, screen left to right as the hero camera sees them. */
+	points: Vec3[];
+	/** Length in metres (horizontal, along the points). */
+	len: number;
+	/** [from, to] metres along the route seen from some sample frame; the route runs on unseen past both. */
+	seen: [number, number];
+	/** [frame, from, to] per Blender sample frame (every 5) that sees part of it, 16:9 view. */
+	view: [number, number, number][];
+};
+
+/** Open flat ground for a conversation circle (version 2): free and level within `radius` of `pos`. */
+export type TalkSpot = {
+	/** The circle's centre on the ground (y = ground height). */
+	pos: Vec3;
+	/** Metres of free flat ground round the centre. */
+	radius: number;
+	/** 'well', 'avenue' or 'other', as IdleSpot.area. */
 	area?: string;
 };
 
@@ -46,6 +77,10 @@ export type HeroProps = {
 	night_nodes: Record<string, string[]>;
 	/** Candidate idle-person spots; absent in exports made before they existed. */
 	idle_spots?: IdleSpot[];
+	/** Robot routes across the view (version 2); absent in older exports. */
+	robot_routes?: RobotRoute[];
+	/** Conversation-circle spots (version 2); absent in older exports. */
+	talk_spots?: TalkSpot[];
 };
 
 /** Required keys, nested ones dotted. Checked on load so a stale export fails loudly. */
@@ -88,7 +123,51 @@ export async function loadProps(url: string, fetchFn: typeof fetch = fetch): Pro
 	if (missing.length) throw new Error(`${url}: missing key(s) ${missing.join(', ')}`);
 	const props = data as HeroProps;
 	if (props.idle_spots !== undefined) props.idle_spots = idleSpots(url, props.idle_spots);
+	if (props.robot_routes !== undefined) props.robot_routes = robotRoutes(url, props.robot_routes);
+	if (props.talk_spots !== undefined) props.talk_spots = talkSpots(url, props.talk_spots);
 	return props;
+}
+
+const isVec3 = (v: unknown): boolean =>
+	Array.isArray(v) && v.length === 3 && v.every((x) => Number.isFinite(x));
+const isNums = (v: unknown, n: number): boolean =>
+	Array.isArray(v) && v.length === n && v.every((x) => Number.isFinite(x));
+
+/** Validate optional robot_routes: an array of well-formed routes, or a loud error naming the first bad one. */
+function robotRoutes(url: string, routes: unknown): RobotRoute[] {
+	if (!Array.isArray(routes)) throw new Error(`${url}: robot_routes is not an array`);
+	routes.forEach((r, i) => {
+		const ok =
+			r !== null &&
+			typeof r === 'object' &&
+			typeof r.name === 'string' &&
+			typeof r.kind === 'string' &&
+			Number.isFinite(r.along) &&
+			Array.isArray(r.points) &&
+			r.points.length >= 2 &&
+			r.points.every(isVec3) &&
+			Number.isFinite(r.len) &&
+			isNums(r.seen, 2) &&
+			Array.isArray(r.view) &&
+			r.view.every((v: unknown) => isNums(v, 3));
+		if (!ok) throw new Error(`${url}: bad robot_routes[${i}]`);
+	});
+	return routes as RobotRoute[];
+}
+
+/** Validate optional talk_spots: an array of well-formed spots, or a loud error naming the first bad one. */
+function talkSpots(url: string, spots: unknown): TalkSpot[] {
+	if (!Array.isArray(spots)) throw new Error(`${url}: talk_spots is not an array`);
+	spots.forEach((s, i) => {
+		const ok =
+			s !== null &&
+			typeof s === 'object' &&
+			isVec3(s.pos) &&
+			Number.isFinite(s.radius) &&
+			s.radius > 0;
+		if (!ok) throw new Error(`${url}: bad talk_spots[${i}]`);
+	});
+	return spots as TalkSpot[];
 }
 
 /** Validate optional idle_spots: an array of well-formed spots, or a loud error naming the first bad one. */
@@ -103,7 +182,8 @@ function idleSpots(url: string, spots: unknown): IdleSpot[] {
 			s.pos.length === 3 &&
 			s.pos.every(Number.isFinite) &&
 			Number.isFinite(s.heading) &&
-			(s.pose === 'lean' || Number.isFinite(s.drop));
+			(s.pose === 'lean' || Number.isFinite(s.drop)) &&
+			(s.top === undefined || s.top === null || Number.isFinite(s.top));
 		if (!ok) throw new Error(`${url}: bad idle_spots[${i}]`);
 	});
 	return spots as IdleSpot[];

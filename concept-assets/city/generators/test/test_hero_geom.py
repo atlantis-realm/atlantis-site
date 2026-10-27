@@ -12,19 +12,26 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from hero_geom import (  # noqa: E402
     MIN_ASPECT,
     aabb_in_frustum,
+    arc_lengths,
+    bands,
     clear_runs,
     cull_aspects,
+    disc_offsets,
     frustum_planes,
     gl_heading,
     lean_profile,
     polyline_dist,
+    ring_crossing,
     safe_vfov,
+    seen_ranges,
     sample_frames,
     side_dirs,
     side_points,
     sit_profile,
     stride_pick,
     thin_spots,
+    walk_run,
+    wall_top,
 )
 
 # Camera at the origin looking down +Y (Blender is Z-up), 16:9, the hero camera's vfov.
@@ -259,6 +266,78 @@ class SideTest(unittest.TestCase):
         # a building (no level ground: None) 0.3 m to one side fails lean_profile on the side points
         self.assertFalse(lean_profile(9.0, [9.0, None], 0.04))
         self.assertTrue(lean_profile(9.0, [9.0, 9.01], 0.04))
+
+
+class WalkRunTest(unittest.TestCase):
+    def test_level_run_round_the_start(self):
+        zs = [None, 9.0, 9.1, 9.0, 9.05, None, 9.0]
+        self.assertEqual(walk_run(zs, 3, 0.7), (1, 4))
+
+    def test_step_too_high_cuts_the_run(self):
+        # a kerb the robot can step up (0.6 m) is kept; a 2 m wall is not
+        zs = [8.9, 8.9, 9.5, 9.5, 11.5, 11.5]
+        self.assertEqual(walk_run(zs, 1, 0.7), (0, 3))
+        self.assertEqual(walk_run(zs, 4, 0.7), (4, 5))
+
+    def test_blocked_start(self):
+        self.assertIsNone(walk_run([9.0, None, 9.0], 1, 0.7))
+
+
+class BandsTest(unittest.TestCase):
+    def test_runs_of_true_at_least_min_len(self):
+        flags = [False, True, True, True, False, True, False, True, True]
+        self.assertEqual(bands(flags, 2), [(1, 3), (7, 8)])
+
+    def test_empty_and_all(self):
+        self.assertEqual(bands([], 1), [])
+        self.assertEqual(bands([True] * 4, 1), [(0, 3)])
+
+
+class RingCrossingTest(unittest.TestCase):
+    def test_ray_from_outside_the_ring_meets_it_ahead(self):
+        # the hero avenue: from the well (0, -1210) toward the centre (0, 1168), ring r = 1980
+        self.assertAlmostEqual(ring_crossing((0.0, -1210.0), (0.0, 1.0), (0.0, 1168.0), 1980.0), 398.0)
+
+    def test_ring_behind_or_missed(self):
+        self.assertIsNone(ring_crossing((0.0, -1210.0), (0.0, -1.0), (0.0, 1168.0), 1980.0))
+        self.assertIsNone(ring_crossing((5000.0, 0.0), (0.0, 1.0), (0.0, 0.0), 100.0))
+
+    def test_from_inside_the_ring_meets_it_on_the_way_out(self):
+        self.assertAlmostEqual(ring_crossing((0.0, 0.0), (1.0, 0.0), (0.0, 0.0), 50.0), 50.0)
+
+
+class ArcLengthsTest(unittest.TestCase):
+    def test_cumulative_xy_length(self):
+        self.assertEqual(arc_lengths([(0, 0, 0), (3, 4, 9), (3, 6, 0)]), [0.0, 5.0, 7.0])
+
+
+class SeenRangesTest(unittest.TestCase):
+    def test_range_of_the_seen_points_per_frame(self):
+        ts = [0.0, 2.0, 4.0, 6.0]
+        per = [(1, [False, True, True, False]), (6, [False] * 4), (11, [True, False, False, True])]
+        self.assertEqual(seen_ranges(ts, per), [[1, 2.0, 4.0], [11, 0.0, 6.0]])
+
+
+class WallTopTest(unittest.TestCase):
+    def test_first_free_height_above_the_wall(self):
+        hs = [0.9, 1.0, 1.1, 1.2, 1.3]
+        self.assertEqual(wall_top(hs, [True, True, False, False, False]), 1.1)
+
+    def test_tall_wall_or_nothing_at_contact(self):
+        hs = [0.9, 1.0, 1.1]
+        self.assertIsNone(wall_top(hs, [True, True, True]))
+        self.assertIsNone(wall_top(hs, [False, True, True]))
+
+
+class DiscOffsetsTest(unittest.TestCase):
+    def test_cells_within_the_radius(self):
+        offs = disc_offsets(1.0, 0.5)
+        self.assertIn((0, 0), offs)
+        self.assertIn((2, 0), offs)
+        self.assertIn((-1, 1), offs)
+        self.assertNotIn((2, 1), offs)   # 1.118 m out
+        self.assertEqual(len(offs), 13)
+        self.assertEqual(offs, sorted(offs))
 
 
 if __name__ == "__main__":

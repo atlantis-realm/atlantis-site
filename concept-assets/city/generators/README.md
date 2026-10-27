@@ -120,7 +120,7 @@ Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-i
 | File | What it is |
 |---|---|
 | `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>`, the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`). Materials are simple PBR, `HERO_<source>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
-| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. `idle_spots` (see "Idle spots" below). |
+| `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. `idle_spots` (see "Idle spots" below), `robot_routes` ("Robot routes") and `talk_spots` ("Talk spots"). `version` is 2 since the last two (and the lean spots' `top`) were added; the page reads all three as optional. |
 | `export_report.json` | Per collection: `instances`, `in_frustum`, `kept`, `dropped_frustum` (= instances − in_frustum), `dropped_occlusion` (= in_frustum − kept), `chunks`, `chunks_kept`. Also band and mesh counts, triangles, glb size, timings. |
 
 Two runs give a byte-identical `hero_raw.glb` and leave the scene's object, material and mesh counts and
@@ -174,6 +174,12 @@ level ground only if its surface is exported, level, not water and not a facade,
   surface, a wall or a railing's handrail; nothing at leg or shoulder height may stick out past it, and the
   ground `LEAN_FRONT` in front must be level and free (`hero_geom.lean_profile`). `pos` is on the ground at
   the wall foot, `heading` faces away from the wall.
+- **wall top** (lean only, for a forward lean with the forearms on it): rays toward the wall from
+  `LEAN_BODY_D` out are scanned up from the contact height every 5 cm to 1.8 m (`LEAN_TOP_HS`, reaching
+  `LEAN_TOP_REACH` 0.15 m past the face); the first that misses is just above the top
+  (`hero_geom.wall_top`), and a downward ray 3 cm behind the face finds the top itself (a railing too thin for
+  it keeps the scan's estimate). `top` is that height above the ground in metres, or `null` when every ray
+  hit (a wall taller than 1.8 m).
 - **both**: the body must have room to either side (`IdleProbes.sides_clear`): rays `IDLE_SIDE_D` (0.3 m)
   left and right, square to the facing (`hero_geom.side_dirs`), at `LEAN_SIDE_HS` (0.5, 1.0, 1.5 m) from
   `LEAN_BODY_D` out of the wall, or at `SIT_SIDE_HS` (0.15, 0.5, 0.9 m above the seat) from `SIT_SEAT_IN`
@@ -186,16 +192,96 @@ Kept spots are clear of the camera (`WALK_CAMERA_CLEARANCE` at the chest, every 
 out along the facing: a leaner's origin, a sitter's feet), within `IDLE_LEVEL` (3 m) of the nearest walk
 path's height (no roofs), in a cull frustum and seen from at least one sample camera, and `IDLE_SPACING`
 (1 m) apart (`hero_geom.thin_spots`, in position order), at most `IDLE_MAX_SPOTS` (400, stride-picked per
-pose). Each is `{pose, pos, heading, drop (sit only), area}` in glTF space; `heading` is walkerPose's yaw
+pose), and `ROUTE_IDLE_CLEAR` (3 m) from every robot route (both points again). Each is `{pose, pos, heading,
+drop (sit only), top (lean only), area}` in glTF space; `heading` is walkerPose's yaw
 (`hero_geom.gl_heading`), `area` is `well` (within `WELL_AREA_R`, 20 m: the walkway round it), `avenue` or
 `other`. `export_report.json` has the counts.
 
 v05 result: 146 spots, 32 sit (all on the avenue: the outer pavement edge drops 0.41–0.59 m to the side
 streets between the buildings, so they sit facing out over the side street) and 114 lean (26 on the
-walkway railings round the well, 88 against the avenue facades). v05 has no stepped rings round the well
+walkway railings round the well, all with `top` 1.127–1.128 m, and 88 against the avenue facades, all
+`top: null`: so a forward lean only suits the well railings). None was near a robot route. v05 has no stepped rings round the well
 (its deck is level, the rings are 2–9 cm inlays), no planter edges (the planting strips are flush) and no
 kerbs (lane and pavement are level), so there are no seats at the well. The spots reach about 150 m up the
 avenue (the camera stays near the well).
+
+### Robot routes
+
+`robot_routes()` finds where the robot can walk across the hero view, screen left to right or back. The camera
+looks down the hero avenue, so these are the ring avenues and streets that cross it. It runs before the lamps
+are placed, on the BVH of every in-frustum chunk (exported or not: the robot also walks where it is hidden):
+
+- **Ground** (`route_z`): the first surface below (skywalks, trees and the `Text` skipped) must be level, not
+  water and not a facade or street furniture (`NOT_GROUND`), with `ROBOT_H` (4.5 m) free above it and no tree
+  centre (its trunk) within `ROUTE_TREE_CLEAR` (2 m).
+- **Crossings**: cross lines square to the avenue every `ROUTE_SCAN_STEP` (1 m) from `ROUTE_RANGE` 20 to 500 m
+  along it, probed every `ROUTE_STEP` (2 m) out to `ROUTE_REACH` (90 m) either side. A line counts when its
+  ground is walkable from the axis `ROUTE_MIN_REACH` (60 m) both ways, with steps up to `ROBOT_STEP_MAX`
+  (0.7 m, so the avenue's 0.6 m pavement edge is a step) (`hero_geom.walk_run`): past the avenue frontage
+  (about 46 m out), so the dead-end gaps between its buildings don't count. Runs of `ROUTE_MIN_W` (3) lines
+  are the crossings (`hero_geom.bands`).
+- **Lanes**: a crossing holding a ring avenue (from `plan.json`: the scene centre and each district's ring
+  avenue radius and road width, `plan_rings()`; where it crosses the axis: `hero_geom.ring_crossing`) gets one
+  route per `RING_LANES` offset (a quarter of the road width in and out from the radius), following the ring's
+  arc; any other crossing gets one straight route down its middle.
+- **Per route**: each point needs ground `ROBOT_HALF_W` (1.5 m) to either side, square to the route, within
+  `ROBOT_STEP_MAX`, and `ROBOT_CAMERA_CLEARANCE` (12 m) from the camera path at `ROBOT_VIEW_H` (2 m) up; the
+  route is the walkable run through the axis. For every sample frame (`hero_geom.sample_frames`, every 5)
+  it records the stretch the 16:9 view sees (a robot-sized box in its frustum and a ray to `ROBOT_VIEW_H`
+  unoccluded, `hero_geom.seen_ranges`). A route is trimmed to `ROUTE_PAD` (8 m) past everything seen, and
+  dropped if it can't run that far past it on both sides (the robot would pop in).
+- **Lamps**: no lamp post is placed within `ROUTE_LAMP_CLEAR` (3 m) of a route.
+
+Each route is `{name, kind, along, points, len, seen, view}` in glTF space: `name` (`street_<along>`, or
+`ring_<district>_<index>_in` / `_out` for the inner / outer half of that ring avenue's road), `kind` (`ring`
+or `street`), `along` (metres from the well centre along the avenue axis where it crosses), `points` (ground
+points `ROUTE_STEP` apart, ordered screen left to right as the hero camera sees them; reverse them to walk
+right to left), `len` (metres along the points), `seen` (`[from, to]` metres along the route seen from some
+sample frame) and `view` (`[frame, from, to]` for each sample frame that sees part of it). `export_report.json`
+has the crossings, the routes and any dropped ones with the reason.
+
+v05 result: 5 routes. The avenue frontage hides everything off the avenue itself, so each is seen only across
+the avenue (about ±20–28 m from the axis) and walks in from behind the buildings on one side and out behind
+the other:
+
+| Route | Kind | Along | Length | Seen | Sample frames |
+|---|---|---|---|---|---|
+| `street_57` | street, just past the canal; steps 0.6 m up onto and off the avenue pavement | 57 m | 56 m | 8–48 m | 1–96 |
+| `street_357` | street between the blocks | 357 m | 64 m | 8–56 m | 1–86 |
+| `street_380` | open ground in front of the ring avenue | 380 m | 64 m | 8–56 m | 1–86 |
+| `ring_belt_1_out` | ring avenue r 1980, outer half of the road | 394.5 m | 72 m | 8–64 m | 1–86 |
+| `ring_belt_1_in` | ring avenue r 1980, inner half of the road | 401.5 m | 68 m | 10–58 m | 1–86 |
+
+The next ring avenue (r 1620) crosses 758 m out, past `ROUTE_RANGE`; the one behind the camera (r 2560) is
+out of view. After frame 96 the camera looks down at the plaza and no route is in view. The plaza itself has
+no route: the walkway deck is railed on both sides over the canal. The street at 57 m lost the two avenue lamps
+at 56 m.
+
+### Talk spots
+
+`talk_spots()` finds open flat ground for conversation circles, from the same `IDLE_GRID` height map, trying a
+centre every `TALK_STRIDE` (2) cells:
+
+- every cell within the radius, the largest of `TALK_RADII` (2.2, 1.9, 1.6 m) that fits
+  (`hero_geom.disc_offsets`), is level ground as for the idle spots, within `TALK_TOL` (6 cm) of the centre's
+  height and not roadway (`TALK_NOT_GROUND`: the avenue lanes, median, tram line and planting strips, ring
+  avenues);
+- rays out from the centre at `TALK_CLEAR_HS` (0.3, 1.0, 1.7 m) in `TALK_CLEAR_DIRS` (8) directions run free
+  to the radius + 0.3 m (no wall or railing inside), and `TALK_HEADROOM` (2.2 m) is free above the centre and
+  the rim;
+- clear of the camera (`WALK_CAMERA_CLEARANCE` from the chest at the rim, every frame), the walk paths
+  (`IDLE_PATH_CLEARANCE` past the rim), the robot routes (`ROUTE_IDLE_CLEAR` past the rim) and the idle spots
+  (`TALK_IDLE_GAP`, 1 m, past the rim), at street level (`IDLE_LEVEL`), within `IDLE_RANGE`, in a cull frustum
+  and seen from a sample camera;
+- `TALK_SPACING` (3 m) between rims, largest circles first, at most `TALK_MAX_SPOTS` (60, stride-picked).
+
+Each is `{pos, radius, area}` in glTF space: `pos` the centre on the ground (its y the ground height),
+`radius` metres of free flat ground round it, `area` as for the idle spots.
+
+v05 result: 14 spots (10 of radius 2.2 m, 4 smaller): 6 on the walkway deck round the well, 4 on the
+avenue pavement at its foot, before the walk paths start (8–17 m out; the one within `WELL_AREA_R` counts as
+`well`, so 7 are `well` and 7 `avenue`), and 4 in the open ground beside the avenue between its facades
+(63–140 m out).
 
 Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):
 

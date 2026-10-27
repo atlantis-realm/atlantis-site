@@ -44,9 +44,15 @@ Stages
                visible sky above the frontage), walk paths (the avenue pavements, cut where they pass
                within WALK_CAMERA_CLEARANCE of the camera path; no walkers circle the plaza), well water node, night material names and
                night_nodes (the nodes allowed NIGHT_MAT_AP_Cyan / NIGHT_WellRing). glTF space: (x, z, -y).
-  idle spots   idle_spots(): ledge edges to sit on and walls/railings to lean on, from an IDLE_GRID height map
-               of the kept scene within IDLE_RANGE of the camera, refined with sideways rays; clear of the
-               camera, the walk paths and water, IDLE_SPACING apart, in view (props "idle_spots").
+  robot routes robot_routes(): before the lamps, lines across the view on the ring avenues and cross streets that
+               cross the hero avenue (cross lines walkable ROUTE_MIN_REACH both ways), trimmed to ROUTE_PAD past what
+               the 16:9 sample views see; no lamp stands on one (props "robot_routes").
+  idle spots   idle_spots(): ledge edges to sit on and walls/railings to lean on (with the wall top, for a forward
+               lean), from an IDLE_GRID height map of the kept scene within IDLE_RANGE of the camera, refined with
+               sideways rays; clear of the camera, the walk paths, the robot routes and water, IDLE_SPACING apart,
+               in view (props "idle_spots").
+  talk spots   talk_spots(): open flat discs of the same height map for conversation circles, clear of walls, the
+               camera, walk paths, robot routes and idle spots, in view (props "talk_spots").
 
 Pure cull geometry lives in hero_geom.py (tested). Tuning knobs are the constants below.
 """
@@ -173,6 +179,40 @@ IDLE_MAX_SPOTS = 400                    # spots written at most (stride-picked p
 IDLE_VIEW_H = 0.8                       # m above the spot: the point that must be seen from a sample camera
 WELL_AREA_R = 20.0                      # m round the well centre: area "well" (its walkway); along the avenue: "avenue"
 AVENUE_AREA_PAD = 10.0                  # m past the outer pavement edge still counted as the avenue
+LEAN_TOP_HS = tuple(round(0.9 + 0.05 * k, 2) for k in range(19))   # m: rays scanned up the wall for its top (to 1.8)
+LEAN_TOP_REACH = 0.15                   # m past the contact surface the scan rays reach
+
+# Robot routes: where the robot crosses the hero view, screen left to right or back, on the ring avenues and
+# streets that cross the hero avenue (robot_routes()).
+ROUTE_RANGE = (AVENUE_START, 500.0)     # m along the avenue searched for crossings
+ROUTE_SCAN_STEP = 1.0                   # m along the avenue between the cross lines scanned
+ROUTE_STEP = 2.0                        # m between route points (and between the probes across)
+ROUTE_REACH = 90.0                      # m either side of the avenue axis a route may run
+ROUTE_MIN_REACH = 60.0                  # m either side the ground must be walkable for a cross line to count: past
+                                        # the avenue frontage (about 46 m out), so dead-end gaps between its buildings don't
+ROUTE_MIN_W = 3.0                       # m of cross lines in a row: a crossing (the robot's width is checked per route)
+ROBOT_STEP_MAX = 0.7                    # m: steps up to this (the avenue's 0.6 m pavement edge) are walkable
+ROBOT_H, ROBOT_HALF_W = 4.5, 1.5        # m: room for the robot (4.06 m tall) above and to either side of a route
+ROBOT_VIEW_H = 2.0                      # m above the route: the point that must be seen from a sample camera
+ROBOT_CAMERA_CLEARANCE = 12.0           # m from the camera path to that point
+ROUTE_TREE_CLEAR = 2.0                  # m from a tree's centre (its trunk) to the route line
+ROUTE_PAD = 8.0                         # m a route runs on past what any sample camera sees, at both ends
+ROUTE_LAMP_CLEAR = 3.0                  # m: no lamp post this close to a route
+ROUTE_IDLE_CLEAR = 3.0                  # m: no idle spot (pos or body) or talk circle this close to a route
+RING_LANES = (-0.25, 0.25)              # ring avenue routes: these fractions of the road width out from its radius
+PLAN_JSON = "plan.json"                 # the plan (scene centre, ring avenue radii), next to this script
+
+# Conversation circles: open flat ground where a few people stand and talk (talk_spots()).
+TALK_RADII = (2.2, 1.9, 1.6)            # m of free flat ground round the centre; the largest that fits is kept
+TALK_TOL = 0.06                         # m: every height-map cell of the disc within this of the centre's height
+TALK_STRIDE = 2                         # height-map cells between the centres tried
+TALK_CLEAR_HS = (0.3, 1.0, 1.7)         # m above the ground: rays out from the centre, free to the radius + 0.3
+TALK_CLEAR_DIRS = 8
+TALK_HEADROOM = 2.2                     # m above the centre and the disc's rim that must be free
+TALK_IDLE_GAP = 1.0                     # m past the radius to the nearest idle spot
+TALK_SPACING = 3.0                      # m between two circles' rims
+TALK_MAX_SPOTS = 60                     # written at most (stride-picked)
+TALK_NOT_GROUND = ("KIT_Ave_lane", "KIT_Ave_median", "KIT_Ave_tram", "KIT_Ave_plant", "RINGAVE_")   # roadway
 
 BLIMP_COUNT, BLIMP_PERIOD_S, BLIMP_ALTITUDE = 6, 240.0, 280.0
 BLIMP_RADII = range(600, 1401, 50)
@@ -689,13 +729,15 @@ class IdleProbes:
 
 def idle_height_map(pr, cam_xy):
     """Grid (IDLE_GRID, world-aligned) of the first surface below each point within IDLE_RANGE (in x, y) of the
-    camera path: (xs, ys, z, nz, ok) arrays, z NaN where nothing was hit. ok: level and usable (IdleProbes)."""
+    camera path: (xs, ys, z, nz, ok, own) arrays, z NaN where nothing was hit. ok: level and usable (IdleProbes);
+    own: the surface's owner name ("" where nothing was hit)."""
     lo, hi = cam_xy.min(0) - IDLE_RANGE, cam_xy.max(0) + IDLE_RANGE
     xs = np.arange(math.floor(lo[0] / IDLE_GRID), math.ceil(hi[0] / IDLE_GRID) + 1) * IDLE_GRID
     ys = np.arange(math.floor(lo[1] / IDLE_GRID), math.ceil(hi[1] / IDLE_GRID) + 1) * IDLE_GRID
     z = np.full((len(ys), len(xs)), np.nan)
     nz = np.zeros_like(z)
     ok = np.zeros(z.shape, bool)
+    own = np.full(z.shape, "", dtype=object)
     for j, y in enumerate(ys):
         dy = cam_xy[:, 1] - y
         for i, x in enumerate(xs):
@@ -704,9 +746,9 @@ def idle_height_map(pr, cam_xy):
             h = pr.down(float(x), float(y))
             if h is None:
                 continue
-            z[j, i], nz[j, i] = h[0], h[1]
+            z[j, i], nz[j, i], own[j, i] = h[0], h[1], h[3]
             ok[j, i] = h[1] >= IDLE_FLAT_NZ and pr.usable(h[2], h[3])
-    return xs, ys, z, nz, ok
+    return xs, ys, z, nz, ok, own
 
 
 def sit_spot(pr, top_z, low_xy, d):
@@ -745,10 +787,10 @@ def lean_spot(pr, ground_z, xy, d):
     for h_ in LEAN_CONTACT_HS:
         h = probe(occ, Vector((xy[0], xy[1], ground_z + h_)), d, IDLE_GRID * 1.5)
         if h is not None and abs(h[1].z) <= IDLE_WALL_NZ:
-            hits.append(((h[0] - Vector((xy[0], xy[1], h[0].z))).length, h))
+            hits.append(((h[0] - Vector((xy[0], xy[1], h[0].z))).length, h, h_))
     if not hits:
         return None
-    dist, hit = min(hits, key=lambda t: t[0])
+    dist, hit, contact_h = min(hits, key=lambda t: t[0])
     face = Vector((hit[1].x, hit[1].y)).normalized()
     if face.dot(Vector(d).to_2d()) > -0.7:
         return None
@@ -771,19 +813,56 @@ def lean_spot(pr, ground_z, xy, d):
         return None
     if not pr.sides_clear(foot2 + face * LEAN_BODY_D, gz, face, LEAN_SIDE_HS):
         return None
-    return foot, face
+    return foot, face, wall_top(pr, hit[0].to_2d(), face, gz, contact_h)
 
 
-def idle_spots(occ, kept_ids, cam_path, samples, frusta, walk_lines, well_c, fwd, side, pave_out, debug=None):
+def wall_top(pr, contact, face, gz, contact_h):
+    """Height (m above the ground gz) of the top of the wall or railing whose face is at `contact` (x, y),
+    facing `face`, or None for a wall taller than LEAN_TOP_HS (for a forward lean, forearms on the top).
+    Rays toward the face are scanned up from the contact height (hero_geom.wall_top); a downward ray just
+    behind the face then finds the top itself (a railing too thin for it keeps the scan's estimate)."""
+    f3 = face.to_3d()
+    hs = [contact_h] + [h for h in LEAN_TOP_HS if h > contact_h]
+    o = Vector((contact.x, contact.y, 0)) + f3 * LEAN_BODY_D
+    hits = [probe(pr.occ, o + Vector((0, 0, gz + h)), -f3, LEAN_BODY_D + LEAN_TOP_REACH) is not None for h in hs]
+    top = hg.wall_top(hs, hits)
+    if top is None:
+        return None
+    q = contact - face * 0.03
+    h = probe(pr.occ, Vector((q.x, q.y, gz + top + 0.02)), Vector((0, 0, -1)), 0.2)
+    if h is not None and abs(h[1].z) >= 0.7:
+        return round(h[0].z - gz, 3)
+    return round(top - 0.025, 3)
+
+
+def area_of(p2, well_c, fwd, side, pave_out):
+    """'well' within WELL_AREA_R of the well centre, 'avenue' along it (to AVENUE_AREA_PAD past the pavement), else 'other'."""
+    q = p2 - well_c.to_2d()
+    along, across = q.dot(fwd), abs(q.dot(side))
+    return ("well" if q.length < WELL_AREA_R else
+            "avenue" if 0 <= along <= AVENUE_START + AVENUE_LEN and across <= pave_out + AVENUE_AREA_PAD else "other")
+
+
+def seen_from(occ, eyes, tgt):
+    """True if a ray from some eye reaches `tgt` unblocked."""
+    for e in eyes:
+        v = tgt - e
+        if occ.bvh.ray_cast(e, v.normalized(), v.length - RAY_EPS)[0] is None:
+            return True
+    return False
+
+
+def idle_spots(pr, hm, cam_path, samples, frusta, walk_lines, route_lines, well_c, fwd, side, pave_out, debug=None):
     """Candidate spots for idle people in the kept scene. Sit: a level ledge top with a SIT_DROP drop in front
     (any riser the height map crosses); lean: a vertical surface at LEAN_CONTACT_HS (a wall or a railing's
     handrail) with level free ground in front. Kept only clear of the camera (WALK_CAMERA_CLEARANCE at the
     chest, every frame), of the walk path lines (IDLE_PATH_CLEARANCE), of water and of each other
-    (IDLE_SPACING), at street level (IDLE_LEVEL: no roofs), within IDLE_RANGE, in view and seen from at least one sample camera.
+    (IDLE_SPACING), at street level (IDLE_LEVEL: no roofs), within IDLE_RANGE, in view and seen from at least one sample camera,
+    and ROUTE_IDLE_CLEAR from the robot routes (Blender x, y lines). `pr`: IdleProbes; `hm`: idle_height_map().
     Returns (spots in glTF space, sorted by position; counts)."""
-    pr = IdleProbes(occ, kept_ids)
+    occ = pr.occ
     cams = np.array([tuple(c) for c in cam_path])
-    xs, ys, z, nz, ok = idle_height_map(pr, cams[:, :2])
+    xs, ys, z, nz, ok, _own = hm
     counts = {"cells": int(np.isfinite(z).sum()), "level_cells": int(ok.sum())}
     if debug is not None:
         debug.update(xs=xs, ys=ys, z=z, ok=ok)
@@ -801,21 +880,20 @@ def idle_spots(occ, kept_ids, cam_path, samples, frusta, walk_lines, well_c, fwd
                 # (x, y) is on the ledge, the neighbour below it: probe from the neighbour back toward it
                 s_ = sit_spot(pr, zc, (float(xs[ii]), float(ys[jj])), -d)
                 if s_:
-                    raw.append(("sit", s_[0], s_[1], s_[2]))
+                    raw.append(("sit", s_[0], s_[1], s_[2], None))
             elif not ok[jj, ii] or abs(dz) > IDLE_TOL:
                 # anything but more of the same ground: a wall, a railing (thin: its base or nothing is
                 # what the height map sees), a drop
                 l_ = lean_spot(pr, zc, (x, y), d)
                 if l_:
-                    raw.append(("lean", l_[0], l_[1], None))
+                    raw.append(("lean", l_[0], l_[1], None, l_[2]))
     counts["raw"] = len(raw)
     if debug is not None:
-        debug["raw"] = np.array([(pose == "sit", p.x, p.y, p.z, f.x, f.y, dr or 0) for pose, p, f, dr in raw])
+        debug["raw"] = np.array([(pose == "sit", p.x, p.y, p.z, f.x, f.y, dr or 0) for pose, p, f, dr, _t in raw])
     eyes = [Vector(s[1]) for s in samples]
     walk_pts = np.array([q for line in walk_lines for q in line])
-    centre2 = well_c.to_2d()
     out = []
-    for pose, p, face, drop in raw:
+    for pose, p, face, drop, top in raw:
         feet_z = p.z - (drop or 0.0)
         chest = np.array((p.x, p.y, feet_z + WALK_CHEST_H))
         dist = np.linalg.norm(cams - chest, axis=1)
@@ -825,26 +903,18 @@ def idle_spots(occ, kept_ids, cam_path, samples, frusta, walk_lines, well_c, fwd
         if any(min(hg.polyline_dist((p.x, p.y), line), hg.polyline_dist((reach.x, reach.y), line)) < IDLE_PATH_CLEARANCE
                for line in walk_lines):
             continue
+        if any(min(hg.polyline_dist((p.x, p.y), line), hg.polyline_dist((reach.x, reach.y), line)) < ROUTE_IDLE_CLEAR
+               for line in route_lines):
+            continue
         street = walk_pts[np.argmin(np.sum((walk_pts[:, :2] - (p.x, p.y)) ** 2, axis=1)), 2]
         if abs(feet_z - street) > IDLE_LEVEL:
             continue
         lo, hi = (p.x - 0.4, p.y - 0.4, feet_z), (p.x + 0.4, p.y + 0.4, feet_z + 1.7)
         if not in_view(lo, hi, frusta):
             continue
-        tgt = p + Vector((0, 0, IDLE_VIEW_H))
-        seen = False
-        for e in eyes:
-            v = tgt - e
-            if occ.bvh.ray_cast(e, v.normalized(), v.length - RAY_EPS)[0] is None:
-                seen = True
-                break
-        if not seen:
+        if not seen_from(occ, eyes, p + Vector((0, 0, IDLE_VIEW_H))):
             continue
-        q = p.to_2d() - centre2
-        along, across = q.dot(fwd), abs(q.dot(side))
-        area = ("well" if q.length < WELL_AREA_R else
-                "avenue" if 0 <= along <= AVENUE_START + AVENUE_LEN and across <= pave_out + AVENUE_AREA_PAD else "other")
-        out.append((pose, p, face, drop, area))
+        out.append((pose, p, face, drop, top, area_of(p.to_2d(), well_c, fwd, side, pave_out)))
     counts["clear"] = len(out)
     out.sort(key=lambda s: (round(s[1].x, 3), round(s[1].y, 3), s[0]))
     out = [out[k] for k in hg.thin_spots([(s[1].x, s[1].y) for s in out], IDLE_SPACING)]
@@ -854,14 +924,223 @@ def idle_spots(occ, kept_ids, cam_path, samples, frusta, walk_lines, well_c, fwd
         picked += hg.stride_pick([s for s in out if s[0] == pose], IDLE_MAX_SPOTS // 2)
     picked.sort(key=lambda s: (round(s[1].x, 3), round(s[1].y, 3), s[0]))
     spots = []
-    for pose, p, face, drop, area in picked:
+    for pose, p, face, drop, top, area in picked:
         sp = {"pose": pose, "pos": gl(p), "heading": round(hg.gl_heading(face.x, face.y), 4)}
         if pose == "sit":
             sp["drop"] = round(drop, 3)
+        else:
+            sp["top"] = top
         sp["area"] = area
         spots.append(sp)
     for key in ("sit", "lean"):
         counts[key] = {a: sum(1 for s in spots if s["pose"] == key and s["area"] == a) for a in ("well", "avenue", "other")}
+    tops = [s["top"] for s in spots if s["pose"] == "lean" and s["top"] is not None]
+    counts["lean_top"] = {"null": sum(1 for s in spots if s["pose"] == "lean" and s["top"] is None),
+                          "set": len(tops), "range": [min(tops), max(tops)] if tops else None}
+    return spots, counts
+
+
+def plan_rings():
+    """(scene centre (x, y), [(name, radius, road width)]) of the plan's ring avenues, named as their objects
+    (RINGAVE_<district>_<index>), from PLAN_JSON."""
+    with open(os.path.join(_here, PLAN_JSON)) as fh:
+        plan = json.load(fh)
+    rings = []
+    for d in plan["districts"]:
+        if d.get("enabled") is False:
+            continue
+        for k, av in enumerate(sorted(d.get("avenues", []), key=lambda a: a["r"])):
+            rings.append((f"ring_{d['id']}_{k}", float(av["r"]), float(min(av.get("road", 12), av["w"] - 4))))
+    return tuple(plan["scene"]["center"]), rings
+
+
+def route_z(pr, q, trees):
+    """Ground height under q (x, y) the robot can stand on, or None: level, not water, not a facade or street
+    furniture (exported or not: the robot also walks where it is hidden), headroom ROBOT_H, no tree trunk within
+    ROUTE_TREE_CLEAR."""
+    h = pr.down(q.x, q.y)
+    if h is None or h[1] < IDLE_FLAT_NZ or pr.occ.mat[h[2]] == WATER_MATERIAL or h[3].startswith(NOT_GROUND):
+        return None
+    if len(trees) and np.min(np.sum((trees - (q.x, q.y)) ** 2, axis=1)) < ROUTE_TREE_CLEAR ** 2:
+        return None
+    if not pr.free(Vector((q.x, q.y, h[0] + 0.2)), Vector((0, 0, 1)), ROBOT_H):
+        return None
+    return h[0]
+
+
+def robot_routes(pr, samples, view16, cam_path, trees, well_c, fwd, side, rings, debug=None):
+    """Routes across the hero view for the robot: the ring avenues and cross streets that cross the hero avenue.
+
+    Cross lines square to the avenue every ROUTE_SCAN_STEP over ROUTE_RANGE count where the ground is walkable
+    (route_z, steps up to ROBOT_STEP_MAX: hero_geom.walk_run) ROUTE_MIN_REACH to both sides of the axis; runs of
+    them at least ROUTE_MIN_W wide are the crossings (hero_geom.bands). A crossing holding a ring avenue gets one
+    route per RING_LANES offset, following the ring's arc; any other gets one straight route down its middle.
+    Each route is walkable to ROBOT_HALF_W either side, ROBOT_CAMERA_CLEARANCE from the camera, ordered screen
+    left to right, and trimmed to ROUTE_PAD past the part some sample camera's 16:9 view sees (in frustum and
+    unoccluded at ROBOT_VIEW_H); one that can't run ROUTE_PAD on past it on both sides (it would pop in) is
+    dropped. Returns (routes in glTF space, their Blender x, y lines, counts)."""
+    occ = pr.occ
+    centre2 = well_c.to_2d()
+    cams = np.array([tuple(c) for c in cam_path])
+    ts = np.arange(-ROUTE_REACH, ROUTE_REACH + 1e-6, ROUTE_STEP)
+    mid = int(np.argmin(np.abs(ts)))
+    need = int(round(ROUTE_MIN_REACH / ROUTE_STEP))
+    alongs = np.arange(ROUTE_RANGE[0], ROUTE_RANGE[1] + 1e-6, ROUTE_SCAN_STEP)
+    flags, scan = [], []
+    for a in alongs:
+        zs = [route_z(pr, centre2 + fwd * float(a) + side * float(t), trees) for t in ts]
+        scan.append([np.nan if z_ is None else z_ for z_ in zs])
+        run = hg.walk_run(zs, mid, ROBOT_STEP_MAX)
+        flags.append(run is not None and run[0] <= mid - need and run[1] >= mid + need)
+    found = [(float(alongs[i]), float(alongs[j])) for i, j in hg.bands(flags, int(round(ROUTE_MIN_W / ROUTE_SCAN_STEP)))]
+    counts = {"crossings": [[round(a, 1), round(b, 1)] for a, b in found], "dropped": {}}
+    if debug is not None:
+        debug.update(route_alongs=alongs, route_ts=ts, route_flags=np.array(flags), route_scan=np.array(scan),
+                     route_trees=trees)
+
+    lanes = []
+    for a, b in found:
+        hit = False
+        for name, r, road, centre in rings:
+            for k, f in enumerate(RING_LANES):
+                rr = r + f * road
+                s_r = hg.ring_crossing(tuple(centre2), tuple(fwd), centre, rr)
+                if s_r is not None and a + ROBOT_HALF_W <= s_r <= b - ROBOT_HALF_W:
+                    lanes.append((f"{name}_{'in' if f < 0 else 'out'}", "ring", s_r, (centre, rr)))
+                    hit = True
+        if not hit:
+            lanes.append((f"street_{int(round((a + b) / 2))}", "street", (a + b) / 2, None))
+
+    routes, lines = [], []
+    for name, kind, s0, ring in lanes:
+        x0 = centre2 + fwd * s0
+        if ring is None:
+            pts2 = [x0 + side * float(t) for t in ts]
+        else:
+            c, rr = Vector(ring[0]), ring[1]
+            a0 = math.atan2(x0.y - c.y, x0.x - c.x)
+            # +t runs screen right: the way round the ring whose tangent points along `side`
+            sgn = 1 if Vector((-math.sin(a0), math.cos(a0))).dot(side) > 0 else -1
+            pts2 = [c + Vector((math.cos(a0 + sgn * t / rr), math.sin(a0 + sgn * t / rr))) * rr for t in ts]
+        zs = []
+        for k, q in enumerate(pts2):
+            z = route_z(pr, q, trees)
+            if z is not None:
+                tan = (pts2[min(k + 1, len(pts2) - 1)] - pts2[max(k - 1, 0)]).normalized()
+                n = Vector((-tan.y, tan.x))
+                for o in (n * ROBOT_HALF_W, -n * ROBOT_HALF_W):
+                    zo = route_z(pr, q + o, ())   # trunks are kept ROUTE_TREE_CLEAR off the line itself
+                    if zo is None or abs(zo - z) > ROBOT_STEP_MAX:
+                        z = None
+                        break
+            if z is not None and np.min(np.linalg.norm(cams - (q.x, q.y, z + ROBOT_VIEW_H), axis=1)) < ROBOT_CAMERA_CLEARANCE:
+                z = None
+            zs.append(z)
+        run = hg.walk_run(zs, mid, ROBOT_STEP_MAX)
+        if run is None:
+            counts["dropped"][name] = "blocked at the axis"
+            continue
+        pts = [Vector((pts2[k].x, pts2[k].y, zs[k])) for k in range(run[0], run[1] + 1)]
+        arc = hg.arc_lengths([tuple(p) for p in pts])
+        per = []
+        for (f, pos, _fwd, _up), planes in zip(samples, view16):
+            flags_f = []
+            for p in pts:
+                lo = (p.x - ROBOT_HALF_W, p.y - ROBOT_HALF_W, p.z)
+                hi = (p.x + ROBOT_HALF_W, p.y + ROBOT_HALF_W, p.z + ROBOT_H)
+                flags_f.append(hg.aabb_in_frustum(lo, hi, planes) and seen_from(occ, [Vector(pos)], p + Vector((0, 0, ROBOT_VIEW_H))))
+            per.append((f, flags_f))
+        view = hg.seen_ranges(arc, per)
+        if not view:
+            counts["dropped"][name] = "never seen"
+            continue
+        lo_s, hi_s = min(v[1] for v in view), max(v[2] for v in view)
+        if lo_s - ROUTE_PAD < arc[0] - 1e-6 or hi_s + ROUTE_PAD > arc[-1] + 1e-6:
+            counts["dropped"][name] = f"seen {lo_s:.0f}-{hi_s:.0f} m of {arc[-1]:.0f}: no room to walk in unseen"
+            continue
+        keep = [k for k, t in enumerate(arc) if lo_s - ROUTE_PAD - ROUTE_STEP < t < hi_s + ROUTE_PAD + ROUTE_STEP]
+        pts = [pts[k] for k in keep]
+        base = arc[keep[0]]
+        arc = [arc[k] - base for k in keep]
+        routes.append({
+            "name": name, "kind": kind, "along": round(s0, 2),
+            "points": [gl(p) for p in pts], "len": round(arc[-1], 2),
+            "seen": [round(lo_s - base, 2), round(hi_s - base, 2)],
+            "view": [[v[0], round(v[1] - base, 2), round(v[2] - base, 2)] for v in view],
+        })
+        lines.append([(p.x, p.y) for p in pts])
+    counts["routes"] = {r["name"]: {"along": r["along"], "len": r["len"], "seen": r["seen"],
+                                    "frames": [r["view"][0][0], r["view"][-1][0]]} for r in routes}
+    return routes, lines, counts
+
+
+def talk_spots(pr, hm, cam_path, samples, frusta, walk_lines, route_lines, idle, well_c, fwd, side, pave_out):
+    """Centres of open flat ground for conversation circles, from the idle height map `hm`: every cell within
+    the radius (the largest of TALK_RADII that fits) level, usable and within TALK_TOL of the centre, not roadway
+    (TALK_NOT_GROUND); rays out from the centre at TALK_CLEAR_HS free to the radius + 0.3 (no wall or railing in
+    the circle); TALK_HEADROOM free above the centre and the rim. Kept clear of the camera (WALK_CAMERA_CLEARANCE
+    from the chest at the rim, every frame), of the walk paths (IDLE_PATH_CLEARANCE past the rim), of the robot
+    routes (ROUTE_IDLE_CLEAR), of the idle spots (TALK_IDLE_GAP), at street level (IDLE_LEVEL), within
+    IDLE_RANGE, in view and seen from a sample camera; TALK_SPACING between rims (largest circles first).
+    Returns (spots in glTF space: {pos, radius, area}, counts)."""
+    occ = pr.occ
+    xs, ys, z, nz, ok, own = hm
+    cams = np.array([tuple(c) for c in cam_path])
+    eyes = [Vector(s[1]) for s in samples]
+    walk_pts = np.array([q for line in walk_lines for q in line])
+    idle_xy = np.array([(sp["pos"][0], -sp["pos"][2]) for sp in idle]) if idle else np.zeros((0, 2))
+    road = np.vectorize(lambda o: o.startswith(TALK_NOT_GROUND))(own) if own.size else own
+    good = ok & ~road
+    discs = [(r, hg.disc_offsets(r, IDLE_GRID)) for r in TALK_RADII]
+    up = Vector((0, 0, 1))
+    cand, counts = [], {"tried": 0}
+    for j in range(0, len(ys), TALK_STRIDE):
+        for i in range(0, len(xs), TALK_STRIDE):
+            if not good[j, i]:
+                continue
+            counts["tried"] += 1
+            zc = float(z[j, i])
+            c = Vector((float(xs[i]), float(ys[j]), zc))
+            for r, offs in discs:
+                if all(0 <= j + dj < len(ys) and 0 <= i + di < len(xs) and good[j + dj, i + di]
+                       and abs(z[j + dj, i + di] - zc) <= TALK_TOL for di, dj in offs):
+                    break
+            else:
+                continue
+            dirs = [Vector((math.cos(2 * math.pi * k / TALK_CLEAR_DIRS), math.sin(2 * math.pi * k / TALK_CLEAR_DIRS), 0))
+                    for k in range(TALK_CLEAR_DIRS)]
+            if not all(pr.free(c + Vector((0, 0, h)), d, r + 0.3) for h in TALK_CLEAR_HS for d in dirs):
+                continue
+            if not all(pr.free(q + Vector((0, 0, 0.1)), up, TALK_HEADROOM) for q in [c] + [c + d * r for d in dirs]):
+                continue
+            chest = np.array((c.x, c.y, zc + WALK_CHEST_H))
+            dist = np.linalg.norm(cams - chest, axis=1)
+            if dist.min() - r < WALK_CAMERA_CLEARANCE or dist.min() > IDLE_RANGE:
+                continue
+            if any(hg.polyline_dist((c.x, c.y), line) < r + IDLE_PATH_CLEARANCE for line in walk_lines):
+                continue
+            if any(hg.polyline_dist((c.x, c.y), line) < r + ROUTE_IDLE_CLEAR for line in route_lines):
+                continue
+            if len(idle_xy) and np.min(np.linalg.norm(idle_xy - (c.x, c.y), axis=1)) < r + TALK_IDLE_GAP:
+                continue
+            street = walk_pts[np.argmin(np.sum((walk_pts[:, :2] - (c.x, c.y)) ** 2, axis=1)), 2]
+            if abs(zc - street) > IDLE_LEVEL:
+                continue
+            if not in_view((c.x - r, c.y - r, zc), (c.x + r, c.y + r, zc + 1.8), frusta):
+                continue
+            if not seen_from(occ, eyes, c + Vector((0, 0, IDLE_VIEW_H))):
+                continue
+            cand.append((r, c))
+    counts["clear"] = len(cand)
+    cand.sort(key=lambda t: (-t[0], round(t[1].x, 3), round(t[1].y, 3)))
+    kept = []
+    for r, c in cand:
+        if all((c.to_2d() - k.to_2d()).length >= r + rk + TALK_SPACING - 1e-9 for rk, k in kept):
+            kept.append((r, c))
+    counts["spaced"] = len(kept)
+    kept = hg.stride_pick(sorted(kept, key=lambda t: (round(t[1].x, 3), round(t[1].y, 3))), TALK_MAX_SPOTS)
+    spots = [{"pos": gl(c), "radius": r, "area": area_of(c.to_2d(), well_c, fwd, side, pave_out)} for r, c in kept]
+    counts["areas"] = {a: sum(1 for s in spots if s["area"] == a) for a in ("well", "avenue", "other")}
     return spots, counts
 
 
@@ -1181,9 +1460,27 @@ def run():
                 raise RuntimeError(f"no {PAVEMENT_OBJECT} found {AVENUE_PROBE} m up the avenue")
             pave[sgn] = (min(offs), max(offs))
         cam_xy = [Vector(s[1]).to_2d() for s in samples]
+        cam_path = [mats[f].translation for f in range(hg.FRAME_START, hg.FRAME_END + 1)]
+        pave_out = max(pave[1][1], pave[-1][1])
+
+        # ---- robot routes: ring avenues and cross streets across the view (first: no lamp stands on them)
+        pr = IdleProbes(occ, {c.id for c in kept_chunks})
+        centre_xy, ring_list = plan_rings()
+        rings = [(n, r, road, centre_xy) for n, r, road in ring_list]
+        trees = np.array([((it.lo[0] + it.hi[0]) / 2, (it.lo[1] + it.hi[1]) / 2)
+                          for it in in_frustum if it.tree]).reshape(-1, 2)
+        a16, v16 = hg.cull_aspects(vfov, sht)[0]
+        view16 = [hg.frustum_planes(pos, f_, up, v16, a16, cam.data.clip_start, cam.data.clip_end)
+                  for (_, pos, f_, up) in samples]
+        idle_debug = {} if _g.get("IDLE_DEBUG") else None
+        routes, route_lines, route_counts = robot_routes(pr, samples, view16, cam_path, trees, well_c, fwd, side, rings,
+                                                         idle_debug)
+        timing["routes"] = time.time() - t0
+        print("export_hero: robot routes", json.dumps(route_counts), flush=True)
 
         def clear(q):
-            return min((q - c).length for c in cam_xy) >= LAMP_CAMERA_CLEARANCE
+            return (min((q - c).length for c in cam_xy) >= LAMP_CAMERA_CLEARANCE
+                    and all(hg.polyline_dist((q.x, q.y), line) >= ROUTE_LAMP_CLEAR for line in route_lines))
 
         lamp_pts = []
         for sgn in (1, -1):
@@ -1211,9 +1508,8 @@ def run():
             link(f"HERO_lamp_{n_lamps:03d}", lmesh, Matrix.Translation((q.x, q.y, z)))
             n_lamps += 1
 
-        # Walkers keep clear of the camera along the whole move (every frame, in 3D), so none fills
+        # Walkers keep clear of the camera along the whole move (every frame, in 3D, cam_path), so none fills
         # the frame: pavement paths are cut where they pass near the camera.
-        cam_path = [mats[f].translation for f in range(hg.FRAME_START, hg.FRAME_END + 1)]
 
         def walk_clear(p):
             chest = p + Vector((0, 0, WALK_CHEST_H))
@@ -1239,17 +1535,22 @@ def run():
 
         # ---- idle people: seats and walls in the kept scene, clear of the camera and the walkers
         walk_lines = [[(q[0], -q[2], q[1]) for q in line] for line in walk_paths]   # Blender x, y, z
-        idle_debug = {} if _g.get("IDLE_DEBUG") else None
-        idle, idle_counts = idle_spots(occ, {c.id for c in kept_chunks}, cam_path, samples, frusta, walk_lines,
-                                       well_c, fwd, side, max(pave[1][1], pave[-1][1]), idle_debug)
+        hm = idle_height_map(pr, np.array([tuple(c) for c in cam_path])[:, :2])
+        idle, idle_counts = idle_spots(pr, hm, cam_path, samples, frusta, walk_lines, route_lines,
+                                       well_c, fwd, side, pave_out, idle_debug)
         timing["idle"] = time.time() - t0
         print("export_hero: idle spots", json.dumps(idle_counts), flush=True)
+        talk, talk_counts = talk_spots(pr, hm, cam_path, samples, frusta, walk_lines, route_lines, idle,
+                                       well_c, fwd, side, pave_out)
+        timing["talk"] = time.time() - t0
+        print("export_hero: talk spots", json.dumps(talk_counts), flush=True)
         if idle_debug is not None:
             np.savez(_g["IDLE_DEBUG"], **idle_debug, cams=np.array([tuple(c) for c in cam_path]),
                      walk=np.array([q for line in walk_lines for q in line]))
         if _g.get("STOP_AFTER") == "idle":
             with open(os.path.join(OUT_DIR, "idle_spots.json"), "w") as fh:
-                json.dump({"counts": idle_counts, "idle_spots": idle}, fh, indent=1)
+                json.dump({"counts": idle_counts, "idle_spots": idle, "route_counts": route_counts,
+                           "robot_routes": routes, "talk_counts": talk_counts, "talk_spots": talk}, fh, indent=1)
             return
 
         # ---- AO bake
@@ -1321,7 +1622,7 @@ def run():
                 if m.name in (NIGHT_CYAN, NIGHT_WELL):
                     night_nodes.setdefault(m.name, []).append(name)
         props = {
-            "version": 1, "fps": FPS, "frames": [hg.FRAME_START, hg.FRAME_END],
+            "version": 2, "fps": FPS, "frames": [hg.FRAME_START, hg.FRAME_END],
             "base_vfov_deg": round(math.degrees(vfov), 6),
             "safe_half_tan": {"f250": round(sht250, 6), "f1": round(sht1, 6)},
             "sun": {"dir": gl(sun_dir.normalized())},   # unit vector from the scene toward the sun (sun's +Z)
@@ -1333,6 +1634,8 @@ def run():
             "night": night,
             "night_nodes": night_nodes,
             "idle_spots": idle,
+            "robot_routes": routes,
+            "talk_spots": talk,
         }
         with open(os.path.join(OUT_DIR, "hero_props.json"), "w") as fh:
             json.dump(props, fh, indent=1)
@@ -1368,6 +1671,8 @@ def run():
                 "materials": sorted(m.name for m in M.cache.values()),
                 "blimp_orbit_visible": round(frac, 4),
                 "idle_spots": idle_counts,
+                "robot_routes": route_counts,
+                "talk_spots": talk_counts,
             },
             "per_collection": dict(sorted(report.items())),
             "glb_bytes": os.path.getsize(glb),
