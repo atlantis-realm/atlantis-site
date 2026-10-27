@@ -9,6 +9,7 @@ import {
 	DRONE_GLIDE_FREE,
 	DRONE_GLIDE_RATIO,
 	DRONE_HOVER_H,
+	DRONE_LEFT_PARCELS,
 	DRONE_PARCEL_H,
 	DRONE_SKID_H,
 	DRONE_SKY_CLEAR,
@@ -20,6 +21,7 @@ import {
 	easedDistance,
 	farPoint,
 	glideClear,
+	keepLeftParcels,
 	moveDuration,
 	pickGlide,
 	pickSpot,
@@ -367,7 +369,7 @@ test('createDrones: none without spots; four instanced meshes, lights only at ni
 	const [bodies, rotors, parcels, lights] = meshes;
 	assert.equal(bodies.count, DRONE_COUNT);
 	assert.equal(rotors.count, 4 * DRONE_COUNT);
-	assert.equal(parcels.count, 2 * DRONE_COUNT);
+	assert.equal(parcels.count, (2 + DRONE_LEFT_PARCELS) * DRONE_COUNT);
 	assert.equal(lights.count, 3 * DRONE_COUNT);
 	assert.ok(bodies.castShadow && parcels.castShadow && !rotors.castShadow);
 	assert.equal(lights.visible, false);
@@ -424,5 +426,83 @@ test('after the clock goes back, the same steps replay the same trips', () => {
 	};
 	const first = run();
 	assert.equal(run(), first);
+	drones.dispose();
+});
+
+test('keepLeftParcels: the ones the camera sees, the newest DRONE_LEFT_PARCELS; none unseen', () => {
+	const at = (k: number) => ({ spot: k, yaw: k, colour: 0 });
+	const seen = (p: Vec3) => p[2] > 1100;
+	// Spots 2 and 3 are not seen (z 1017, 1091), spots 0, 1 and 4 are.
+	assert.deepEqual(keepLeftParcels([], SPOTS, seen, at(0)), [at(0)]);
+	assert.deepEqual(
+		keepLeftParcels([at(0)], SPOTS, seen, at(2)),
+		[at(0)],
+		'an unseen drop is not kept'
+	);
+	assert.deepEqual(keepLeftParcels([at(0), at(1)], SPOTS, seen, at(4)).length, DRONE_LEFT_PARCELS);
+	assert.deepEqual(
+		keepLeftParcels([at(0), at(1)], SPOTS, seen, at(4))[0],
+		at(1),
+		'the oldest goes'
+	);
+	assert.deepEqual(
+		keepLeftParcels([at(0), at(1)], SPOTS, () => false),
+		[]
+	);
+	assert.deepEqual(
+		keepLeftParcels([at(0)], SPOTS, undefined, at(1)),
+		[],
+		'no camera: nothing seen'
+	);
+});
+
+test('a delivered parcel stays on its spot after the trip while the camera sees it, then goes', () => {
+	const drones = createDrones(SPOTS, SKY, { shadows: false, count: 2 })!;
+	const parcels = drones.object.children[2] as THREE.InstancedMesh;
+	const m = new THREE.Matrix4();
+	const p = new THREE.Vector3();
+	const left = (): THREE.Vector3[] => {
+		const out: THREE.Vector3[] = [];
+		for (let k = 4; k < parcels.count; k++) {
+			parcels.getMatrixAt(k, m);
+			if (m.determinant() !== 0) out.push(p.setFromMatrixPosition(m).clone());
+		}
+		return out;
+	};
+	const all = () => true;
+	let ended = 0;
+	let prev = drones.state();
+	for (let t = 0; t <= 600; t += 0.5) {
+		drones.update(t, 1, EYE, all);
+		const now = drones.state();
+		now.forEach((d, i) => {
+			if (!prev[i].dropped || (d.dropped && d.drop === prev[i].drop)) return;
+			// Drone i's last trip ended: its parcel is still where it was dropped.
+			const at = SPOTS[prev[i].drop].pos;
+			const want = new THREE.Vector3(at[0], at[1] + DRONE_PARCEL_H / 2, at[2]);
+			assert.ok(
+				left().some((q) => q.distanceTo(want) < 1e-6),
+				`t ${t}: drone ${i}'s parcel on spot ${prev[i].drop}`
+			);
+			ended++;
+		});
+		assert.ok(left().length <= 2 * DRONE_LEFT_PARCELS);
+		// One parcel to a spot: a new one set down takes the place of one left there.
+		const resting = [...left()];
+		drones.state().forEach((s, i) => {
+			if (!s.dropped) return;
+			parcels.getMatrixAt(2 * i, m);
+			resting.push(p.setFromMatrixPosition(m).clone());
+		});
+		resting.forEach((a, j) =>
+			resting
+				.slice(j + 1)
+				.forEach((b) => assert.ok(a.distanceTo(b) > 1e-3, `t ${t}: two on a spot`))
+		);
+		prev = now;
+	}
+	assert.ok(ended >= 4, `${ended} trips ended`);
+	drones.update(601, 1, EYE, () => false);
+	assert.equal(left().length, 0, 'gone once out of view');
 	drones.dispose();
 });

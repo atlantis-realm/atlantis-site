@@ -7,7 +7,8 @@
 // talk-spot centres on the plaza and pavement, roof pads; straight down if no
 // glide is clear), winches its parcel down onto the spot, winches the empty
 // line back up, climbs and flies off out of view; after a short hidden gap it
-// comes back with a new trip. Drop spots the camera sees at the current frame
+// comes back with a new trip; its parcel stays on the spot while the camera
+// sees it (keepLeftParcels). Drop spots the camera sees at the current frame
 // are preferred, the near ones more (spotWeight), and so are glides it sees,
 // so deliveries happen in the frame. Cruise height clears the export's sky
 // grid (drone_sky: the top of the scene) by DRONE_SKY_CLEAR along both legs,
@@ -82,6 +83,8 @@ export const DRONE_RELEASE_S = 1;
 /** Parcel size (m): width (square) and height. */
 export const DRONE_PARCEL_W = 0.34;
 export const DRONE_PARCEL_H = 0.28;
+/** Delivered parcels a drone leaves lying on their spots (the newest) while the camera sees them. */
+export const DRONE_LEFT_PARCELS = 2;
 /** Hidden pause (s) between one trip leaving the view and the next: [min, max]. */
 export const DRONE_RESPAWN_GAP: [number, number] = [1, 6];
 /** Lean: horizontal acceleration over this (m/s²), at most DRONE_TILT_MAX (radians). */
@@ -607,6 +610,30 @@ export function tripPose(trip: DroneTrip, t: number, spots: DroneSpot[]): DroneP
 	return { position: p, heading, tilt: [tx, tz], tether, parcel, dropped: seg.dropped };
 }
 
+/** A delivered parcel left on drop spot `spot`, turned `yaw`, in parcel colour `colour`. */
+export type LeftParcel = { spot: number; yaw: number; colour: number };
+
+/**
+ * The parcels a drone leaves lying, `left` plus the one just delivered
+ * (`add`): those whose parcel centre `seen(p)` says the camera sees (none
+ * without `seen`), the newest DRONE_LEFT_PARCELS. So a parcel stays put while
+ * it is in view and goes only once the camera has turned away.
+ */
+export function keepLeftParcels(
+	left: LeftParcel[],
+	spots: DroneSpot[],
+	seen?: (p: Vec3) => boolean,
+	add?: LeftParcel
+): LeftParcel[] {
+	const all = add ? [...left, add] : left;
+	return all
+		.filter((l) => {
+			const d = spots[l.spot].pos;
+			return seen?.([d[0], d[1] + DRONE_PARCEL_H / 2, d[2]]) ?? false;
+		})
+		.slice(-DRONE_LEFT_PARCELS);
+}
+
 /** One drone's current trip, for tests and debugging. */
 export type DroneState = {
 	visible: boolean;
@@ -751,8 +778,9 @@ const _c = new THREE.Color();
 /**
  * DRONE_COUNT (or opts.count) drones over `spots`, cruising above `sky`, or
  * null without spots. Four InstancedMeshes: bodies (shadows when
- * opts.shadows), rotor discs, parcels and lines (shadows too), nav lights
- * (shown at night only). Hidden instances are scaled to nothing.
+ * opts.shadows), rotor discs, parcels and lines (and the parcels left on
+ * their spots; shadows too), nav lights (shown at night only). Hidden
+ * instances are scaled to nothing.
  */
 export function createDrones(
 	spots: DroneSpot[] | undefined,
@@ -780,11 +808,13 @@ export function createDrones(
 		}),
 		4 * n
 	);
-	// Parcel k = 2i, its line 2i + 1: one unit box scaled per instance.
+	// Parcel k = 2i, its line 2i + 1, then the parcels left lying from 2n (DRONE_LEFT_PARCELS a drone):
+	// one unit box scaled per instance.
+	const leftAt = (i: number, k: number): number => 2 * n + i * DRONE_LEFT_PARCELS + k;
 	const parcels = new THREE.InstancedMesh(
 		new THREE.BoxGeometry(1, 1, 1),
 		new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }),
-		2 * n
+		(2 + DRONE_LEFT_PARCELS) * n
 	);
 	const lightMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
 	const lights = new THREE.InstancedMesh(
@@ -810,12 +840,17 @@ export function createDrones(
 		parcels.setColorAt(2 * i, _c.setHex(PARCEL_COLOURS[0]));
 		for (let k = 0; k < 3; k++) lights.setColorAt(3 * i + k, _c.setRGB(...LIGHTS[k].colour));
 		parcels.setColorAt(2 * i + 1, _c.setHex(LINE_COLOUR));
+		for (let k = 0; k < DRONE_LEFT_PARCELS; k++) {
+			parcels.setColorAt(leftAt(i, k), _c.setHex(PARCEL_COLOURS[0]));
+			parcels.setMatrixAt(leftAt(i, k), _ZERO);
+		}
 	}
 
-	type Flyer = { rand: () => number; trip: DroneTrip | null };
+	type Flyer = { rand: () => number; trip: DroneTrip | null; left: LeftParcel[] };
 	const flyers: Flyer[] = Array.from({ length: n }, (_, i) => ({
 		rand: mulberry32(DRONE_SEED + i),
-		trip: null
+		trip: null,
+		left: []
 	}));
 	// Each spot's neighbours within DRONE_SPOT_GAP (itself included): another drone's spots keep them all busy.
 	const near = spots.map((a) =>
@@ -876,6 +911,7 @@ export function createDrones(
 		if (t < last)
 			flyers.forEach((f, i) => {
 				f.trip = null;
+				f.left = [];
 				f.rand = mulberry32(DRONE_SEED + i);
 			});
 		last = t;
@@ -883,11 +919,19 @@ export function createDrones(
 			if (!f.trip) f.trip = plan(i, t, frame, eye, seen, f.rand());
 			let guard = 0;
 			while (t >= f.trip.end) {
+				// The trip's parcel stays on its spot while it is in view.
+				const done = f.trip;
+				f.left = keepLeftParcels(f.left, spots, seen, {
+					spot: done.drop,
+					yaw: done.dropYaw,
+					colour: done.parcelColour
+				});
 				f.trip =
 					++guard > MAX_TRIPS_PER_UPDATE
 						? plan(i, t, frame, eye, seen)
 						: plan(i, f.trip.end + gap(f), frame, eye, seen);
 			}
+			f.left = keepLeftParcels(f.left, spots, seen);
 			const trip = f.trip;
 			if (t < trip.start) {
 				poses[i] = null;
@@ -931,6 +975,29 @@ export function createDrones(
 				parcels.setMatrixAt(2 * i + 1, _m.compose(_v, _qYaw, _s.set(LINE_W, pose.tether, LINE_W)));
 			} else {
 				parcels.setMatrixAt(2 * i + 1, _ZERO);
+			}
+		});
+		// A parcel just set down on a spot takes the place of one left lying there.
+		flyers.forEach((f, i) => {
+			if (!poses[i]?.dropped) return;
+			const spot = f.trip!.drop;
+			for (const g of flyers) g.left = g.left.filter((l) => l.spot !== spot);
+		});
+		flyers.forEach((f, i) => {
+			for (let k = 0; k < DRONE_LEFT_PARCELS; k++) {
+				const l = f.left[k];
+				if (!l) {
+					parcels.setMatrixAt(leftAt(i, k), _ZERO);
+					continue;
+				}
+				const d = spots[l.spot].pos;
+				_v.set(d[0], d[1] + DRONE_PARCEL_H / 2, d[2]);
+				_qYaw.setFromAxisAngle(_Y, l.yaw);
+				parcels.setMatrixAt(
+					leftAt(i, k),
+					_m.compose(_v, _qYaw, _s.set(DRONE_PARCEL_W, DRONE_PARCEL_H, DRONE_PARCEL_W))
+				);
+				parcels.setColorAt(leftAt(i, k), _c.setHex(PARCEL_COLOURS[l.colour]));
 			}
 		});
 		for (const mesh of [bodies, rotors, parcels, lights]) mesh.instanceMatrix.needsUpdate = true;
