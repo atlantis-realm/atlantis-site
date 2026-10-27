@@ -40,6 +40,14 @@ export const MAX_PIXEL_RATIO = 1.5;
 /** Name of the camera node and its animation clip in hero.glb. */
 export const HERO_CAMERA_NODE = 'HeroCamera';
 export const HERO_CLIP = 'Hero';
+/**
+ * Opening framing: the baked frame-250 shot has "Welcome to Atlantis" above the
+ * middle of the screen, so the camera tilts up by this much at frame 250. The
+ * tilt fades out (smoothstep) over the first OPENING_AIM_FADE_FRAMES of the
+ * scroll, so the rest of the move is the Blender camera unchanged.
+ */
+export const OPENING_PITCH_DEG = 3.6;
+export const OPENING_AIM_FADE_FRAMES = 60;
 
 /** Sun light (day). mixMode's sun level is scaled so that day gives exactly this. */
 const SUN_COLOR = 0xfff1dc;
@@ -289,6 +297,13 @@ export class CityHeroScene {
 		const t = THREE.MathUtils.clamp(frameToTime(frame), 0, this.action.getClip().duration);
 		this.action.time = t;
 		this.mixer.update(0);
+		// The mixer has just rewritten the camera's quaternion, so the tilt never accumulates.
+		const aim = THREE.MathUtils.smoothstep(
+			frame,
+			HERO_FRAME_END - OPENING_AIM_FADE_FRAMES,
+			HERO_FRAME_END
+		);
+		if (aim > 0) this.camera.rotateX(THREE.MathUtils.degToRad(OPENING_PITCH_DEG * aim));
 	}
 
 	/** COLOR_0 carries the baked AO; make sure every material that has it uses it. */
