@@ -1,6 +1,6 @@
 # City generators
 
-Greybox generators for `../Atlantian_plaza_blockout-v05.blend`, the file to open (v01–v04 are earlier versions): a Cambridge-scale (≈6 km across) ring
+Greybox generators for `../Atlantian_plaza_blockout-v06.blend`, the current file to open (v01–v05 are earlier versions; v06 is v05 with the avenue vernacular buildings and mid towers, and the objects the hero camera never sees culled into `_culled`): a Cambridge-scale (≈6 km across) ring
 city of sloped tiers rising to Old Town at the centre, six inclined spoke avenues, and one-way ring
 avenues in every ring.
 
@@ -83,7 +83,7 @@ property `rg_orig_loc`, mesh attribute `rg_orig_co`, curve property `rg_orig_pts
 
 ## Hero export
 
-`export_hero.py` writes the `/city` page's hero view from v05: only what the hero camera (`Camera.001`,
+`export_hero.py` writes the `/city` page's hero view from v06, the current file: only what the hero camera (`Camera.001`,
 frames 1–250) can see, culled, joined, decimated by distance and AO-baked. The cull geometry is in
 `hero_geom.py`. It **never saves the .blend** and leaves the scene as it found it: everything it builds lives
 in a scratch scene `HERO_EXPORT_SCENE` (collection `HERO_EXPORT`), every ID it makes carries the custom
@@ -95,15 +95,25 @@ cd concept-assets/city/generators
 node -e 'const fs=require("fs"),C=require("./citygen.js");fs.mkdirSync("build/hero",{recursive:true});fs.writeFileSync("build/hero/plan_blimps.json",JSON.stringify(C.generate(require("./plan.json")).blimps))'
 ```
 
-Then run it **headless** on the saved v05 (about a minute; `--factory-startup` keeps add-ons out). This is
+Then run it **headless** on the saved v06 (about a minute and a half; `--factory-startup` keeps add-ons out). This is
 the default and the only tested way to run it:
 
 ```sh
-flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v05.blend \
+flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v06.blend \
   --python-expr 'G="'$PWD'/"; exec(open(G+"export_hero.py").read(), {"__name__":"eh","__file__":G+"export_hero.py","OUT_DIR":G+"build/hero/"})'
 ```
 
-It reads the .blend as saved on disk, so unsaved edits in an open Blender session are not exported.
+It reads the .blend as saved on disk, so unsaved edits in an open Blender session are not exported. The
+opened file must be `BLEND` (default `Atlantian_plaza_blockout-v06.blend`, compared by file name, so a stale
+or `_before-*` copy is refused); export another with the env var `HERO_BLEND` (e.g. `HERO_BLEND=Atlantian_plaza_blockout-v05.blend` before
+`flatpak run`) or the exec global `"BLEND"`. Where the
+.blend lives outside the flatpak's default view (an external drive), add `--filesystem=<dir>`; Blender
+resolves a relative `--python` path inside the sandbox, so give it absolutely. `export_report.json` records
+the `blend` it came from.
+
+The AO bake's `temp_override` (`hero_geom.bake_context`) sets `object` as well as `active_object`: the bake
+poll reads `object` first, and v06 was saved with `MID_mid_01` active (in the user scene), which failed the
+poll ("context is incorrect") until it did.
 
 Running it inside the live Blender session (`exec` through the Blender MCP) is **unverified**: a related
 `temp_override` pattern segfaulted Blender 5.2, and a crash loses unsaved work. `run()` refuses to run
@@ -119,7 +129,7 @@ Pass `"STOP_AFTER": "cull"` to print only the cull counts. Outputs, in the git-i
 
 | File | What it is |
 |---|---|
-| `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>`, the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`). Materials are simple PBR, `HERO_<source>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
+| `hero_raw.glb` | Joined meshes `HERO_<band>_<tx>_<ty>_<material>` (most `<material>`s a palette, below), the named `Text`, `NBHD_core_lantern`, well ring lights and `HERO_well_water`, trees `HERO_tree_*` and lamps `HERO_lamp_*` as linked duplicates, the camera `HeroCamera` with its baked animation `Hero`. Every mesh has the corner colour `AO` (`COLOR_0`); on palette meshes it carries base colour × AO. Materials are simple PBR, `HERO_<source>` or a palette `HERO_PAL_R<r>_M<m>`; the night list is `NIGHT_*` with `extras.night_emissive = [r, g, b, strength]`. |
 | `hero_props.json` | Camera FOV and safe frame, sun, Lantern, blimp orbit, walk paths, well water node, night materials, and `night_nodes` (glTF space: Y up). `sun.dir` is a unit vector pointing **from the scene toward the sun** (the sun object's +Z). `night_nodes` maps `NIGHT_MAT_AP_Cyan` and `NIGHT_WellRing` to the only node names allowed to use them. `idle_spots` (see "Idle spots" below), `robot_routes` ("Robot routes"), `talk_spots` ("Talk spots") and `drone_spots` / `drone_sky` ("Drone spots"). `version` is 2 since robot routes and talk spots (and the lean spots' `top`) were added; the page reads all of these as optional. |
 | `export_report.json` | Per collection: `instances`, `in_frustum`, `kept`, `dropped_frustum` (= instances − in_frustum), `dropped_occlusion` (= in_frustum − kept), `chunks`, `chunks_kept`. Also band and mesh counts, triangles, glb size, timings. |
 
@@ -128,6 +138,17 @@ the `Camera.001` keys unchanged. v05's Lantern is `NBHD_core_lantern` (the `KIT_
 in the excluded temple), so it is the node carrying `NIGHT_MAT_AP_Cyan`; the well ring lights use
 `NIGHT_WellRing`. The Lantern's `MAT_AP_Glow` faces are its cyan heart, so they also go to
 `NIGHT_MAT_AP_Cyan` (cyan), not to the warm `NIGHT_MAT_AP_Glow` band used elsewhere.
+
+**Palettes.** v06's avenue vernacular brought about 45 new flat colours (`MAT_AV_v*`, plasters, brick,
+timber), which as one joined mesh per material per tile took the bake to 364 draw calls (399 at the page's
+peak). So every tile bucket whose material is a plain `HERO_` one (not `NIGHT_*`, not `NO_AO_MATERIALS`) is
+joined by roughness/metallic class instead (`hero_geom.palette_name`: `HERO_PAL_R<r>_M<m>`, in hundredths)
+under one material with a white base colour. `palettise()` writes each face's source base colour (linear) to
+a float corner colour `HERO_BASE` before subdivision and decimation (both interpolate it), and `apply_base()`
+multiplies it into `AO` after the bake and removes it: three.js multiplies `COLOR_0` by the (white) base
+colour, so the result is base × AO as before. Joined meshes now also smooth normals across what were
+material seams (same 30° rule). The named meshes, trees and lamps keep their own materials. v06: 323 → 188
+tile meshes in 15 palettes, about 229 draw calls in the glb.
 
 The near band (< `NEAR_DIST`) is joined per material per `NEAR_TILE` tile like the mid band, rather than
 kept object by object: per-object near meshes would blow the 300 draw-call budget. Near keeps its full
@@ -205,6 +226,13 @@ walkway railings round the well, all with `top` 1.127–1.128 m, and 88 against 
 kerbs (lane and pavement are level), so there are no seats at the well. The spots reach about 150 m up the
 avenue (the camera stays near the well).
 
+v06 result: 37 spots: 9 sit (avenue) and 28 lean (26 on the well railings, as before; 2 on the avenue). The
+avenue vernacular buildings replaced the flat facades: raw lean candidates fall from 1,313 to 651 and almost
+none at the new shopfronts pass the lean checks, and `export_report.json`'s `idle_spots.dropped` now counts
+each filter (v06: 626 off street level, 80 out of frame, 39 near a walk path, 37 unseen). So
+`test/hero_glb.test.js`'s "at least 50 spots" and "most leaners face a walk path" checks fail on the v06
+bake until the rules or the facades change.
+
 ### Robot routes
 
 `robot_routes()` finds where the robot can walk across the hero view, screen left to right or back. The camera
@@ -243,6 +271,9 @@ has the crossings, the routes and any dropped ones with the reason.
 v05 result: 5 routes. The avenue frontage hides everything off the avenue itself, so each is seen only across
 the avenue (about ±20–28 m from the axis) and walks in from behind the buildings on one side and out behind
 the other:
+
+v06 result: 4 routes. `street_57` is dropped ("seen 2–42 m of 112: no room to walk in unseen"): the new
+frontage leaves it seen almost to its ends. The other four are as in v05 (`ring_belt_1_out` 68 m, seen 8–58 m).
 
 | Route | Kind | Along | Length | Seen | Sample frames |
 |---|---|---|---|---|---|
@@ -283,6 +314,8 @@ avenue pavement at its foot, before the walk paths start (8–17 m out; the one 
 `well`, so 7 are `well` and 7 `avenue`), and 4 in the open ground beside the avenue between its facades
 (63–140 m out).
 
+v06 result: 14 spots, 7 `well` and 7 `avenue`, as in v05.
+
 ### Drone spots
 
 `drone_sky()` and `drone_spots()` give the page's delivery drones (`src/lib/city/drones.ts`) where to drop
@@ -313,6 +346,14 @@ other 7 talk spots have a tree or overhang above them, or are within 6 m of a ke
 up on the avenue frontage 80–280 m out (33 seen before spacing). No spot is seen after sample frame 86: from
 there on the camera looks down into the well. The sky grid is 66 × 101 cells, highest 128 m; it and the spots
 take `hero_props.json` from 41.7 KB to 89.5 KB. `hero_raw.glb` is unchanged (two runs: the same SHA).
+
+v06 result: 14 spots: 6 ground and 8 roof pads, 34–46 m up (the vernacular roofs are lower than v05's
+facades); 19 roofs seen before spacing. `hero_props.json` is 71.8 KB (fewer idle spots).
+
+v06 bake (with palettes): `hero.glb` 3,448,692 + `hero_props.json` 71,836 bytes; 450,298 triangles, 229
+primitives (about 229 draw calls) in the glb; `stats()` on `/city` at 3292×1205, every 1/40 of the scroll with
+and without the drop: 98–265 calls, at most 1,256,802 triangles (without palettes: 399 calls). The table
+below is the v05 measurement.
 
 Final budget, measured on `/city` with the whole page running (blimps, water, people, night list):
 

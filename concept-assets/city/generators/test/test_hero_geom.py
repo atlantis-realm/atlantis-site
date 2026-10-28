@@ -13,6 +13,8 @@ from hero_geom import (  # noqa: E402
     MIN_ASPECT,
     aabb_in_frustum,
     arc_lengths,
+    bake_context,
+    blend_matches,
     bands,
     clear_runs,
     cull_aspects,
@@ -21,6 +23,8 @@ from hero_geom import (  # noqa: E402
     frustum_planes,
     gl_heading,
     lean_profile,
+    palette_class,
+    palette_name,
     polyline_dist,
     pool_max,
     ring_crossing,
@@ -364,6 +368,55 @@ class FlatPatchTest(unittest.TestCase):
         self.assertFalse(flat_patch(z, 2, 1, 1, 0.1))    # the NaN (nothing hit)
         self.assertFalse(flat_patch(z, 0, 1, 1, 0.1))    # off the grid
         self.assertFalse(flat_patch(z, 1, 1, 1, 0.01))
+
+
+class BakeContextTest(unittest.TestCase):
+    def test_object_and_active_object_are_the_first_target(self):
+        # Regression: v06 was saved with MID_mid_01 active; an override without `object` let the bake poll
+        # see it and fail with "context is incorrect".
+        ctx = bake_context("scene", "vl", ("a", "b"))
+        self.assertEqual(ctx["object"], "a")
+        self.assertEqual(ctx["active_object"], "a")
+        self.assertEqual(ctx["selected_objects"], ["a", "b"])
+        self.assertEqual(ctx["selected_editable_objects"], ["a", "b"])
+        self.assertEqual((ctx["scene"], ctx["view_layer"]), ("scene", "vl"))
+
+    def test_empty_is_an_error(self):
+        with self.assertRaises(ValueError):
+            bake_context("scene", "vl", [])
+
+    def test_export_bakes_with_it(self):
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "export_hero.py")).read()
+        i = src.index("bpy.ops.object.bake(")
+        self.assertIn("temp_override(**hg.bake_context(", src[max(0, i - 200):i])
+
+
+class BlendMatchesTest(unittest.TestCase):
+    def test_by_file_name(self):
+        self.assertTrue(blend_matches("/a/b/Atlantian_plaza_blockout-v06.blend", "Atlantian_plaza_blockout-v06.blend"))
+        self.assertTrue(blend_matches("C:\\x\\v06.blend", "../v06.blend"))
+        self.assertFalse(blend_matches("/a/Atlantian_plaza_blockout-v05.blend", "Atlantian_plaza_blockout-v06.blend"))
+        self.assertFalse(blend_matches("/a/Atlantian_plaza_blockout-v06_before-cull.blend",
+                                       "Atlantian_plaza_blockout-v06.blend"))
+        self.assertFalse(blend_matches("", "Atlantian_plaza_blockout-v06.blend"))   # unsaved scene
+
+
+class PaletteTest(unittest.TestCase):
+    def test_name_round_trip(self):
+        self.assertEqual(palette_name(0.5, 0.5), "HERO_PAL_R50_M50")
+        self.assertEqual(palette_name(0.85, 0.0), "HERO_PAL_R85_M0")
+        self.assertEqual(palette_class("HERO_PAL_R85_M0"), (0.85, 0.0))
+
+    def test_float_noise_shares_a_class(self):
+        # a roughness of 0.6000000238 (float32) is the same class as 0.6
+        self.assertEqual(palette_name(0.6000000238418579, 0), palette_name(0.6, 0.0))
+
+    def test_clamped(self):
+        self.assertEqual(palette_name(1.2, -0.1), "HERO_PAL_R100_M0")
+
+    def test_bad_name(self):
+        with self.assertRaises(ValueError):
+            palette_class("HERO_PAL_X1_Y2")
 
 
 if __name__ == "__main__":

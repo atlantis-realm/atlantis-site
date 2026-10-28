@@ -1,13 +1,16 @@
-"""Export the /city hero view from v05: a culled, AO-baked raw glb plus hero_props.json.
+"""Export the /city hero view from the current scene file (v06): a culled, AO-baked raw glb plus hero_props.json.
 
 Run it headless (the default and the only tested way; see README "Hero export"):
     node -e '<see README: writes build/hero/plan_blimps.json>'     (once per plan change; Blender has no node)
-    flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v05.blend \
+    flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v06.blend \
       --python-expr 'G="'$PWD'/"; exec(open(G+"export_hero.py").read(), {"__name__":"eh","__file__":G+"export_hero.py","OUT_DIR":G+"build/hero/"})'
 
 A run inside the live Blender session (exec through the Blender MCP) is unverified: a related temp_override
 pattern segfaulted Blender 5.2, and a crash loses unsaved work. run() refuses it unless the exec globals carry
 "ALLOW_LIVE": True, which should only be passed after the user has saved and opted in.
+
+The opened .blend must be BLEND (default Atlantian_plaza_blockout-v06.blend, compared by file name); export
+another with the exec global "BLEND" or the env var HERO_BLEND, e.g. HERO_BLEND=Atlantian_plaza_blockout-v05.blend.
 
 Writes OUT_DIR/hero_raw.glb, hero_props.json and export_report.json. Never saves the .blend and never edits
 the user's scene: everything it builds lives in a scratch scene HERO_EXPORT_SCENE (collection HERO_EXPORT,
@@ -27,7 +30,10 @@ Stages
                kept non-tree chunks; dropped only if every ray hits another chunk first.
   realise      everything goes to world-space meshes in HERO_EXPORT, joined per material per tile
                (near NEAR_TILE, mid MID_TILE, far FAR_TILE) by distance band (NEAR_DIST, FAR_DIST); near is
-               joined too, for the draw-call budget, but keeps full detail.
+               joined too, for the draw-call budget, but keeps full detail. Plain HERO_ materials share one
+               palette material per roughness/metallic class (HERO_PAL_R<r>_M<m>, white base colour): their
+               base colours ride in the corner colour, multiplied into the AO (palettise / apply_base), so
+               v06's many vernacular colours cost one draw call per tile, not one each.
                Mid: faces facing away from every sample camera are dropped. Far: Decimate (collapse).
                Named, never joined: `Text` (pale PBR), the Lantern (LANTERN_PREFIXES), the well ring
                lights (WELL_RING_LIGHTS), HERO_well_water. Trees (KIT_PlantD_*, asset_Plant_* parts)
@@ -70,6 +76,9 @@ sys.path.insert(0, _here)
 import hero_geom as hg  # noqa: E402
 importlib.reload(hg)
 
+# The scene file the hero comes from (README "Hero export"); run() refuses any other unless told.
+BLEND = _g.get("BLEND") or os.environ.get("HERO_BLEND") or "Atlantian_plaza_blockout-v06.blend"
+
 # ---------------------------------------------------------------- constants
 CAMERA = "Camera.001"
 FPS = 24
@@ -97,6 +106,8 @@ SMOOTH_ANGLE_DEG = 30.0                  # smooth by angle: edges between faces 
 AO_SAMPLES, AO_DISTANCE = 32, 8.0
 AO_SMOOTH_PASSES = 2                    # neighbour-averaging passes over the baked AO (smooth_ao)
 NO_AO_MATERIALS = {"MAT_AP_Water"}      # water gets white AO and no subdivision
+PALETTE_PREFIX = "HERO_PAL_"            # shared palette materials for joined tile meshes (palette_name)
+BASE_ATTR = "HERO_BASE"                 # corner base colour of a palette mesh; multiplied into AO, then removed
 
 TREE_OBJECT_PREFIXES = ("KIT_PlantD_",)
 TREE_COLLECTION_PREFIXES = ("asset_Plant_",)
@@ -551,6 +562,21 @@ class Materials:
             return "NIGHT_" + src
         return "HERO_" + (src or "default")
 
+    def palette_name(self, out, src):
+        """The palette material a joined tile mesh puts `out` under, or None to keep it as its own material:
+        night materials (found by name on the page) and NO_AO_MATERIALS stay apart."""
+        if not out.startswith("HERO_") or src in NO_AO_MATERIALS:
+            return None
+        b = principled(self.get(out, src))
+        return hg.palette_name(b.inputs["Roughness"].default_value, b.inputs["Metallic"].default_value)
+
+    def palette(self, name):
+        m = self.cache.get(name)
+        if m is None:
+            r, mt = hg.palette_class(name)
+            m = self.cache[name] = pbr(name, (1.0, 1.0, 1.0), r, mt)
+        return m
+
     def get(self, out, src):
         m = self.cache.get(out)
         if m:
@@ -662,6 +688,45 @@ def smooth_ao(me, passes=AO_SMOOTH_PASSES):
         v = np.where(deg > 0, 0.5 * v + 0.5 * nsum / np.maximum(deg, 1), v)
     col[:, :3] = v[lv, None]
     attr.data.foreach_set("color", col.ravel())
+
+
+def palettise(me, pal):
+    """Write each polygon's material base colour (linear) to the corner colour BASE_ATTR, then give the mesh
+    the single palette material `pal`. Subdivision and Decimate interpolate it with the other corner data."""
+    cols = np.array([tuple(principled(m).inputs["Base Color"].default_value[:3]) for m in me.materials], np.float32)
+    npoly, nl = len(me.polygons), len(me.loops)
+    mi = np.empty(npoly, np.int64); me.polygons.foreach_get("material_index", mi)
+    ls = np.empty(npoly, np.int64); me.polygons.foreach_get("loop_start", ls)
+    lt = np.empty(npoly, np.int64); me.polygons.foreach_get("loop_total", lt)
+    loop_poly = np.empty(nl, np.int64)
+    loop_poly[np.repeat(ls, lt) + (np.arange(lt.sum()) - np.repeat(np.cumsum(lt) - lt, lt))] = np.repeat(np.arange(npoly), lt)
+    col = np.ones((nl, 4), np.float32)
+    col[:, :3] = cols[mi[loop_poly]]
+    attr = me.color_attributes.new(BASE_ATTR, "FLOAT_COLOR", "CORNER")
+    attr.data.foreach_set("color", col.ravel())
+    me.materials.clear()
+    me.materials.append(pal)
+    me.polygons.foreach_set("material_index", np.zeros(npoly, np.int32))
+
+
+def apply_base(me):
+    """Multiply the AO corner colour by BASE_ATTR (palettise) and drop BASE_ATTR. No-op without it."""
+    base = me.color_attributes.get(BASE_ATTR)
+    if base is None:
+        return
+    ao = me.color_attributes.get("AO")
+    if ao is None:
+        raise RuntimeError(f"export_hero: {me.name} has {BASE_ATTR} but no AO")
+    nl = len(me.loops)
+    b = np.empty(nl * 4, np.float32); base.data.foreach_get("color", b)
+    a = np.empty(nl * 4, np.float32); ao.data.foreach_get("color", a)
+    b, a = b.reshape(-1, 4), a.reshape(-1, 4)
+    a[:, :3] *= b[:, :3]
+    ao.data.foreach_set("color", a.ravel())
+    me.color_attributes.remove(base)
+    ao = me.color_attributes.get("AO")
+    me.color_attributes.active_color = ao
+    me.color_attributes.render_color_index = me.color_attributes.active_color_index
 
 
 def ao_white(me):
@@ -910,28 +975,40 @@ def idle_spots(pr, hm, cam_path, samples, frusta, walk_lines, route_lines, well_
     eyes = [Vector(s[1]) for s in samples]
     walk_pts = np.array([q for line in walk_lines for q in line])
     out = []
+    dropped = {k: 0 for k in ("camera", "range", "walk_path", "robot_route", "level", "frustum", "unseen")}
     for pose, p, face, drop, top in raw:
         feet_z = p.z - (drop or 0.0)
         chest = np.array((p.x, p.y, feet_z + WALK_CHEST_H))
         dist = np.linalg.norm(cams - chest, axis=1)
-        if dist.min() < WALK_CAMERA_CLEARANCE or np.linalg.norm(cams - np.array(p), axis=1).min() > IDLE_RANGE:
+        if dist.min() < WALK_CAMERA_CLEARANCE:
+            dropped["camera"] += 1
+            continue
+        if np.linalg.norm(cams - np.array(p), axis=1).min() > IDLE_RANGE:
+            dropped["range"] += 1
             continue
         reach = p.to_2d() + face * IDLE_BODY_REACH
         if any(min(hg.polyline_dist((p.x, p.y), line), hg.polyline_dist((reach.x, reach.y), line)) < IDLE_PATH_CLEARANCE
                for line in walk_lines):
+            dropped["walk_path"] += 1
             continue
         if any(min(hg.polyline_dist((p.x, p.y), line), hg.polyline_dist((reach.x, reach.y), line)) < ROUTE_IDLE_CLEAR
                for line in route_lines):
+            dropped["robot_route"] += 1
             continue
         street = walk_pts[np.argmin(np.sum((walk_pts[:, :2] - (p.x, p.y)) ** 2, axis=1)), 2]
         if abs(feet_z - street) > IDLE_LEVEL:
+            dropped["level"] += 1
             continue
         lo, hi = (p.x - 0.4, p.y - 0.4, feet_z), (p.x + 0.4, p.y + 0.4, feet_z + 1.7)
         if not in_view(lo, hi, frusta):
+            dropped["frustum"] += 1
             continue
         if not seen_from(occ, eyes, p + Vector((0, 0, IDLE_VIEW_H))):
+            dropped["unseen"] += 1
             continue
         out.append((pose, p, face, drop, top, area_of(p.to_2d(), well_c, fwd, side, pave_out)))
+    counts["raw_poses"] = {k: sum(1 for r in raw if r[0] == k) for k in ("sit", "lean")}
+    counts["dropped"] = dropped
     counts["clear"] = len(out)
     out.sort(key=lambda s: (round(s[1].x, 3), round(s[1].y, 3), s[0]))
     out = [out[k] for k in hg.thin_spots([(s[1].x, s[1].y) for s in out], IDLE_SPACING)]
@@ -1345,6 +1422,9 @@ def run():
     if not bpy.app.background and not _g.get("ALLOW_LIVE"):
         raise RuntimeError("export_hero: run it headless (blender -b, see README 'Hero export'); a live run "
                            "needs \"ALLOW_LIVE\": True, only after the user has saved and opted in")
+    if not hg.blend_matches(bpy.data.filepath, BLEND):
+        raise RuntimeError(f"export_hero: opened {os.path.basename(bpy.data.filepath) or '(unsaved)'}, expected "
+                           f"{os.path.basename(BLEND)}; pass \"BLEND\" (exec global) or HERO_BLEND to export another")
     t0 = time.time()
     timing = {}
     scene = bpy.context.scene
@@ -1472,15 +1552,15 @@ def run():
                 sel = polys[(tiles[:, 0] == tx) & (tiles[:, 1] == ty) & (mis == m)]
                 src = g.mat_name(m)
                 out = M.out_name(src, None)
-                b = buckets.setdefault((band, tx, ty, out), Builder())
-                b.add(c.co, c.lv, g.ls, g.lt, sel, np.zeros(len(sel), np.int64))
-                if not b.mats:
-                    b.mat_index(M.get(out, src))
+                b = buckets.setdefault((band, tx, ty, M.palette_name(out, src) or out), Builder())
+                b.add(c.co, c.lv, g.ls, g.lt, sel, np.full(len(sel), b.mat_index(M.get(out, src))))
         timing["buckets"] = time.time() - t0
 
         bake, white, far = [], [], []
         for (band, tx, ty, out) in sorted(buckets):
             me = buckets[(band, tx, ty, out)].mesh(f"HERO_{band}_{tx}_{ty}_{out}")
+            if out.startswith(PALETTE_PREFIX):
+                palettise(me, M.palette(out))
             ob = link(me.name, me)
             src = out.split("_", 1)[1] if out.startswith(("HERO_", "NIGHT_")) else out
             if band == "far":
@@ -1702,11 +1782,16 @@ def run():
             ob.select_set(ob in bake, view_layer=vl)
         if bake:
             vl.objects.active = bake[0]
-            with bpy.context.temp_override(scene=hs, view_layer=vl, active_object=bake[0],
-                                           selected_objects=bake, selected_editable_objects=bake):
+            with bpy.context.temp_override(**hg.bake_context(hs, vl, bake)):
                 bpy.ops.object.bake(type="AO", target=vc_target, use_clear=True)
         for ob in bake:
             smooth_ao(ob.data)
+        for ob in objs:
+            if ob.type == "MESH":
+                apply_base(ob.data)
+        stray = [ob.name for ob in objs if ob.type == "MESH" and ob.data.color_attributes.get(BASE_ATTR)]
+        if stray:
+            raise RuntimeError(f"export_hero: {BASE_ATTR} left on {stray[:5]}")
         timing["bake"] = time.time() - t0
 
         # ---- camera
@@ -1796,7 +1881,8 @@ def run():
                 "instances": len(insts), "in_frustum": len(in_frustum), "chunks": len(chunks),
                 "chunks_kept": len(kept_chunks), "trees_kept": len(kept_trees), "tree_species": len(species),
                 "bands": band_count, "mid_backfaces_dropped": backfaces, "objects": len(objs),
-                "joined_meshes": len(buckets), "named": sorted(specials), "lamps": n_lamps, "triangles": tri,
+                "joined_meshes": len(buckets),
+                "palettes": sorted({k[3] for k in buckets if k[3].startswith(PALETTE_PREFIX)}), "named": sorted(specials), "lamps": n_lamps, "triangles": tri,
                 "materials": sorted(m.name for m in M.cache.values()),
                 "blimp_orbit_visible": round(frac, 4),
                 "idle_spots": idle_counts,
@@ -1805,6 +1891,7 @@ def run():
                 "drone_spots": drone_counts,
             },
             "per_collection": dict(sorted(report.items())),
+            "blend": os.path.basename(bpy.data.filepath),
             "glb_bytes": os.path.getsize(glb),
             "timing_s": {k: round(v, 1) for k, v in timing.items()},
         }

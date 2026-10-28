@@ -26,6 +26,9 @@ wall_top()         the height of a wall or railing top from rays scanned up its 
 disc_offsets()     the grid cells within a radius (flat ground for a conversation circle).
 pool_max()         the highest sample (and box top) per cell of a coarse grid (the drones' sky heights).
 flat_patch()       whether a height map cell and its neighbours are one level (a drone's roof drop).
+blend_matches()    whether the opened .blend is the expected scene file (by file name).
+palette_name()     the shared palette material name for a roughness/metallic pair; palette_class() back.
+bake_context()     the temp_override keywords for bpy.ops.object.bake on a list of objects.
 
 Tests: python3 -m unittest discover -s test -p "test_*.py"
 """
@@ -342,3 +345,36 @@ def flat_patch(z, j, i, r, tol):
         return False
     c = z[j][i]
     return all(abs(z[jj][ii] - c) <= tol for jj in range(j - r, j + r + 1) for ii in range(i - r, i + r + 1))
+
+
+def bake_context(scene, view_layer, objs):
+    """Keywords for bpy.context.temp_override(**...) round bpy.ops.object.bake on `objs` (non-empty).
+
+    The bake poll reads `object` (ED_object_active_context) before `active_object`, and the window's
+    `object` is whatever the .blend was saved with active (v06: MID_mid_01, in the user scene, not in the
+    scratch scene), so both must point at the first bake target or the poll fails ("context is incorrect")."""
+    objs = list(objs)
+    if not objs:
+        raise ValueError("bake_context needs at least one object")
+    return dict(scene=scene, view_layer=view_layer, object=objs[0], active_object=objs[0],
+                selected_objects=objs, selected_editable_objects=objs)
+
+
+def blend_matches(path, expected):
+    """True if the .blend at `path` is `expected`, compared by file name (either may be a full path)."""
+    norm = lambda p: p.replace("\\", "/").rsplit("/", 1)[-1]
+    return bool(path) and norm(path) == norm(expected)
+
+
+def palette_name(rough, metal):
+    """HERO_PAL_R<r>_M<m>: the palette material for a roughness/metallic pair, both in hundredths (0-100)."""
+    q = lambda v: int(round(min(max(float(v), 0.0), 1.0) * 100))
+    return f"HERO_PAL_R{q(rough)}_M{q(metal)}"
+
+
+def palette_class(name):
+    """(roughness, metallic) of a palette_name()."""
+    r, m = name[len("HERO_PAL_"):].split("_")
+    if not (r.startswith("R") and m.startswith("M")):
+        raise ValueError(name)
+    return int(r[1:]) / 100, int(m[1:]) / 100
