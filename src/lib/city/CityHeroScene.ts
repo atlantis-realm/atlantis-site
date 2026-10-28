@@ -381,8 +381,8 @@ export class CityHeroScene {
 	minibotState(): MinibotState[] {
 		return this.minibots?.state() ?? [];
 	}
+
 	/** Where each drone is: its trip kind, drop spot, take-off spot (-1: flew in), livery, position and whether its parcel is on the spot. */
-	/** Where each drone is: its drop spot, take-off spot (-1: flew in), position and whether it has dropped its parcel. */
 	droneState(): DroneState[] {
 		return this.drones?.state() ?? [];
 	}
