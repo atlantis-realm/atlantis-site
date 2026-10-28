@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MIN_ASPECT, easeToward, frameToTime, safeFrameFov, scrollToFrame } from './heroCamera.ts';
+import {
+	MIN_ASPECT,
+	coversViewport,
+	dropEase,
+	dropPose,
+	easeToward,
+	frameToTime,
+	heroScroll,
+	safeFrameFov,
+	scrollToFrame
+} from './heroCamera.ts';
 
 const DEG = Math.PI / 180;
 
@@ -71,4 +81,77 @@ test('easeToward converges monotonically without overshoot', () => {
 		}
 		assert.equal(v, target);
 	}
+});
+
+test('easeToward snaps within a custom distance', () => {
+	assert.equal(easeToward(0, 1, 1 / 60, 8, 1e-5), 1 - Math.exp(-8 / 60));
+	assert.equal(easeToward(0.999999, 1, 1 / 60, 8, 1e-5), 1);
+});
+
+test('heroScroll plays the hero until the section enters, then drops until its edge is mid-screen', () => {
+	// Track 4000 px, viewport 1000 px: the section starts at 4000 and the hero runs over 3000 px.
+	const H = 1000;
+	const top = 4000;
+	assert.deepEqual(heroScroll(0, top, H), { progress: 0, drop: 0 });
+	assert.deepEqual(heroScroll(1500, top, H), { progress: 0.5, drop: 0 });
+	// The section's top edge at the viewport bottom: the old progress = 1, frame 1.
+	assert.deepEqual(heroScroll(3000, top, H), { progress: 1, drop: 0 });
+	assert.equal(scrollToFrame(heroScroll(3000, top, H).progress), 1);
+	assert.deepEqual(heroScroll(3250, top, H), { progress: 1, drop: 0.5 });
+	// The edge at the vertical centre of the viewport: on the floor.
+	assert.deepEqual(heroScroll(3500, top, H), { progress: 1, drop: 1 });
+	assert.deepEqual(heroScroll(9000, top, H), { progress: 1, drop: 1 });
+	assert.deepEqual(heroScroll(-50, top, H), { progress: 0, drop: 0 });
+});
+
+test('heroScroll keeps the edge rule on a tall phone viewport', () => {
+	const H = 844;
+	const top = 4 * H + 60;
+	const range = top - H;
+	assert.equal(heroScroll(range, top, H).drop, 0);
+	// The edge is at viewport y = top - scrollY; at drop 1 that is H / 2.
+	const s = range + H / 2;
+	assert.equal(heroScroll(s, top, H).drop, 1);
+	assert.equal(top - s, H / 2);
+});
+
+test('heroScroll with the section already on screen starts at the end of the hero', () => {
+	// The edge at 800 of 1000 px is 40% of the way up to the middle.
+	assert.deepEqual(heroScroll(0, 800, 1000), { progress: 1, drop: 0.4 });
+	assert.equal(heroScroll(0, 0, 1000).drop, 1);
+});
+
+test('dropEase is a monotonic smoothstep from 0 to 1, clamped', () => {
+	assert.equal(dropEase(0), 0);
+	assert.equal(dropEase(0.5), 0.5);
+	assert.equal(dropEase(1), 1);
+	assert.equal(dropEase(-1), 0);
+	assert.equal(dropEase(2), 1);
+	let prev = 0;
+	for (let i = 1; i <= 100; i++) {
+		const v = dropEase(i / 100);
+		assert.ok(v >= prev);
+		prev = v;
+	}
+});
+
+test('dropPose drops the eye to the ground and levels the pitch, never below the ground', () => {
+	const eye = 10.31;
+	const ground = 8.62;
+	const pitch = 0.0435;
+	assert.deepEqual(dropPose(eye, ground, pitch, 0), { y: eye, pitch });
+	const end = dropPose(eye, ground, pitch, 1);
+	assert.equal(end.y, ground);
+	assert.equal(end.pitch, 0);
+	const mid = dropPose(eye, ground, pitch, 0.5);
+	assert.ok(Math.abs(mid.y - (eye + ground) / 2) < 1e-12);
+	for (let i = 0; i <= 50; i++) assert.ok(dropPose(eye, ground, pitch, i / 50).y >= ground);
+	assert.equal(dropPose(eye, ground, pitch, 3).y, ground);
+});
+
+test('coversViewport only when the box spans the whole viewport', () => {
+	assert.equal(coversViewport(0, 1000, 1000), true);
+	assert.equal(coversViewport(-200, 1400, 1000), true);
+	assert.equal(coversViewport(1, 1400, 1000), false);
+	assert.equal(coversViewport(-200, 999, 1000), false);
 });

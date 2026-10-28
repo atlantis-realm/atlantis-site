@@ -7,7 +7,8 @@
 // robots crossing the avenue (robot.ts, robot.glb; none without it), the person-sized
 // minibots walking and talking among the people (minibots.ts, the same bake) and the drones
 // delivering and picking up parcels (drones.ts, procedural; none without the export's
-// drone_spots). Follows the
+// drone_spots). Past frame 1 the camera drops to the floor for the section after
+// the hero (heroScroll, dropPose). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -19,8 +20,12 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import {
+	EASE_RATE,
+	EASE_SNAP_DROP,
 	HERO_FRAME_END,
 	HERO_FRAME_START,
+	dropEase,
+	dropPose,
 	easeToward,
 	frameToTime,
 	safeFrameFov,
@@ -203,6 +208,27 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
+	/** Floor drop after frame 1 (heroScroll): 0 on the frame-1 pose, 1 with the eye on the floor. */
+	private drop = 0;
+	private targetDrop = 0;
+	/** Floor height under the frame-1 camera (found by groundUnderEnd()); null keeps the eye height. */
+	private groundY: number | null = null;
+	/** The render loop is stopped while the page covers the canvas (setPaused). */
+	private paused = false;
+	/**
+	 * The camera's pose as the mixer last set it. The mixer only writes a track
+	 * when its value changes, so setFrameTime() puts this back before the
+	 * opening tilt and the drop are applied again, and they never accumulate.
+	 */
+	private readonly animPos = new THREE.Vector3();
+	private readonly animQuat = new THREE.Quaternion();
+	private animSaved = false;
+	private readonly dropPos = new THREE.Vector3();
+	private readonly dropQuat = new THREE.Quaternion();
+	private readonly dropEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+	private readonly dropMatrix = new THREE.Matrix4();
+	private readonly parentInverse = new THREE.Matrix4();
+	private readonly dropScale = new THREE.Vector3();
 	/** Clock of the moving things (clouds, blimps, water, people, minibots, robot, drones); frozen with reducedMotion. */
 	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
@@ -310,6 +336,7 @@ export class CityHeroScene {
 
 		this.sunDir.set(...props.sun.dir).normalize();
 		setSkySun(this.sky, this.sunDir);
+		this.groundY = this.groundUnderEnd(gltf.scene);
 		this.setFrameTime(this.frame);
 		this.sky.uniforms.uCityDir.value.copy(this.cityDirection(props));
 		setSkyMoon(this.sky, this.sky.uniforms.uCityDir.value);
@@ -368,9 +395,27 @@ export class CityHeroScene {
 		this.resize(this.canvas.clientWidth || 1, this.canvas.clientHeight || 1);
 	}
 
-	/** Scroll progress 0..1 → frame target (250..1). */
-	setScroll(progress: number): void {
+	/** Scroll progress 0..1 → frame target (250..1), and the floor drop 0..1 after it (heroScroll). */
+	setScroll(progress: number, drop = 0): void {
 		this.targetFrame = scrollToFrame(progress);
+		this.targetDrop = THREE.MathUtils.clamp(drop, 0, 1);
+	}
+
+	/**
+	 * Stop the render loop while nothing of the canvas shows (the section after
+	 * the hero covers the viewport), and pick it up again where it was.
+	 */
+	setPaused(paused: boolean): void {
+		if (paused === this.paused || this.destroyed) return;
+		this.paused = paused;
+		if (paused) {
+			if (this.animationFrameId != null) cancelAnimationFrame(this.animationFrameId);
+			this.animationFrameId = null;
+		} else {
+			// No catch-up: the paused time doesn't reach the easing or motionTime.
+			this.timer.reset();
+			this.start();
+		}
 	}
 
 	resize(w: number, h: number): void {
@@ -421,6 +466,16 @@ export class CityHeroScene {
 		return this.frame;
 	}
 
+	/** Current (eased) floor drop, 0..1. */
+	getDrop(): number {
+		return this.drop;
+	}
+
+	/** Floor height under the frame-1 camera, null when nothing was found below it. */
+	getGround(): number | null {
+		return this.groundY;
+	}
+
 	private updateProjection(): void {
 		this.camera.aspect = this.aspect;
 		const props = this.loadedProps;
@@ -434,15 +489,67 @@ export class CityHeroScene {
 	private setFrameTime(frame: number): void {
 		if (!this.mixer || !this.action) return;
 		const t = THREE.MathUtils.clamp(frameToTime(frame), 0, this.action.getClip().duration);
+		if (this.animSaved) {
+			this.camera.position.copy(this.animPos);
+			this.camera.quaternion.copy(this.animQuat);
+		}
 		this.action.time = t;
 		this.mixer.update(0);
-		// The mixer has just rewritten the camera's quaternion, so the tilt never accumulates.
+		this.animPos.copy(this.camera.position);
+		this.animQuat.copy(this.camera.quaternion);
+		this.animSaved = true;
+		// The camera now holds the mixer's pose (animPos), so the tilt never accumulates.
 		const aim = THREE.MathUtils.smoothstep(
 			frame,
 			HERO_FRAME_END - OPENING_AIM_FADE_FRAMES,
 			HERO_FRAME_END
 		);
 		if (aim > 0) this.camera.rotateX(THREE.MathUtils.degToRad(OPENING_PITCH_DEG * aim));
+		if (this.drop > 0) this.applyDrop();
+	}
+
+	/**
+	 * The floor drop on top of the frame's pose (frame 1 once the hero has
+	 * settled): straight down to groundY, keeping the heading while the pitch
+	 * and roll ease to level, so the horizon ends at the middle of the screen.
+	 * Worked in world space, then put back under the camera's parent.
+	 */
+	private applyDrop(): void {
+		const cam = this.camera;
+		cam.updateMatrixWorld();
+		cam.matrixWorld.decompose(this.dropPos, this.dropQuat, this.dropScale);
+		this.dropEuler.setFromQuaternion(this.dropQuat, 'YXZ');
+		const pose = dropPose(
+			this.dropPos.y,
+			this.groundY ?? this.dropPos.y,
+			this.dropEuler.x,
+			this.drop
+		);
+		this.dropPos.y = pose.y;
+		this.dropEuler.x = pose.pitch;
+		this.dropEuler.z *= 1 - dropEase(this.drop);
+		this.dropQuat.setFromEuler(this.dropEuler);
+		this.dropMatrix.compose(this.dropPos, this.dropQuat, this.dropScale);
+		if (cam.parent) {
+			this.dropMatrix.premultiply(this.parentInverse.copy(cam.parent.matrixWorld).invert());
+		}
+		this.dropMatrix.decompose(cam.position, cam.quaternion, cam.scale);
+		cam.updateMatrixWorld();
+	}
+
+	/**
+	 * The floor under the camera at frame 1 (the end of the hero move): the first
+	 * surface straight below it in the glb. Null, with a warning, when there is none.
+	 */
+	private groundUnderEnd(root: THREE.Object3D): number | null {
+		this.setFrameTime(HERO_FRAME_START);
+		root.updateMatrixWorld(true);
+		const from = this.camera.getWorldPosition(new THREE.Vector3());
+		const ray = new THREE.Raycaster(from, new THREE.Vector3(0, -1, 0));
+		const hit = ray.intersectObject(root, true).find((h) => (h.object as THREE.Mesh).isMesh);
+		if (!hit)
+			console.warn('City hero: no floor under the frame-1 camera; the drop only levels it.');
+		return hit ? hit.point.y : null;
 	}
 
 	/** COLOR_0 carries the baked AO; make sure every material that has it uses it. */
@@ -656,10 +763,14 @@ export class CityHeroScene {
 		const delta = this.timer.getDelta();
 
 		const prev = this.frame;
+		const prevDrop = this.drop;
 		this.frame = this.opts.reducedMotion
 			? this.targetFrame
 			: easeToward(this.frame, this.targetFrame, delta);
-		if (this.frame !== prev) {
+		this.drop = this.opts.reducedMotion
+			? this.targetDrop
+			: easeToward(this.drop, this.targetDrop, delta, EASE_RATE, EASE_SNAP_DROP);
+		if (this.frame !== prev || this.drop !== prevDrop) {
 			this.setFrameTime(this.frame);
 			this.updateProjection();
 		}
@@ -673,7 +784,7 @@ export class CityHeroScene {
 	};
 
 	start(): void {
-		if (this.animationFrameId != null) return;
+		if (this.animationFrameId != null || this.paused) return;
 		this.animationFrameId = requestAnimationFrame(this.tick);
 	}
 
