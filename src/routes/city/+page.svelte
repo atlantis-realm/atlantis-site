@@ -28,8 +28,11 @@
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let below: HTMLElement | undefined = $state();
+	let modeButton: HTMLButtonElement | undefined = $state();
 	/** True once the live scene has loaded; the still then fades out. */
 	let live = $state(false);
+	/** The section has scrolled up under the Night toggle (hidden then on narrow screens). */
+	let toggleOverSection = $state(false);
 	let mode: CityHeroMode = $state('day');
 	let scene: CityHeroScene | undefined;
 
@@ -56,6 +59,10 @@
 		let disposed = false;
 
 		const onScroll = (): void => {
+			if (below && modeButton) {
+				toggleOverSection =
+					below.getBoundingClientRect().top < modeButton.getBoundingClientRect().bottom;
+			}
 			if (!scene) return;
 			const { progress, drop, covered } = scrollState();
 			scene.setScroll(progress, drop);
@@ -65,6 +72,10 @@
 			scene?.resize(window.innerWidth, window.innerHeight);
 			onScroll();
 		};
+		// Registered before the scene, so the toggle also follows the page over the still.
+		window.addEventListener('scroll', onScroll, { passive: true });
+		window.addEventListener('resize', onResize);
+		onScroll();
 
 		// Any failure keeps the still on screen: no WebGL, or the glb/props fail to load.
 		const fail = (err: unknown): void => {
@@ -85,8 +96,6 @@
 					(window as unknown as { __cityHero?: CityHeroScene }).__cityHero = scene;
 				}
 				onResize();
-				window.addEventListener('scroll', onScroll, { passive: true });
-				window.addEventListener('resize', onResize);
 				await scene.load(GLB_URL, PROPS_URL);
 				if (disposed) return;
 				onResize();
@@ -117,13 +126,15 @@
 		alt="The Atlantis plaza well, with “Welcome to Atlantis” across the water"
 	/>
 </div>
+<h1 class="visually-hidden">Atlantis city</h1>
 <div class="track"></div>
 <!--
 	The page after the hero. Its top edge is the floor: the camera drops into it
 	as the edge rises to mid-screen (heroScroll), so the edge is drawn as a cut
 	through the paving, its foundation and the sea Atlantis floats on.
 -->
-<section class="below" class:night={mode === 'night'} bind:this={below}>
+<!-- Night colours only over the live night scene: the still is a day view. -->
+<section class="below" class:night={live && mode === 'night'} bind:this={below}>
 	<div class="cut" aria-hidden="true"></div>
 	<!-- Placeholder copy: to be replaced with the real city text. -->
 	<div class="copy">
@@ -152,6 +163,8 @@
 	type="button"
 	class="mode"
 	class:night={mode === 'night'}
+	class:over-section={toggleOverSection}
+	bind:this={modeButton}
 	aria-pressed={mode === 'night'}
 	onclick={toggleMode}
 >
@@ -219,10 +232,20 @@
 		height: 400vh;
 	}
 
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+
 	/*
 	 * The section after the hero, scrolling up over the stage. Its top edge is a
-	 * cross-section of the floor: paving (sampled from the avenue under the
-	 * frame-1 camera: about #b8b9bf by day, #282f47 at night), a darker joint,
+	 * cross-section of the floor: paving (sampled from the avenue just above the
+	 * edge at drop 1: about #b8b9bf by day, #162a46 at night), a darker joint,
 	 * foundation stone, then the sea. Tall enough to cover the screen, so the
 	 * scene can stop rendering (setPaused).
 	 */
@@ -242,8 +265,8 @@
 	}
 
 	.below.night {
-		--paving: #282f47;
-		--joint: #1a1f30;
+		--paving: #162a46;
+		--joint: #0e1a2e;
 		--stone: #262a33;
 		--sea-top: #0a2438;
 		--sea: #050f1c;
@@ -264,7 +287,7 @@
 	.copy {
 		max-width: 38rem;
 		margin: 0 auto;
-		/* Bottom room for the fixed Night toggle, so the last line can scroll clear of it. */
+		/* Bottom room for the fixed Night toggle (wide screens keep it), so the last line clears it. */
 		padding: 3rem 1rem 6rem;
 		line-height: 1.7;
 	}
@@ -297,6 +320,30 @@
 		font: inherit;
 		cursor: pointer;
 		backdrop-filter: blur(4px);
+	}
+
+	/*
+	 * Narrower than the text column plus the toggle on either side, the toggle
+	 * would sit over the copy, so it steps aside while the section is under it
+	 * and comes back as the hero scrolls back down.
+	 */
+	@media (max-width: 52rem) {
+		.mode {
+			transition:
+				opacity 0.3s ease,
+				visibility 0.3s;
+		}
+
+		.mode.over-section {
+			opacity: 0;
+			visibility: hidden;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.mode {
+			transition: none;
+		}
 	}
 
 	.mode.night {

@@ -15,6 +15,12 @@ export const EASE_RATE = 8;
 export const EASE_SNAP_FRAMES = 1e-3;
 /** The same for the floor drop (0..1): a hundredth of a millimetre on a 1.7 m drop. */
 export const EASE_SNAP_DROP = 1e-5;
+/**
+ * The drop waits for the hero move to land: it fades in over the last this many
+ * frames before frame 1 (dropGate), so a jump to the end of the page (End key,
+ * scrollbar drag) flies the hero move first and only then drops to the floor.
+ */
+export const DROP_GATE_FRAMES = 12;
 
 const DEG = Math.PI / 180;
 
@@ -96,9 +102,8 @@ export function heroScroll(
 }
 
 /**
- * Drop progress → how far along the camera is (0 at the frame-1 pose, 1 with
- * the eye on the floor and the view level). Smoothstep, so it leaves the hero
- * move and settles on the floor gently.
+ * Drop progress → how far the view has levelled (0 at the frame-1 pitch and
+ * roll, 1 level). Smoothstep, so it leaves the hero move and settles gently.
  */
 export function dropEase(drop: number): number {
 	const d = Math.min(1, Math.max(0, drop));
@@ -106,8 +111,22 @@ export function dropEase(drop: number): number {
 }
 
 /**
+ * How much of the drop the camera may take at `frame` (eased): 1 from frame 1
+ * to DROP_GATE_FRAMES above it, fading (smoothstep) to 0 there and above, so
+ * the drop only ever starts from the settled frame-1 pose.
+ */
+export function dropGate(frame: number, start = HERO_FRAME_START): number {
+	const u = Math.min(1, Math.max(0, (frame - start) / DROP_GATE_FRAMES));
+	return 1 - u * u * (3 - 2 * u);
+}
+
+/**
  * Eye height and pitch (radians) during the drop: straight down from `eyeY` to
- * `groundY` while the pitch eases to level. Never below the ground.
+ * `groundY` while the pitch eases to level (dropEase). Never below the ground.
+ * The height eases in (d²) but ends linear: the section edge rises linearly to
+ * mid-screen, so the floor under that edge stays a couple of eye drops ahead of
+ * the camera (2·Δy / tan(vfov/2), ~11 m at the desktop fov) instead of closing
+ * in under the near plane, as it would with an eased landing.
  */
 export function dropPose(
 	eyeY: number,
@@ -115,8 +134,11 @@ export function dropPose(
 	pitch: number,
 	drop: number
 ): { y: number; pitch: number } {
-	const t = dropEase(drop);
-	return { y: Math.max(groundY, eyeY + (groundY - eyeY) * t), pitch: pitch * (1 - t) };
+	const d = Math.min(1, Math.max(0, drop));
+	return {
+		y: Math.max(groundY, eyeY + (groundY - eyeY) * d * d),
+		pitch: pitch * (1 - dropEase(d))
+	};
 }
 
 /** True when a box from `top` to `bottom` (viewport px) hides the whole viewport. */

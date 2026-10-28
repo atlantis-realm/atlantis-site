@@ -25,6 +25,7 @@ import {
 	HERO_FRAME_END,
 	HERO_FRAME_START,
 	dropEase,
+	dropGate,
 	dropPose,
 	easeToward,
 	frameToTime,
@@ -413,6 +414,16 @@ export class CityHeroScene {
 			this.animationFrameId = null;
 		} else {
 			// No catch-up: the paused time doesn't reach the easing or motionTime.
+			// The scroll, mode and size may all have changed while covered (or the
+			// page loaded already covered), so the revealed strip shows the current
+			// pose and mode at once, drawn now rather than on the next frame.
+			this.frame = this.targetFrame;
+			this.drop = this.targetDrop * dropGate(this.frame);
+			this.setFrameTime(this.frame);
+			this.updateProjection();
+			this.stepNight(Infinity);
+			this.updateMotion();
+			this.draw(0);
 			this.timer.reset();
 			this.start();
 		}
@@ -767,9 +778,11 @@ export class CityHeroScene {
 		this.frame = this.opts.reducedMotion
 			? this.targetFrame
 			: easeToward(this.frame, this.targetFrame, delta);
+		// The drop waits for the hero move to land on frame 1 (dropGate).
+		const dropTarget = this.targetDrop * dropGate(this.frame);
 		this.drop = this.opts.reducedMotion
-			? this.targetDrop
-			: easeToward(this.drop, this.targetDrop, delta, EASE_RATE, EASE_SNAP_DROP);
+			? dropTarget
+			: easeToward(this.drop, dropTarget, delta, EASE_RATE, EASE_SNAP_DROP);
 		if (this.frame !== prev || this.drop !== prevDrop) {
 			this.setFrameTime(this.frame);
 			this.updateProjection();

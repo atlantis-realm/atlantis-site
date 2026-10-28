@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	MIN_ASPECT,
+	DROP_GATE_FRAMES,
 	coversViewport,
 	dropEase,
+	dropGate,
 	dropPose,
 	easeToward,
 	frameToTime,
@@ -144,9 +146,41 @@ test('dropPose drops the eye to the ground and levels the pitch, never below the
 	assert.equal(end.y, ground);
 	assert.equal(end.pitch, 0);
 	const mid = dropPose(eye, ground, pitch, 0.5);
-	assert.ok(Math.abs(mid.y - (eye + ground) / 2) < 1e-12);
-	for (let i = 0; i <= 50; i++) assert.ok(dropPose(eye, ground, pitch, i / 50).y >= ground);
+	assert.ok(Math.abs(mid.y - (eye - 0.25 * (eye - ground))) < 1e-12);
+	assert.ok(Math.abs(mid.pitch - pitch / 2) < 1e-12);
+	let prev = eye;
+	for (let i = 0; i <= 50; i++) {
+		const y = dropPose(eye, ground, pitch, i / 50).y;
+		assert.ok(y >= ground && y <= prev);
+		prev = y;
+	}
 	assert.equal(dropPose(eye, ground, pitch, 3).y, ground);
+});
+
+test('dropPose ends linear: the floor under the rising section edge stays well past the near plane', () => {
+	const eye = 10.31;
+	const ground = 8.62;
+	const tanHalf = Math.tan(16.6 * DEG);
+	// The edge is (1 - d) of the half-height below the horizon; the floor under it is
+	// height / ((1 - d) · tanHalf) ahead of a level camera.
+	for (const left of [0.2, 0.05, 0.01, 0.001, 1e-5]) {
+		const height = dropPose(eye, ground, 0, 1 - left).y - ground;
+		assert.ok(height / (left * tanHalf) > 5, `1 - d = ${left}`);
+	}
+});
+
+test('dropGate lets the drop in only as the hero lands on frame 1', () => {
+	assert.equal(dropGate(1), 1);
+	assert.equal(dropGate(0.5), 1);
+	assert.equal(dropGate(1 + DROP_GATE_FRAMES / 2), 0.5);
+	assert.equal(dropGate(1 + DROP_GATE_FRAMES), 0);
+	assert.equal(dropGate(250), 0);
+	let prev = 1;
+	for (let f = 1; f <= 20; f += 0.25) {
+		const g = dropGate(f);
+		assert.ok(g <= prev);
+		prev = g;
+	}
 });
 
 test('coversViewport only when the box spans the whole viewport', () => {
