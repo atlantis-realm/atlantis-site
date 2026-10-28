@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {
 	FADE_S,
 	NIGHT_GLOW_SCALE,
+	NIGHT_WINDOW_SCALE,
 	fadeToward,
 	mixMode,
 	nightEmissive,
@@ -80,4 +81,14 @@ test('night glows are calmer: NIGHT_GLOW_SCALE at full night, none by day', () =
 	near(nightGlow(1), 0.6);
 	near(nightGlow(0.5), 0.3);
 	assert.ok(mixMode(1).bloom <= 0.4, 'gentler bloom');
+});
+
+test('lit windows take the lower NIGHT_WINDOW_SCALE; other glows the shared scale', () => {
+	assert.equal(NIGHT_WINDOW_SCALE, 0.3);
+	near(nightGlow(1, 'NIGHT_MAT_AP_Void'), 0.3);
+	near(nightGlow(1, 'NIGHT_MAT_AP_Clerestory'), 0.3);
+	near(nightGlow(0.5, 'NIGHT_MAT_AP_Void'), 0.15);
+	near(nightGlow(1, 'NIGHT_Lamp'), 0.6);
+	near(nightGlow(1, 'NIGHT_WellRing'), 0.6);
+	assert.equal(nightGlow(0, 'NIGHT_MAT_AP_Void'), 0);
 });

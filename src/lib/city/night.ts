@@ -32,6 +32,19 @@ export type ModeMix = {
  */
 export const NIGHT_GLOW_SCALE = 0.6;
 
+/**
+ * The lit windows (the facades' void panes and clerestory strips) take this
+ * scale instead of NIGHT_GLOW_SCALE. They are large flat panes that ACES tone
+ * mapping pushes to near-white at 0.6, so they need a lower factor to read as
+ * calmer warm light rather than maxed-out rectangles.
+ */
+export const NIGHT_WINDOW_SCALE = 0.3;
+/** Night-list materials that are lit windows (scaled by NIGHT_WINDOW_SCALE). */
+export const NIGHT_WINDOW_MATERIALS: ReadonlySet<string> = new Set([
+	'NIGHT_MAT_AP_Void',
+	'NIGHT_MAT_AP_Clerestory'
+]);
+
 export const DAY_MIX: Readonly<ModeMix> = {
 	sun: 3,
 	ambient: 1,
@@ -76,9 +89,16 @@ export function nightEmissive(material: THREE.Material): [number, number, number
 	return [v[0], v[1], v[2], v[3]];
 }
 
-/** Night glow level at mix t: mixMode(t).emissive times NIGHT_GLOW_SCALE. */
-export function nightGlow(t: number): number {
-	return mixMode(t).emissive * NIGHT_GLOW_SCALE;
+/**
+ * Night glow level at mix t: mixMode(t).emissive times NIGHT_GLOW_SCALE, or
+ * times NIGHT_WINDOW_SCALE for a lit-window material name.
+ */
+export function nightGlow(t: number, materialName?: string): number {
+	const scale =
+		materialName !== undefined && NIGHT_WINDOW_MATERIALS.has(materialName)
+			? NIGHT_WINDOW_SCALE
+			: NIGHT_GLOW_SCALE;
+	return mixMode(t).emissive * scale;
 }
 
 /** One cross-fade step: move t toward target by delta / FADE_S, never past it. */

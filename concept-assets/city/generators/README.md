@@ -773,7 +773,9 @@ steps: peak 266 draw calls by day and 282 at night (was 262 / 278), 1.479 M tria
 
 Night glows: every night glow is scaled by `NIGHT_GLOW_SCALE` 0.6 (`night.ts`): the `NIGHT_` emissives
 (windows, lamps, well ring), the robots' and minibots' `ROBOT_NIGHT_GLOW`, the drones' nav lights and the
-water's glints of the well lights. Bloom is gentler: `NIGHT_MIX.bloom` 0.4 (was 0.6) and the threshold scaled
+water's glints of the well lights. The lit windows (`NIGHT_MAT_AP_Void`, `NIGHT_MAT_AP_Clerestory`) take
+the lower `NIGHT_WINDOW_SCALE` 0.3 instead: they are large flat panes that ACES tone mapping still shows as
+near-white rectangles at 0.6, while at 0.3 they read as calmer warm light. Bloom is gentler: `NIGHT_MIX.bloom` 0.4 (was 0.6) and the threshold scaled
 with the glows (2.0 × 0.6 = 1.2), so the same lights bloom, with about 40% of the old bloom energy. The well
 ring at frame 250 no longer washes out "Welcome to Atlantis".
 

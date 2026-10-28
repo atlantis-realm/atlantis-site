@@ -554,7 +554,9 @@ export class CityHeroScene {
 			material.emissive.setRGB(emissive[0], emissive[1], emissive[2]);
 			// The Lantern's heart glows by day too.
 			material.emissiveIntensity =
-				material.name === LANTERN_HEART_MATERIAL ? heartGlow(t) : emissive[3] * glow;
+				material.name === LANTERN_HEART_MATERIAL
+					? heartGlow(t)
+					: emissive[3] * nightGlow(t, material.name);
 		}
 		this.lanternEnergy?.setNight(t);
 		this.sky.setMix(t);
