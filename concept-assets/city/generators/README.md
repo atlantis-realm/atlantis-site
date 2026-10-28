@@ -740,6 +740,43 @@ cross that title view; not done. Plans depend on the
 order of the updates (a drone sees the others' trips as they stand when it plans), as for the robots; when
 the clock goes back the drones start afresh from their seeds, so the same steps replay the same.
 
+## The Lantern's energy and calmer nights
+
+Runtime only (`src/lib/city/lanternBeam.ts`, wired up in `CityHeroScene.ts`; no re-export). The Lantern's heart is
+`NBHD_core_lantern`'s `NIGHT_MAT_AP_Cyan` mesh: a capped cylinder r 29 m from y 284 to 484 m (glTF), with the
+stone shaft (`HERO_MAT_AP_Stone`, r 28 to 25 m) running up inside it. At load, `findLanternHeart` finds it from
+`night_nodes`, and:
+
+- the heart becomes a glass tube: transparent at `LANTERN_HEART_OPACITY` 0.75, double-sided, no depth writes;
+- the Lantern's other meshes get their own material clone that discards fragments inside the heart's cylinder
+  (2 m in from its ends), so the shaft is cut away there; same draw calls;
+- the heart glows by day too: emissive `LANTERN_DAY_GLOW` 0.4 by day to `LANTERN_NIGHT_GLOW` 0.3 at night (in
+  place of its export strength 4, which blew it out to white and would hide the energy);
+- inside it run the Magitech Look Lab's powerline spans (its `waveSpan` with `add: true, disc: false`, "Lantern
+  Lines" cyan hue 186): `ENERGY_SPANS` 3 spans up the axis, 120° apart, each twisting 135° from bottom to top,
+  each the lab's four aurora curtains (two up, two flipped down; bright wavering edge, upward rays, travelling
+  pulses, RGB-split fringe, vertex fold; no audio), with its edge 0.45 H off the axis so the curtains cross it
+  and fill the tube. `RUNES_PER_SPAN` 4 morphing molecular runes ride each span's pulse crests (the lab's
+  `molecule()` / `drawMorph()`, a new molecule every 1 / `MORPH_RATE` s; each rune's molecule per beat is
+  seeded, so the energy is a pure function of the scene clock and reduced motion shows one static frame). The
+  spans' pulses are staggered by a third of a crest so their runes don't line up. Scaled to the heart: curtain
+  height 0.95 × 0.9 r, fold 0.12 H, `PULSES` 20, `PULSE_SPEED` 1.5 (runes climb at 0.075 spans/s), rays 28 per
+  span (the lab's 70 alias at the Lantern's 2.4 km), runes 7% of the span. Intensity `ENERGY_DAY_I` 1.1 by day,
+  `ENERGY_NIGHT_I` 1.3 at night (the lab's night 1.65 calmed down). Additive curtains, normal-blended runes,
+  drawn after the heart (`renderOrder` 1) so they read through its glow.
+
+All curtains are one mesh (12 × 64 segments: 1,536 triangles) and all runes one InstancedMesh of unit boxes
+(at most 12 × `RUNE_CAP` 56, 12 triangles each; typically 50–120 boxes); culled with the heart, so they cost
+nothing where the Lantern is out of view (frame 250 and most of the scroll). The heart's second (back-face)
+pass adds one call where it is in view. Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.02
+steps: peak 266 draw calls by day and 282 at night (was 262 / 278), 1.479 M triangles (was 1.475 M).
+
+Night glows: every night glow is scaled by `NIGHT_GLOW_SCALE` 0.6 (`night.ts`): the `NIGHT_` emissives
+(windows, lamps, well ring), the robots' and minibots' `ROBOT_NIGHT_GLOW`, the drones' nav lights and the
+water's glints of the well lights. Bloom is gentler: `NIGHT_MIX.bloom` 0.4 (was 0.6) and the threshold scaled
+with the glows (2.0 × 0.6 = 1.2), so the same lights bloom, with about 40% of the old bloom energy. The well
+ring at frame 250 no longer washes out "Welcome to Atlantis".
+
 ## Tests
 
 ```sh

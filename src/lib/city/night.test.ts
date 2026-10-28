@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { FADE_S, fadeToward, mixMode, nightEmissive } from './night.ts';
+import {
+	FADE_S,
+	NIGHT_GLOW_SCALE,
+	fadeToward,
+	mixMode,
+	nightEmissive,
+	nightGlow
+} from './night.ts';
 
 function material(name: string, userData: Record<string, unknown> = {}): THREE.Material {
 	const m = new THREE.MeshStandardMaterial();
@@ -19,7 +26,13 @@ test('mixMode at t = 0 is day', () => {
 });
 
 test('mixMode at t = 1 is night', () => {
-	assert.deepEqual(mixMode(1), { sun: 0.05, ambient: 0.15, emissive: 1, bloom: 0.6, exposure: 0.9 });
+	assert.deepEqual(mixMode(1), {
+		sun: 0.05,
+		ambient: 0.15,
+		emissive: 1,
+		bloom: 0.4,
+		exposure: 0.9
+	});
 });
 
 test('mixMode is linear: t = 0.5 is the midpoint', () => {
@@ -27,7 +40,7 @@ test('mixMode is linear: t = 0.5 is the midpoint', () => {
 	near(m.sun, 1.525);
 	near(m.ambient, 0.575);
 	near(m.emissive, 0.5);
-	near(m.bloom, 0.3);
+	near(m.bloom, 0.2);
 	near(m.exposure, 0.95);
 });
 
@@ -59,4 +72,12 @@ test('fadeToward moves t toward the target at 1 / FADE_S per second and stops th
 	assert.equal(fadeToward(0.9, 1, 0.5), 1);
 	assert.equal(fadeToward(0.1, 0, 0.5), 0);
 	assert.equal(fadeToward(1, 1, 0.5), 1);
+});
+
+test('night glows are calmer: NIGHT_GLOW_SCALE at full night, none by day', () => {
+	assert.equal(NIGHT_GLOW_SCALE, 0.6);
+	assert.equal(nightGlow(0), 0);
+	near(nightGlow(1), 0.6);
+	near(nightGlow(0.5), 0.3);
+	assert.ok(mixMode(1).bloom <= 0.4, 'gentler bloom');
 });

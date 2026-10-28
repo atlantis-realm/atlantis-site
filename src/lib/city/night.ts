@@ -23,12 +23,27 @@ export type ModeMix = {
 	exposure: number;
 };
 
-export const DAY_MIX: Readonly<ModeMix> = { sun: 3, ambient: 1, emissive: 0, bloom: 0, exposure: 1 };
+/**
+ * Every night glow (the NIGHT_ materials' emissives: windows, lamps, well ring,
+ * Lantern; the robots' and minibots' palette glow, the drones' nav lights and
+ * the water's glints of them) is scaled by this at full night. Bloom's
+ * threshold is scaled with it (CityHeroScene), so the same lights still bloom,
+ * only calmer, and "Welcome to Atlantis" reads clearly at night.
+ */
+export const NIGHT_GLOW_SCALE = 0.6;
+
+export const DAY_MIX: Readonly<ModeMix> = {
+	sun: 3,
+	ambient: 1,
+	emissive: 0,
+	bloom: 0,
+	exposure: 1
+};
 export const NIGHT_MIX: Readonly<ModeMix> = {
 	sun: 0.05,
 	ambient: 0.15,
 	emissive: 1,
-	bloom: 0.6,
+	bloom: 0.4,
 	exposure: 0.9
 };
 
@@ -59,6 +74,11 @@ export function nightEmissive(material: THREE.Material): [number, number, number
 	if (!Array.isArray(v) || v.length !== 4) return null;
 	if (!v.every((x) => typeof x === 'number' && Number.isFinite(x))) return null;
 	return [v[0], v[1], v[2], v[3]];
+}
+
+/** Night glow level at mix t: mixMode(t).emissive times NIGHT_GLOW_SCALE. */
+export function nightGlow(t: number): number {
+	return mixMode(t).emissive * NIGHT_GLOW_SCALE;
 }
 
 /** One cross-fade step: move t toward target by delta / FADE_S, never past it. */

@@ -1,7 +1,8 @@
 // Three.js scene for the /city hero: loads the exported glb, scrubs its baked
 // `Hero` camera animation from the scroll position, and draws the procedural
 // sky, the day/night cross-fade (night.ts) with bloom, and the circling
-// blimps (blimps.ts), the well's water (water.ts), walking, sitting, leaning and talking people
+// blimps (blimps.ts), the Lantern's heart glowing day and night with the energy spans and runes
+// inside it (lanternBeam.ts), the well's water (water.ts), walking, sitting, leaning and talking people
 // (people.ts: the baked characters of people.glb, or walking capsules without it) and the
 // robots crossing the avenue (robot.ts, robot.glb; none without it), the person-sized
 // minibots walking and talking among the people (minibots.ts, the same bake) and the drones
@@ -27,7 +28,23 @@ import {
 } from './heroCamera.ts';
 import { loadProps, type HeroProps, type Vec3 } from './props.ts';
 import { createSky, setSkyMoon, setSkySun, type Sky } from './sky.ts';
-import { DAY_MIX, fadeToward, mixMode, nightEmissive } from './night.ts';
+import {
+	DAY_MIX,
+	NIGHT_GLOW_SCALE,
+	fadeToward,
+	mixMode,
+	nightEmissive,
+	nightGlow
+} from './night.ts';
+import {
+	LANTERN_HEART_MATERIAL,
+	clipInsideHeart,
+	createLanternEnergy,
+	findLanternHeart,
+	heartGlow,
+	prepareHeartMaterial,
+	type LanternEnergy
+} from './lanternBeam.ts';
 import { createBlimps, updateBlimps } from './blimps.ts';
 import { applyWater, setWaterLights, setWaterNight, setWaterTime, waterLights } from './water.ts';
 import {
@@ -103,14 +120,16 @@ const SHADOW_BIAS = -0.0004;
 const SHADOW_NORMAL_BIAS = 0.05;
 /**
  * UnrealBloomPass: strength comes from mixMode (halved on mobile). Its high pass
- * keeps whole texels above the threshold (linear, before exposure), so 2.0 sits
- * above the windows (~1.6) and bands (~1.4) and below the lamps (~2.6) and the
- * Lantern / well ring cyan (~3.1): bloom stays mild instead of hazing every facade.
+ * keeps whole texels above the threshold (linear, before exposure). Unscaled, 2.0
+ * sits above the windows (~1.6) and bands (~1.4) and below the lamps (~2.6) and
+ * the Lantern / well ring cyan (~3.1); every night glow is scaled by
+ * NIGHT_GLOW_SCALE, so the threshold is too and the same lights bloom, only
+ * calmer: bloom stays mild instead of hazing every facade.
  * Radius 0 weights the small mips, so the well ring at frame 250 (most of the
  * screen) glows without washing out "Welcome to Atlantis".
  */
 const BLOOM_RADIUS = 0;
-const BLOOM_THRESHOLD = 2.0;
+const BLOOM_THRESHOLD = 2.0 * NIGHT_GLOW_SCALE;
 const BLOOM_MOBILE_SCALE = 0.5;
 /** MSAA samples of the bloom path's render target (desktop; the canvas is antialiased there too). */
 const BLOOM_SAMPLES = 4;
@@ -152,6 +171,8 @@ export class CityHeroScene {
 	/** The camera's world position, for the robots' route weights. */
 	private readonly eye = new THREE.Vector3();
 	private nightMaterials: NightMaterial[] = [];
+	/** The energy spans and runes inside the Lantern's heart (lanternBeam.ts); null without a heart. */
+	private lanternEnergy: LanternEnergy | null = null;
 	private composer: EffectComposer | null = null;
 	private bloomPass: UnrealBloomPass | null = null;
 	private blimps: THREE.InstancedMesh | null = null;
@@ -277,7 +298,15 @@ export class CityHeroScene {
 		this.nightMaterials = collectNightMaterials(gltf.scene);
 		// After prepareMaterials, so the water's clone keeps the vertex AO.
 		this.water = applyWater(gltf.scene, props.well_water);
-		if (this.water) setWaterLights(this.water, waterLights(gltf.scene, this.plaza.toArray()));
+		if (this.water) {
+			// The glints are reflections of the night glows, so they calm down with them.
+			const lights = waterLights(gltf.scene, this.plaza.toArray()).map((l) => ({
+				...l,
+				color: l.color.map((c) => c * NIGHT_GLOW_SCALE) as Vec3
+			}));
+			setWaterLights(this.water, lights);
+		}
+		this.setupLantern(gltf.scene, props);
 
 		this.sunDir.set(...props.sun.dir).normalize();
 		setSkySun(this.sky, this.sunDir);
@@ -445,6 +474,23 @@ export class CityHeroScene {
 		this.uninstallShadowLayer = installShadowLayer(this.renderer);
 	}
 
+	/**
+	 * The Lantern's heart: a glowing glass tube (prepareHeartMaterial) with the
+	 * stone shaft cut away inside it (clipInsideHeart) and the energy spans and
+	 * runes drawn in it, after it.
+	 */
+	private setupLantern(root: THREE.Object3D, props: HeroProps): void {
+		const found = findLanternHeart(root, props.night_nodes);
+		if (!found) return;
+		for (const mesh of found.heart) {
+			for (const m of materialsOf(mesh))
+				if (m.name === LANTERN_HEART_MATERIAL) prepareHeartMaterial(m);
+		}
+		clipInsideHeart(found.others, found.bounds);
+		this.lanternEnergy = createLanternEnergy(found.bounds);
+		this.scene.add(this.lanternEnergy.object);
+	}
+
 	/** The well (props.well_water) marks the plaza; the export always writes it, so the origin is only a last resort. */
 	private plazaCentre(root: THREE.Object3D, centre: THREE.Vector3): THREE.Vector3 {
 		root.updateMatrixWorld(true);
@@ -503,16 +549,20 @@ export class CityHeroScene {
 		this.placeLight(dir.lengthSq() > 1e-6 ? dir.normalize() : this.sunDir);
 
 		this.updateEnvIntensity(mix.ambient);
+		const glow = nightGlow(t);
 		for (const { material, emissive } of this.nightMaterials) {
 			material.emissive.setRGB(emissive[0], emissive[1], emissive[2]);
-			material.emissiveIntensity = emissive[3] * mix.emissive;
+			// The Lantern's heart glows by day too.
+			material.emissiveIntensity =
+				material.name === LANTERN_HEART_MATERIAL ? heartGlow(t) : emissive[3] * glow;
 		}
+		this.lanternEnergy?.setNight(t);
 		this.sky.setMix(t);
 		this.renderer.toneMappingExposure = mix.exposure;
 		if (this.water) setWaterNight(this.water, mix.emissive);
-		this.robot?.setNight(mix.emissive);
-		this.minibots?.setNight(mix.emissive);
-		this.drones?.setNight(mix.emissive);
+		this.robot?.setNight(glow);
+		this.minibots?.setNight(glow);
+		this.drones?.setNight(glow);
 
 		const strength = mix.bloom * (this.opts.mobile ? BLOOM_MOBILE_SCALE : 1);
 		if (strength > 0) this.ensureComposer().strength = strength;
@@ -552,7 +602,7 @@ export class CityHeroScene {
 	}
 
 	/**
-	 * Clouds, blimps, water, people, minibots, the robots and the drones at motionTime (new
+	 * Clouds, blimps, the Lantern's energy, water, people, minibots, the robots and the drones at motionTime (new
 	 * robot routes and drop spots picked in view at the frame, the near ones most).
 	 */
 	private updateMotion(): void {
@@ -560,6 +610,7 @@ export class CityHeroScene {
 		if (this.water) setWaterTime(this.water, this.motionTime);
 		this.people?.update(this.motionTime);
 		this.minibots?.update(this.motionTime);
+		this.lanternEnergy?.update(this.motionTime);
 		const eye = this.camera.getWorldPosition(this.eye);
 		if (this.robot) this.robot.update(this.motionTime, this.frame, [eye.x, eye.y, eye.z]);
 		if (this.drones) {
@@ -641,6 +692,7 @@ export class CityHeroScene {
 		this.robot?.dispose();
 		this.minibots?.dispose();
 		this.drones?.dispose();
+		this.lanternEnergy?.dispose();
 		if (this.shadowProxy) disposeObject(this.shadowProxy);
 		this.uninstallShadowLayer?.();
 		this.sky.dispose();
