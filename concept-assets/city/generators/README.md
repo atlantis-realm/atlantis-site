@@ -61,7 +61,7 @@ and run in node to produce the exact geometry Blender builds, so the plan and th
 | `citygen_cli.js` | `node citygen_cli.js plan.json build/build.json` writes the build list Blender reads. |
 | `build_city.py` | Run inside Blender. Rescales and regrades the hand-built scene onto the plan, then builds the generated collections `19`–`26` (Old Town and the Lantern in `23_NBHD_CORE`), hides the temple and cuts the canals out of the hand-built ground and canal walls (`27_CANAL_CUTS`, Boolean modifiers). |
 | `plan_page/` | The city planner: `head.part.html` + `script.part.js` + `citygen.js`, joined by `assemble.py` into `atlantis-city-plan.html` (committed, so the planner opens straight from the repo; its live plan is kept in the published artifact's store). |
-| `oneoff/` | One-time scene edits kept for reference (the avenue widening). |
+| `oneoff/` | One-time scene edits kept for reference (the avenue widening, the v06 cull of unseen objects). |
 
 ## Rebuild the scene
 
@@ -778,6 +778,41 @@ the lower `NIGHT_WINDOW_SCALE` 0.3 instead: they are large flat panes that ACES 
 near-white rectangles at 0.6, while at 0.3 they read as calmer warm light. Bloom is gentler: `NIGHT_MIX.bloom` 0.4 (was 0.6) and the threshold scaled
 with the glows (2.0 × 0.6 = 1.2), so the same lights bloom, with about 40% of the old bloom energy. The well
 ring at frame 250 no longer washes out "Welcome to Atlantis".
+
+## Cull unseen objects (v06)
+
+`oneoff/cull_unseen.py` tidies a scene by moving every object the hero camera never sees into a collection
+`_culled` (excluded in every view layer, render-hidden; tick it back on in the outliner to see them). Nothing is
+deleted: each moved object keeps its original collections in the custom property `cull_from` (`A;B`, empty for
+the scene collection), and `restore(scene)` in the script links them back.
+
+```sh
+flatpak run --command=blender org.blender.Blender --factory-startup -b ../Atlantian_plaza_blockout-v06.blend \
+  --python "$PWD/oneoff/cull_unseen.py" -- --dry-run --log "$PWD/build/cull/culled.json"
+```
+
+`--dry-run` only writes the log (every culled object with its collections and bounds, counts per top-level
+collection, what was protected); without it the script also applies the cull and saves the file in place
+(compression kept, no relative-path remap, no `.blend1`). It refuses to save when the culled share of the
+candidates is outside 5–95%. Copy the .blend to a `*_before-cull.blend` first. A `--log` outside the
+flatpak's reach (e.g. under `/tmp`) needs `flatpak run --filesystem=<dir>`.
+
+Seen means: the world AABB of the evaluated object (modifiers applied; an instancer by everything it
+instances) is inside one of the frusta of `Camera.001` every half frame 1–250 plus the page's floor drop (the
+frame-1 camera straight down to the floor, levelling), at every `hero_geom.cull_aspects` aspect with the widest
+safe frame, far ≥ `clip_end`, `CULL_MARGIN` on the FOVs and every plane pushed out by `MARGIN_M` (30 m). So it
+is a superset of what `export_hero.py` keeps. Hierarchies move whole, and a tree stays if any member is seen or
+protected: cameras, lights, the objects the export reads by name (camera, `Text`, the Lantern, the well collar
+and ring lights, `KIT_Ave_walk`), anything already hidden (templates, `05_TEMPLE`), members of instanced
+collections, and anything another ID references (boolean cutters, node trees, drivers).
+
+v06 (the run that made `Atlantian_plaza_blockout-v06_before-cull.blend`): 1,022 of 4,025 objects culled
+(`20_NBHD_OUTER` 590, `21_NBHD_BELT` 353, `28_AVENUE_VERNACULAR` 74, `06_DOCKS_MARSH` 5), the city behind
+and beside the camera. The hero export of the culled file matches the uncut one: same `hero_props.json`, same
+glb binary chunk, accessors, meshes and materials; only the `HERO_tree_*` node names differ, whose suffix is the
+depsgraph instance index (`export_report.json` `instances` and `dropped_frustum` drop by the culled count,
+`in_frustum` and `kept` are unchanged). Tests: `python3 -m unittest discover -s test -p "test_*.py"`
+(`test/test_cull_unseen.py`).
 
 ## Tests
 
