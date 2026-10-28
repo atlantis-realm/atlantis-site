@@ -9,19 +9,23 @@ import {
 	DRONE_GLIDE_FREE,
 	DRONE_GLIDE_RATIO,
 	DRONE_HOVER_H,
-	DRONE_LEFT_PARCELS,
+	DRONE_LIVERIES,
 	DRONE_PARCEL_H,
+	DRONE_PICKUP_WAIT,
 	DRONE_SKID_H,
 	DRONE_SKY_CLEAR,
 	DRONE_SPOT_GAP,
 	DRONE_TETHER,
 	DRONE_TILT_MAX,
+	DRONE_WAITING_MAX,
+	LIVERY_PIECES,
 	createDrones,
 	droneGeometry,
 	easedDistance,
 	farPoint,
 	glideClear,
-	keepLeftParcels,
+	liveryColours,
+	liveryTexture,
 	moveDuration,
 	pickGlide,
 	pickSpot,
@@ -30,8 +34,10 @@ import {
 	skyHeight,
 	skyMaxAlong,
 	spotInView,
+	squareYawNear,
 	tripPose,
-	type DroneTrip
+	type DroneTrip,
+	type WaitingParcel
 } from './drones.ts';
 import { mulberry32 } from './people.ts';
 import type { DroneSky, DroneSpot, Vec3 } from './props.ts';
@@ -369,7 +375,7 @@ test('createDrones: none without spots; four instanced meshes, lights only at ni
 	const [bodies, rotors, parcels, lights] = meshes;
 	assert.equal(bodies.count, DRONE_COUNT);
 	assert.equal(rotors.count, 4 * DRONE_COUNT);
-	assert.equal(parcels.count, (2 + DRONE_LEFT_PARCELS) * DRONE_COUNT);
+	assert.equal(parcels.count, 2 * DRONE_COUNT + DRONE_WAITING_MAX);
 	assert.equal(lights.count, 3 * DRONE_COUNT);
 	assert.ok(bodies.castShadow && parcels.castShadow && !rotors.castShadow);
 	assert.equal(lights.visible, false);
@@ -408,7 +414,10 @@ test('the drones spread over drop spots DRONE_SPOT_GAP apart at once', () => {
 	const drones = createDrones(spots, SKY, { shadows: false, count: 3 })!;
 	for (let t = 0; t <= 400; t += 1) {
 		drones.update(t, 1, EYE);
-		const drops = drones.state().map((s) => s.drop);
+		const drops = drones
+			.state()
+			.map((s) => s.drop)
+			.filter((d) => d >= 0);
 		assert.equal(new Set(drops).size, drops.length, `t ${t}: ${drops}`);
 		for (const a of drops)
 			for (const b of drops)
@@ -429,80 +438,256 @@ test('after the clock goes back, the same steps replay the same trips', () => {
 	drones.dispose();
 });
 
-test('keepLeftParcels: the ones the camera sees, the newest DRONE_LEFT_PARCELS; none unseen', () => {
-	const at = (k: number) => ({ spot: k, yaw: k, colour: 0 });
-	const seen = (p: Vec3) => p[2] > 1100;
-	// Spots 2 and 3 are not seen (z 1017, 1091), spots 0, 1 and 4 are.
-	assert.deepEqual(keepLeftParcels([], SPOTS, seen, at(0)), [at(0)]);
-	assert.deepEqual(
-		keepLeftParcels([at(0)], SPOTS, seen, at(2)),
-		[at(0)],
-		'an unseen drop is not kept'
-	);
-	assert.deepEqual(keepLeftParcels([at(0), at(1)], SPOTS, seen, at(4)).length, DRONE_LEFT_PARCELS);
-	assert.deepEqual(
-		keepLeftParcels([at(0), at(1)], SPOTS, seen, at(4))[0],
-		at(1),
-		'the oldest goes'
-	);
-	assert.deepEqual(
-		keepLeftParcels([at(0), at(1)], SPOTS, () => false),
-		[]
-	);
-	assert.deepEqual(
-		keepLeftParcels([at(0)], SPOTS, undefined, at(1)),
-		[],
-		'no camera: nothing seen'
-	);
+function pickupTrip(seed: number, spot: number, yaw = 0.3, livery = 4): DroneTrip {
+	return planTrip({
+		spots: SPOTS,
+		sky: SKY,
+		rand: mulberry32(seed),
+		start: 100,
+		frame: 1,
+		busy: new Set(),
+		eye: EYE,
+		pickup: { spot, yaw, livery, ready: 0 }
+	});
+}
+
+test('squareYawNear: the same square, a whole number of quarter turns from the yaw, nearest the reference', () => {
+	for (const [yaw, ref] of [
+		[0.3, 0],
+		[0.3, 2],
+		[-2, 3],
+		[1, -2.9]
+	]) {
+		const y = squareYawNear(yaw, ref);
+		const turns = (y - yaw) / (Math.PI / 2);
+		assert.ok(Math.abs(turns - Math.round(turns)) < 1e-9);
+		assert.ok(Math.abs(Math.atan2(Math.sin(y - ref), Math.cos(y - ref))) <= Math.PI / 4 + 1e-9);
+	}
 });
 
-test('a delivered parcel stays on its spot after the trip while the camera sees it, then goes', () => {
-	const drones = createDrones(SPOTS, SKY, { shadows: false, count: 2 })!;
+test('pickSpot never picks a taken spot, and gives -1 when every spot is taken', () => {
+	const rand = mulberry32(9);
+	for (let k = 0; k < 200; k++) {
+		assert.equal(
+			pickSpot(SPOTS, 1, rand, new Set(), EYE, new Set([0])),
+			1,
+			'the other one in view'
+		);
+		const i = pickSpot(SPOTS, 1, rand, new Set([1, 2, 3, 4]), EYE, new Set([0]));
+		assert.equal(i, 1, 'every open spot busy: any open one, in view first');
+	}
+	assert.equal(pickSpot(SPOTS, 1, rand, new Set(), EYE, new Set([0, 1, 2, 3, 4])), -1);
+});
+
+test('a delivery never goes to or takes off from a taken spot', () => {
+	const taken = new Set([0, 3]);
+	for (let seed = 1; seed <= 60; seed++) {
+		const tr = planTrip({
+			spots: SPOTS,
+			sky: SKY,
+			rand: mulberry32(seed),
+			start: 0,
+			frame: 1,
+			busy: new Set(),
+			eye: EYE,
+			taken
+		});
+		assert.equal(tr.kind, 'delivery');
+		assert.ok(!taken.has(tr.drop) && !taken.has(tr.takeoff), `seed ${seed}`);
+	}
+});
+
+test('a delivery can be picked up DRONE_PICKUP_WAIT after its parcel is set down', () => {
+	for (let seed = 1; seed <= 30; seed++) {
+		const tr = trip(seed);
+		let down = Infinity;
+		for (let t = tr.start; t <= tr.end && down === Infinity; t += 0.01)
+			if (tripPose(tr, t, SPOTS).dropped) down = t;
+		const wait = tr.ready - down;
+		assert.ok(wait >= DRONE_PICKUP_WAIT[0] - 0.02 && wait <= DRONE_PICKUP_WAIT[1], `${wait}`);
+	}
+});
+
+test('a pickup flies in empty, lowers its line to the parcel, hooks it, winches it up and carries it off', () => {
+	for (let seed = 1; seed <= 30; seed++) {
+		const spot = seed % 3 === 0 ? 2 : seed % 2;
+		const tr = pickupTrip(seed, spot, 0.3 + seed, seed % DRONE_LIVERIES.length);
+		assert.equal(tr.kind, 'pickup');
+		assert.equal(tr.drop, spot);
+		assert.equal(tr.livery, seed % DRONE_LIVERIES.length, "the parcel's livery");
+		assert.equal(tr.ready, Infinity);
+		const d = SPOTS[spot].pos;
+		const rest: Vec3 = [d[0], d[1] + DRONE_PARCEL_H / 2, d[2]];
+		const first = tripPose(tr, tr.start, SPOTS);
+		assert.ok(first.dropped && first.tether < 1e-9, 'in empty, the parcel on its spot');
+		assert.deepEqual(first.parcel, rest);
+		let hooked = -1;
+		let reach = Infinity;
+		let prev = first.parcel;
+		for (let t = tr.start; t <= tr.end; t += 0.05) {
+			const p = tripPose(tr, t, SPOTS);
+			if (hooked < 0 && !p.dropped) {
+				hooked = t;
+				// Picked up square to the parcel, which leaves the ground where it lay.
+				const turns = (p.heading - (0.3 + seed)) / (Math.PI / 2);
+				assert.ok(Math.abs(turns - Math.round(turns)) < 1e-6, `seed ${seed}: square ${turns}`);
+				assert.ok(Math.hypot(...([0, 1, 2].map((k) => p.parcel[k] - rest[k]) as Vec3)) < 0.15);
+			}
+			if (hooked >= 0) assert.ok(!p.dropped, `seed ${seed}: picked up stays picked up`);
+			else {
+				assert.deepEqual(p.parcel, rest);
+				// The line's end, down at the parcel's top before the hook.
+				if (horiz(p.position, d) < 1)
+					reach = Math.min(reach, p.position[1] - DRONE_BELLY - p.tether - (d[1] + DRONE_PARCEL_H));
+			}
+			const jump = Math.hypot(...([0, 1, 2].map((k) => p.parcel[k] - prev[k]) as Vec3));
+			assert.ok(jump < 14 * 0.05 + 0.2, `seed ${seed}: the parcel jumped ${jump}`);
+			prev = p.parcel;
+		}
+		assert.ok(hooked > 0, `seed ${seed}: hooked`);
+		assert.ok(Math.abs(reach) < 0.1, `seed ${seed}: the line reached the parcel (${reach})`);
+		const end = tripPose(tr, tr.end, SPOTS);
+		assert.ok(
+			!end.dropped && Math.abs(end.tether - DRONE_TETHER) < 1e-9,
+			'carried out on the line'
+		);
+		assert.ok(horiz(end.position, d) >= DRONE_FAR[0] - 1);
+	}
+});
+
+test('liveries: 8 to 12 companies, each mark on its own pieces, a row of the texture each', () => {
+	assert.ok(DRONE_LIVERIES.length >= 8 && DRONE_LIVERIES.length <= 12);
+	assert.equal(new Set(DRONE_LIVERIES.map((l) => l.name)).size, DRONE_LIVERIES.length);
+	const at = (l: (typeof DRONE_LIVERIES)[number], p: (typeof LIVERY_PIECES)[number]) =>
+		liveryColours(l)[LIVERY_PIECES.indexOf(p)];
+	for (const l of DRONE_LIVERIES) {
+		assert.notEqual(l.hull, l.trim, `${l.name}: two-tone`);
+		assert.notEqual(l.markColour, l.trim, `${l.name}: the belly mark shows`);
+		assert.equal(at(l, 'hull'), l.hull);
+		assert.equal(at(l, 'caps'), l.caps);
+		const stripe = l.mark !== 'chevron';
+		const chevron = l.mark !== 'stripe';
+		assert.equal(at(l, 'spine'), stripe ? l.markColour : l.hull);
+		assert.equal(at(l, 'bellyStripe'), stripe ? l.markColour : l.trim);
+		assert.equal(at(l, 'noseChevron'), chevron ? l.markColour : l.hull);
+		assert.equal(at(l, 'bellyChevron'), chevron ? l.markColour : l.trim);
+	}
+	assert.ok(DRONE_LIVERIES.some((l) => l.mark === 'stripe'));
+	assert.ok(DRONE_LIVERIES.some((l) => l.mark === 'chevron'));
+	const tex = liveryTexture();
+	assert.equal(tex.image.width, LIVERY_PIECES.length);
+	assert.equal(tex.image.height, DRONE_LIVERIES.length);
+	tex.dispose();
+	// Every vertex of the body carries a piece, and every piece is on it.
+	const g = droneGeometry();
+	const pieces = new Set(g.getAttribute('liveryPiece').array as Float32Array);
+	assert.deepEqual(
+		[...pieces].sort(),
+		LIVERY_PIECES.map((_, k) => k)
+	);
+	g.dispose();
+});
+
+test('trips roll their liveries: many in use', () => {
+	const drones = createDrones(SPOTS, SKY, { shadows: false })!;
+	const used = new Set<number>();
+	for (let t = 0; t <= 900; t += 1) {
+		drones.update(t, 1, EYE, () => true);
+		for (const s of drones.state()) if (s.kind !== 'idle') used.add(s.livery);
+	}
+	assert.ok(used.size >= 6, `${used.size} liveries`);
+	drones.dispose();
+});
+
+// Twelve spots 15 m apart on a plaza the camera sees.
+const PLAZA: DroneSpot[] = Array.from({ length: 12 }, (_, k) => ({
+	pos: [-20 + 15 * (k % 4), 9, 1170 + 15 * Math.floor(k / 4)] as Vec3,
+	kind: 'ground',
+	frames: [1]
+}));
+
+test('parcels wait on their spots until a pickup in their livery collects them; at most DRONE_WAITING_MAX', () => {
+	const drones = createDrones(PLAZA, SKY, { shadows: false })!;
 	const parcels = drones.object.children[2] as THREE.InstancedMesh;
 	const m = new THREE.Matrix4();
 	const p = new THREE.Vector3();
-	const left = (): THREE.Vector3[] => {
-		const out: THREE.Vector3[] = [];
-		for (let k = 4; k < parcels.count; k++) {
+	// The spots with a parcel on the ground.
+	const ground = (): number[] => {
+		const out: number[] = [];
+		for (let k = 0; k < parcels.count; k++) {
+			if (k < 2 * DRONE_COUNT && k % 2) continue; // a line
 			parcels.getMatrixAt(k, m);
-			if (m.determinant() !== 0) out.push(p.setFromMatrixPosition(m).clone());
+			if (m.determinant() === 0) continue;
+			p.setFromMatrixPosition(m);
+			const spot = PLAZA.findIndex(
+				(s) =>
+					p.distanceTo(new THREE.Vector3(s.pos[0], s.pos[1] + DRONE_PARCEL_H / 2, s.pos[2])) < 1e-4
+			);
+			if (spot >= 0) out.push(spot);
 		}
 		return out;
 	};
-	const all = () => true;
-	let ended = 0;
-	let prev = drones.state();
-	for (let t = 0; t <= 600; t += 0.5) {
-		drones.update(t, 1, EYE, all);
-		const now = drones.state();
-		now.forEach((d, i) => {
-			if (!prev[i].dropped || (d.dropped && d.drop === prev[i].drop)) return;
-			// Drone i's last trip ended: its parcel is still where it was dropped.
-			const at = SPOTS[prev[i].drop].pos;
-			const want = new THREE.Vector3(at[0], at[1] + DRONE_PARCEL_H / 2, at[2]);
+	let prev: number[] = [];
+	let prevWaiting: WaitingParcel[] = [];
+	let pickups = 0;
+	let deliveries = 0;
+	const kinds: string[] = [];
+	let lying = 0;
+	let steps = 0;
+	for (let t = 0; t <= 1200; t += 0.5) {
+		drones.update(t, 1, EYE, () => true);
+		const states = drones.state();
+		const waiting = drones.waiting();
+		assert.ok(waiting.length <= DRONE_WAITING_MAX, `t ${t}: ${waiting.length} waiting`);
+		const now = ground();
+		assert.equal(new Set(now).size, now.length, `t ${t}: two parcels on a spot ${now}`);
+		for (const spot of prev) {
+			if (now.includes(spot)) continue;
+			// Gone from the ground: a pickup at that spot just hooked it.
 			assert.ok(
-				left().some((q) => q.distanceTo(want) < 1e-6),
-				`t ${t}: drone ${i}'s parcel on spot ${prev[i].drop}`
+				states.some((s) => s.kind === 'pickup' && s.drop === spot && s.visible && !s.dropped),
+				`t ${t}: the parcel on spot ${spot} vanished`
 			);
-			ended++;
+		}
+		states.forEach((s, i) => {
+			const key = `${s.kind} ${s.drop}`;
+			if (key === kinds[i]) return;
+			kinds[i] = key;
+			if (s.kind === 'delivery') deliveries++;
+			if (s.kind !== 'pickup') return;
+			// A new pickup: of a parcel lying there, ready by the trip's start, in its livery.
+			pickups++;
+			assert.ok(prev.includes(s.drop), `t ${t}: drone ${i} picks up from spot ${s.drop}, empty`);
+			const w = prevWaiting.find((q) => q.spot === s.drop);
+			if (w) {
+				assert.equal(w.livery, s.livery);
+				assert.ok(w.ready <= t + 6 + 1e-9, 'ready by the trip start');
+			}
 		});
-		assert.ok(left().length <= 2 * DRONE_LEFT_PARCELS);
-		// One parcel to a spot: a new one set down takes the place of one left there.
-		const resting = [...left()];
-		drones.state().forEach((s, i) => {
-			if (!s.dropped) return;
-			parcels.getMatrixAt(2 * i, m);
-			resting.push(p.setFromMatrixPosition(m).clone());
-		});
-		resting.forEach((a, j) =>
-			resting
-				.slice(j + 1)
-				.forEach((b) => assert.ok(a.distanceTo(b) > 1e-3, `t ${t}: two on a spot`))
-		);
+		// A delivery on its way never goes to a spot holding a parcel.
+		for (const s of states)
+			if (s.kind === 'delivery' && !s.dropped)
+				assert.ok(!waiting.some((w) => w.spot === s.drop), `t ${t}: delivery to a full spot`);
+		lying += now.length;
+		steps++;
 		prev = now;
+		prevWaiting = waiting;
 	}
-	assert.ok(ended >= 4, `${ended} trips ended`);
-	drones.update(601, 1, EYE, () => false);
-	assert.equal(left().length, 0, 'gone once out of view');
+	assert.ok(pickups >= 10, `${pickups} pickups`);
+	assert.ok(deliveries >= 10, `${deliveries} deliveries`);
+	const mean = lying / steps;
+	assert.ok(mean >= 2 && mean <= DRONE_WAITING_MAX + DRONE_COUNT, `${mean} lying on average`);
+	drones.dispose();
+});
+
+test('parcels already lie about at the start, and a replay from the start is the same', () => {
+	const drones = createDrones(PLAZA, SKY, { shadows: false })!;
+	drones.update(0, 1, EYE, () => true);
+	const start = drones.waiting();
+	assert.ok(start.length >= 2, `${start.length} at the start`);
+	for (let t = 0; t <= 200; t += 0.5) drones.update(t, 1, EYE, () => true);
+	const a = JSON.stringify([drones.state(), drones.waiting()]);
+	for (let t = 0; t <= 200; t += 0.5) drones.update(t, 1, EYE, () => true);
+	assert.equal(JSON.stringify([drones.state(), drones.waiting()]), a);
 	drones.dispose();
 });

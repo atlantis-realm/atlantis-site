@@ -4,8 +4,9 @@
 // blimps (blimps.ts), the well's water (water.ts), walking, sitting, leaning and talking people
 // (people.ts: the baked characters of people.glb, or walking capsules without it) and the
 // robots crossing the avenue (robot.ts, robot.glb; none without it), the person-sized
-// minibots walking and talking among the people (minibots.ts, the same bake) and the delivery
-// drones (drones.ts, procedural; none without the export's drone_spots). Follows the
+// minibots walking and talking among the people (minibots.ts, the same bake) and the drones
+// delivering and picking up parcels (drones.ts, procedural; none without the export's
+// drone_spots). Follows the
 // DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
 // torn down by destroy()).
 
@@ -380,7 +381,7 @@ export class CityHeroScene {
 	minibotState(): MinibotState[] {
 		return this.minibots?.state() ?? [];
 	}
-
+	/** Where each drone is: its trip kind, drop spot, take-off spot (-1: flew in), livery, position and whether its parcel is on the spot. */
 	/** Where each drone is: its drop spot, take-off spot (-1: flew in), position and whether it has dropped its parcel. */
 	droneState(): DroneState[] {
 		return this.drones?.state() ?? [];

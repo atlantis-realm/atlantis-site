@@ -642,17 +642,29 @@ On mobile they add 1 call. The conversation minibots are in view from frame 1 to
 ## Drones
 
 The delivery drones need no asset: `src/lib/city/drones.ts` builds a low-poly PSX-style quadcopter in code
-(`droneGeometry`: a six-sided hull with a dark waist band, a raised spine and a camera pod, four arms on the
-diagonals with motors and coloured caps, two skids; 1.2 m across the motors, 1.7 m across the rotors, flat
-shaded, vertex colours tinted per instance) and its rotor
-blur (`rotorGeometry`: a translucent disc, darker at the rim, with one blade ghost across it, spun in steps of
+(`droneGeometry`: a six-sided hull with a waist band, a raised spine and a camera pod, a stripe under the
+belly and a chevron on the nose and under the belly, four arms on the diagonals with motors and caps, two
+skids; 1.2 m across the motors, 1.7 m across the rotors, flat shaded, every vertex tagged with its livery
+piece) and its rotor
+blur (`rotorGeometry`: a translucent disc, darker at the rim, with one blade ghost across it and a guard
+ring round it, spun in steps of
 `DRONE_ROTOR_STEP_ANGLE` `DRONE_ROTOR_STEPS` times a second, neighbours opposite ways). They fly over the
 export's `drone_spots` and `drone_sky` (see "Drone spots"); without the spots there are none.
 
 `DRONE_COUNT` (6) drones each fly one trip after another (`planTrip`, tested), seeded per drone
-(`mulberry32(DRONE_SEED + i)`):
+(`mulberry32(DRONE_SEED + i)`), each trip a delivery or a pickup:
 
-- **Drop spot** (`pickSpot`): not within `DRONE_SPOT_GAP` (12 m) of another drone's drop or take-off spot (so
+- **Delivery or pickup** (in `createDrones`): parcels a delivery sets down stay on their spots until a pickup
+  collects them. Each can be collected `DRONE_PICKUP_WAIT` (20–60 s, per parcel, from when it touches down)
+  later. A drone setting off collects one that is ready, on a spot the camera sees and not within
+  `DRONE_SPOT_GAP` of another drone's spots, with `DRONE_PICKUP_CHANCE` (50%), weighted by distance as
+  `pickSpot`; otherwise it delivers. When `DRONE_WAITING_MAX` (7) parcels lie about or are on their way
+  (deliveries flying), it must collect a ready one (one in view first, else any), and with none ready it
+  idles hidden for `DRONE_IDLE_S` (4 s). A delivery never goes to, or takes off from, a spot holding a
+  parcel or another drone's spot (`taken`), and within the drones the spot gap is hard: with no spot left,
+  it idles. `DRONE_WAITING_START` (3) parcels already lie about at the start (seeded, on spots in view at
+  the first frame if any), so the plaza is not bare for the first minute.
+- **Drop spot** (`pickSpot`): never a `taken` spot (-1 if every spot is); not within `DRONE_SPOT_GAP` (12 m) of another drone's drop or take-off spot (so
   at most two drones work round the well at once); one the camera sees at the current frame if any (a `frames` sample within `DRONE_VIEW_SLACK` 5 frames), weighted by 1 / distance from the
   camera (`DRONE_NEAR_POWER` 1, at least `DRONE_NEAR_MIN` 15 m), so the near spots come up more without the
   far roofs dropping out.
@@ -674,10 +686,26 @@ export's `drone_spots` and `drone_sky` (see "Drone spots"); without the spots th
   stops (`DRONE_STOP_S`) and descends straight at `DRONE_DESCENT_SPEED`.
 - **Delivery**: a settle at the hover, the parcel (`DRONE_PARCEL_W` × `DRONE_PARCEL_H`, on a `DRONE_TETHER` 0.5 m
   line in flight) winched down at `DRONE_WINCH_SPEED` (1.2 m/s) until it sits on the spot, released (it stays
-  there for the rest of the trip, and after it while the camera sees it: `keepLeftParcels`, tested, the newest
-  `DRONE_LEFT_PARCELS` 2 a drone, gone once its spot is out of the frustum; a parcel set down on a spot takes
-  the place of one left there), the empty line winched up, then the climb back to cruise height, turning
+  there, waiting for a pickup), the empty line winched up, then the climb back to cruise height, turning
   to the way out, and the cruise out.
+- **Pickup** (`planTrip` with `pickup`): the delivery run backwards at the hover. The same flight in
+  (entry or take-off, cruise, glide) with no line out, then at the hover the drone turns square to the
+  parcel (`squareYawNear`: the nearest quarter turn, a box looks the same), lowers the empty line to the
+  parcel's top, hooks it (`DRONE_RELEASE_S`), winches it up to `DRONE_TETHER` and carries it off: the climb,
+  turning to the way out, and the cruise out of view. The parcel lies on its spot until the hook (drawn by
+  the pickup drone from the moment the trip is planned, even in its hidden gap) and never jumps.
+- **Liveries** (`DRONE_LIVERIES`, `liveryColours`, tested): ten made-up delivery companies (Tidewater Post,
+  Lantern Express, Coral Couriers, Kelpline, Abyss Freight, Pearl Line, Harbour Hop, Gullwing, Current Mail,
+  Saltmarsh & Sons), each a strong hull, a contrasting trim (the waist band, which is the belly the camera
+  sees from below, and the arms), a mark (a stripe down the spine and under the belly, a chevron on the nose
+  and under the belly, or both; a mark a livery hasn't takes the colour it lies on), rotor guards and motor
+  caps, and its parcel colour and tape. Rolled per trip, seeded (never the drone's last one twice running);
+  a pickup flies the livery of the parcel it collects, so a company collects its own. No extra draw call:
+  the bodies read each vertex's piece (`liveryPiece`, `LIVERY_PIECES`) from a 8 × 10 float texture
+  (`liveryTexture`: a row a livery) on the instance's row (a per-instance `livery` attribute), patched into
+  the standard material's `color_vertex`; the rotor guards are white vertex colours times the instance
+  colour (the caps colour); the parcels take the instance colour and a per-instance `tape` colour, laid by
+  the fragment shader as a band 0.18 of the box wide round both ways (a cross on top, down the four sides).
 - **Pose** (`tripPose`): the heading follows the cruise curve and turns over the stops; the drone leans with
   its acceleration (a central difference over 0.3 s divided by g, at most `DRONE_TILT_MAX` 0.4 rad), so it
   noses down speeding up, back braking, and banks into the curves; in the air it wobbles by `DRONE_WOBBLE_M`
@@ -687,18 +715,20 @@ export's `drone_spots` and `drone_sky` (see "Drone spots"); without the spots th
 
 Everything is a function of the scene clock, so reduced motion freezes the drones (and their rotors) like the
 people and robots. All drones are four InstancedMeshes: bodies (with sun shadows on desktop), rotor discs
-(transparent, no depth write, no shadows), parcels, lines and the parcels left lying (one unit box scaled per
-instance; shadows) and
+(transparent, no depth write, no shadows), parcels, lines and the `DRONE_WAITING_MAX` waiting parcels (one
+unit box scaled per instance; shadows) and
 nav lights (red on the port front motor, green starboard, a white strobe on the tail flashing
 `DRONE_STROBE_ON` 0.1 s every `DRONE_STROBE_PERIOD` 1.3 s; unlit HDR colours above the bloom threshold, shown
 only at night, scaled by mixMode's emissive level). That is 5 draw calls by day with shadows (3 on mobile) and
-6 at night, and about 3,000 triangles in the main pass (384 per body, 12 per rotor disc or parcel), about 5,500 with the
-shadow pass. Measured at 2908×1271 (desktop, shadows) over the whole scroll in 0.05 steps: peak 260 draw calls
-by day (was 255) and 276 at night (was 269), 1.439 M triangles (drones alone; with the minibots see "Minibots").
+6 at night, and about 3,700 triangles in the main pass (444 per body, 32 per rotor with its guard, 12 per
+parcel), about 6,600 with the shadow pass. Measured at 2908×1271 (desktop, shadows) over the whole scroll in
+0.02 steps with the pickups and liveries: peak 262 draw calls by day and 278 at night (unchanged), 1.475 M
+triangles (was 1.473 M).
 
-Simulated over 300 s in 0.25 s steps at frames 24, 48, 85 and 99 (frustum only), no parcel lying on a spot
-in view vanishes (before the left parcels: 6–20 per 300 s, the trip's parcel going with the drone's next
-trip); 7.6, 6.2, 5.1 and 2.1 lie in view on average.
+Simulated in the page over 900 s at scroll 1 (frame 1) in 0.5 s steps: 34 deliveries and 34 pickups, 2.2
+parcels waiting in view on average (besides those under a drone's own trip). A parcel leaves the ground
+only on a pickup's hook (tested over 1,200 s on a 12-spot plaza: never two on a spot, at most
+`DRONE_WAITING_MAX` waiting, every pickup in the livery of the parcel it collects).
 
 The camera stands on the plaza in a canyon of 40–58 m buildings, so a drone cruising over the rooftops is
 above the frame unless it is far down the avenue: hence the entry and exit points over the lowest sky (the
