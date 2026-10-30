@@ -21,6 +21,3 @@ vite.config.ts.timestamp-*
 # City hero exports: committed only after the look is approved (git add -f)
 static/city/*.glb
 static/city/hero_props.json
-static/city/people_meta.json
-static/city/robot.glb
-static/city/robot_meta.json
