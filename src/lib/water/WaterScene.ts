@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Mood } from '#lib/water/mood.js';
 import { WaterWorld, type WaterWorldOptions } from '#lib/water/WaterWorld.js';
 
 // Soft water and sky, nothing that needs to be crisp: render at a lower pixel density than the
@@ -46,6 +47,16 @@ export abstract class WaterScene {
 		this.target = value;
 	}
 
+	/** Change mood, blending there over a moment, or at once (e.g. for the first page). */
+	setMood(mood: Mood, immediate = false): void {
+		this.water.setMood(mood, immediate || this.reducedMotion);
+	}
+
+	/** Resolves once every shader the water will need, above and below the surface, is compiled. */
+	warmUp(): Promise<unknown> {
+		return this.water.warmUp(this.renderer, this.scene, this.camera);
+	}
+
 	/** Start or stop rendering, e.g. while the scene is scrolled out of view. */
 	setActive(active: boolean): void {
 		this.renderer.setAnimationLoop(active ? (time) => this.frame(time) : null);
@@ -53,9 +64,11 @@ export abstract class WaterScene {
 
 	private frame(time: number): void {
 		this.timer.update(time);
+		const delta = this.timer.getDelta();
 		this.value = this.reducedMotion
 			? this.target
-			: THREE.MathUtils.damp(this.value, this.target, SCROLL_DAMPING, this.timer.getDelta());
+			: THREE.MathUtils.damp(this.value, this.target, SCROLL_DAMPING, delta);
+		this.water.stepMood(delta);
 		this.placeCamera(this.value);
 		this.water.update(this.camera, this.reducedMotion ? 0 : this.timer.getElapsed());
 		this.water.render(this.renderer, this.scene, this.camera);

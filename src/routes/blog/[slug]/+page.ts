@@ -9,11 +9,11 @@ export function entries() {
 }
 
 export const load: PageLoad = ({ params }) => {
-	const post = getPost(params.slug);
+	const found = getPost(params.slug);
 
-	if (!post) {
+	if (!found) {
 		error(404, 'Post not found');
 	}
 
-	return { post };
+	return found;
 };

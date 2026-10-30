@@ -1,9 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
+	import { page } from '$app/state';
 	import type { OceanScene } from '#lib/water/OceanScene.js';
+	import { getLoadingTracker } from '#lib/loading.svelte.js';
+	import { moodFor } from '#lib/water/mood.js';
 
 	let canvas: HTMLCanvasElement | undefined = $state();
+	let scene: OceanScene | undefined = $state.raw();
+	// On the first load, the loading screen waits for the water's shaders too.
+	const loading = getLoadingTracker();
+
+	// Each page has its own mood (see mood.ts). This stays mounted across pages, so moving between
+	// them blends from one to the next.
+	const mood = $derived(moodFor(page.url.pathname));
+	$effect(() => scene?.setMood(mood));
 	let remeasure: (() => void) | undefined;
 
 	// This stays mounted across pages, so pick up each new page's length and scroll position.
@@ -11,7 +22,6 @@
 
 	onMount(() => {
 		let disposed = false;
-		let scene: OceanScene | undefined;
 		// The camera finishes going through the surface just before the page's content (marked by
 		// OceanPage) scrolls into view, so the content only ever appears underwater. The crossing
 		// ends this much (screen heights) early, since the camera eases after the scroll, and always
@@ -49,13 +59,18 @@
 		contentSize.observe(document.body);
 
 		// Imported lazily so the prerender never touches WebGL.
-		void import('#lib/water/OceanScene.js').then(({ OceanScene }) => {
+		const ready = import('#lib/water/OceanScene.js').then(({ OceanScene }) => {
 			if (disposed || !canvas) return;
-			scene = new OceanScene(canvas);
+			const ocean = new OceanScene(canvas);
+			// The first page starts in its own mood rather than blending into it.
+			ocean.setMood(mood, true);
+			scene = ocean;
 			onResize();
 			window.addEventListener('scroll', onScroll, { passive: true });
 			window.addEventListener('resize', onResize);
+			return ocean.warmUp();
 		});
+		loading?.track(ready);
 
 		return () => {
 			disposed = true;
@@ -64,6 +79,7 @@
 			window.removeEventListener('scroll', onScroll);
 			window.removeEventListener('resize', onResize);
 			scene?.destroy();
+			scene = undefined;
 		};
 	});
 </script>

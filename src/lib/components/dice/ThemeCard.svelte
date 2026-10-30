@@ -50,37 +50,37 @@
 </button>
 
 <style>
+	/* Fills its panel in the band; the band draws the panel itself. */
 	.theme-card {
 		display: flex;
 		align-items: flex-start;
 		gap: 1rem;
 		width: 100%;
-		padding: 1rem 1.1rem;
-		border-radius: 10px;
-		border: 1px solid rgba(238, 239, 183, 0.18);
-		background: rgba(20, 30, 44, 0.55);
-		color: #eeefb7;
+		height: 100%;
+		padding: 1.1rem 1.25rem;
+		border: none;
+		background: none;
+		color: var(--hud-text);
+		font-family: var(--hud-font);
 		text-align: left;
 		cursor: pointer;
 		transition:
-			border-color 0.15s ease,
 			background 0.15s ease,
-			transform 0.15s ease;
+			box-shadow 0.15s ease;
 	}
 
 	.theme-card:hover:not(:disabled) {
-		border-color: rgba(238, 239, 183, 0.42);
-		background: rgba(30, 40, 57, 0.72);
+		background: hsl(185 90% 60% / 0.06);
 	}
 
+	/* Picked: framed in cyan. */
 	.theme-card.selected {
-		border-color: hsl(45, 67%, 74%);
-		background: rgba(46, 64, 87, 0.72);
-		box-shadow: 0 0 0 1px rgba(238, 239, 183, 0.12);
+		background: hsl(185 90% 60% / 0.1);
+		box-shadow: inset 0 0 0 2px var(--hud-accent);
 	}
 
 	.theme-card:disabled {
-		opacity: 0.72;
+		opacity: 0.6;
 		cursor: not-allowed;
 	}
 
@@ -91,7 +91,7 @@
 		height: 3.25rem;
 		border-radius: 999px;
 		overflow: hidden;
-		border: 1px solid rgba(238, 239, 183, 0.22);
+		border: 1px solid hsl(185 90% 60% / 0.3);
 	}
 
 	.swatch-body,
@@ -111,7 +111,7 @@
 	.copy {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
+		gap: 0.4rem;
 		min-width: 0;
 	}
 
@@ -123,46 +123,44 @@
 	}
 
 	.title {
-		font-family: 'Cinzel Decorative', cursive;
-		font-size: 1.05rem;
-		color: hsl(45, 67%, 74%);
-		letter-spacing: 0.04em;
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--hud-heading);
 	}
 
 	.command {
 		align-self: flex-start;
 		padding: 0.15rem 0.45rem;
-		border-radius: 4px;
-		border: 1px solid rgba(238, 239, 183, 0.16);
-		background: rgba(0, 0, 0, 0.22);
-		color: hsl(45, 67%, 82%);
-		font-family: 'Ubuntu Sans Mono', monospace;
+		border: 1px solid hsl(185 90% 60% / 0.3);
+		background: rgb(0 0 0 / 0.25);
+		color: var(--hud-accent);
+		font-family: var(--hud-font);
 		font-size: 0.82rem;
 		line-height: 1.4;
-		letter-spacing: 0.02em;
 	}
 
+	/* A tiny tag with one corner cut, like the HUD buttons. */
 	.badge {
-		padding: 0.1rem 0.45rem;
-		border-radius: 999px;
-		border: 1px solid rgba(238, 239, 183, 0.28);
-		background: rgba(238, 239, 183, 0.08);
-		color: hsl(45, 67%, 74%);
-		font-size: 0.72rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
+		padding: 0.1rem 0.5rem;
+		background: var(--hud-accent);
+		color: #06121e;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
 		text-transform: uppercase;
+		clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 0 100%);
 	}
 
 	.description,
 	.status {
-		font-size: 0.92rem;
+		font-size: 0.9rem;
 		line-height: 1.55;
-		color: rgba(238, 239, 183, 0.82);
 	}
 
 	.status {
-		color: rgba(238, 239, 183, 0.62);
+		color: var(--hud-dim);
 		font-style: italic;
 	}
 </style>

@@ -13,7 +13,7 @@
 	let { title, note, themes, selectedId, onselect }: Props = $props();
 </script>
 
-<section class="card">
+<section class="card hud">
 	<header>
 		<h2>{title}</h2>
 		{#if note}
@@ -21,49 +21,34 @@
 		{/if}
 	</header>
 
-	<div class="theme-grid" role="list">
+	<!-- One catalogue's themes, banded together (see .hud-band in app.css). -->
+	<ul class="hud-band theme-grid">
 		{#each themes as entry (entry.id)}
-			<div role="listitem">
+			<li>
 				<ThemeCard {entry} selected={selectedId === entry.id} {onselect} />
-			</div>
+			</li>
 		{/each}
-	</div>
+	</ul>
 </section>
 
 <style>
 	header {
-		margin-bottom: 1rem;
-	}
-
-	h2 {
-		margin: 0 0 0.5rem;
-		font-family: 'Cinzel Decorative', cursive;
-		font-size: 1.45rem;
-		color: hsl(45, 67%, 74%);
-		letter-spacing: 0.06em;
+		margin-bottom: 1.5rem;
 	}
 
 	p {
 		margin: 0;
 		font-size: 0.98rem;
 		line-height: 1.65;
-		color: rgba(238, 239, 183, 0.82);
+		color: var(--hud-dim);
 	}
 
 	.theme-grid {
-		display: grid;
-		gap: 0.85rem;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
 	}
 
-	@media (min-width: 640px) {
-		.theme-grid {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-	}
-
-	@media (min-width: 960px) {
-		.theme-grid {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
-		}
+	/* The card is the whole panel, so it brings its own padding. */
+	.theme-grid > li {
+		padding: 0;
 	}
 </style>

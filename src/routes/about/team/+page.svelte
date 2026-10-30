@@ -7,8 +7,8 @@
 </svelte:head>
 
 <OceanPage title="Team">
-	<section class="card added">
-		<p>Who runs Atlantis — names, roles, and icons go here.</p>
-		<p><a href="/about">Back to About</a></p>
+	<section class="card hud">
+		<p class="added">Who runs Atlantis — names, roles, and icons go here.</p>
+		<a href="/about" class="hud-button hud-button--outline">Back to About</a>
 	</section>
 </OceanPage>

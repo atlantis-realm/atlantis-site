@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { page } from '$app/state';
 	import { wave } from '#lib/actions/wave.js';
+	import { hasDarkSky, moodFor } from '#lib/water/mood.js';
 
 	/*
 	 * Layout for the pages that sit on the ocean background: a big title above the water at the top,
@@ -18,11 +20,14 @@
 		above?: Snippet;
 		children: Snippet;
 	} = $props();
+
+	// Over a dark sky (night, twilight; see OceanBackground) the title turns pale, fading with it.
+	const darkSky = $derived(hasDarkSky(moodFor(page.url.pathname)));
 </script>
 
 <header class="title-band">
 	{@render above?.()}
-	<h1 use:wave={title}>{title}</h1>
+	<h1 class:dark-sky={darkSky} use:wave={title}>{title}</h1>
 </header>
 
 <main class="content" data-ocean-content>
@@ -40,11 +45,21 @@
 		box-sizing: border-box;
 	}
 
+	/* The homepage's hard uppercase mono, big. */
 	h1 {
 		margin: 0;
-		font-size: clamp(3rem, 9vw, 7rem);
+		font-family: var(--hud-font);
+		font-size: clamp(2.5rem, 7vw, 5.5rem);
+		font-weight: 700;
 		line-height: 1;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
 		color: #13283f;
+		transition: color 0.9s ease;
+	}
+
+	h1.dark-sky {
+		color: hsl(200, 60%, 85%);
 	}
 
 	/* The gap above the cards is the time spent above water before the plunge. Bottom room, so even
@@ -56,5 +71,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.5rem;
+		font-family: var(--hud-font);
+		color: var(--hud-text);
 	}
 </style>

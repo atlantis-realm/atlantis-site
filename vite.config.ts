@@ -1,6 +1,7 @@
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { mdsvex } from 'mdsvex';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
@@ -10,7 +11,8 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
 	plugins: [
 		sveltekit({
-			preprocess: vitePreprocess(),
+			extensions: ['.svelte', '.md'],
+			preprocess: [vitePreprocess(), mdsvex({ extensions: ['.md'] })],
 			adapter: adapter(),
 			// Absolute /_app/ asset URLs for nested routes like /ladyofcode/dice-themes.
 			paths: { relative: false }

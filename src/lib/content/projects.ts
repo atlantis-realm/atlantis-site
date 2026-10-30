@@ -23,14 +23,14 @@ export const projects: Project[] = [
 		title: 'Design jam',
 		description:
 			'A collective mood board to define our design language direction, and brainstorm ideas for visualising Atlantis as an actual city.',
-		participants: []
+		participants: ['Adam', 'Dracky', 'Colin', 'Tabs', 'Alom']
 	},
 	{
 		title: 'Syrenware',
 		description: 'A collaborative playlist to share favourite songs with each other. :D',
-		participants: [],
+		participants: ['Alom', 'Adam', 'Tabs'],
 		link: SYRENWARE_PLAYLIST_URL
-			? { href: SYRENWARE_PLAYLIST_URL, label: 'Visit Syrenware playlist', icon: 'spotify' }
+			? { href: SYRENWARE_PLAYLIST_URL, label: 'Listen to playlist', icon: 'spotify' }
 			: undefined
 	},
 	{

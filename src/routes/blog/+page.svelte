@@ -8,15 +8,26 @@
 </svelte:head>
 
 <OceanPage title="Blog">
-	<section class="card">
+	<section class="card hud">
 		<p>Updates from the guild.</p>
 	</section>
 
-	{#each blogPosts as post (post.slug)}
-		<article class="card">
-			<h2><a href="/blog/{post.slug}">{post.title}</a></h2>
-			<p>{post.author} · {post.date}</p>
-			<p>{post.excerpt}</p>
-		</article>
-	{/each}
+	<section>
+		<h2 class="file-label">&lt;&lt; pos.ts</h2>
+		<!-- Posts run in order, so they're banded together. -->
+		<ul class="hud-band hud-band--column">
+			{#each blogPosts as post (post.slug)}
+				<li>
+					<p class="hud-meta">
+						<span class="hud-meta-author">{post.author}_</span>&lt;&lt; {post.date.replaceAll(
+							'-',
+							'.'
+						)}
+					</p>
+					<h3><a href="/blog/{post.slug}">{post.title}</a></h3>
+					<p>{post.excerpt}</p>
+				</li>
+			{/each}
+		</ul>
+	</section>
 </OceanPage>

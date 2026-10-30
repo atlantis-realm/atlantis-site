@@ -8,7 +8,7 @@
 </svelte:head>
 
 <OceanPage title={page.status === 404 ? 'Lost at sea' : 'Something went wrong'}>
-	<section class="card">
+	<section class="card hud">
 		<p>
 			{#if page.status === 404}
 				This page doesn't exist. Maybe it sank?
@@ -16,6 +16,6 @@
 				{page.error?.message ?? 'An unexpected error occurred.'}
 			{/if}
 		</p>
-		<p><a href="/">Back to home</a></p>
+		<a href="/" class="hud-button">Back to home</a>
 	</section>
 </OceanPage>

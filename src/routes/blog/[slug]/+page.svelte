@@ -9,23 +9,23 @@
 
 <OceanPage title={data.post.title}>
 	{#snippet above()}
-		<p class="back"><a href="/blog">← Back to blog</a></p>
+		<a href="/blog" class="hud-button hud-button--outline back">← Back to blog</a>
 	{/snippet}
 
-	<article class="card">
-		<p>{data.post.author} · {data.post.date}</p>
-		{#each data.post.body as paragraph, i (i)}
-			<p>{paragraph}</p>
-		{/each}
+	<article class="card hud">
+		<p class="hud-meta">
+			<span class="hud-meta-author">{data.post.author}_</span>&lt;&lt; {data.post.date.replaceAll(
+				'-',
+				'.'
+			)}
+		</p>
+		<data.content />
 	</article>
 </OceanPage>
 
 <style>
 	.back {
-		margin: 0 0 0.5rem;
-	}
-
-	.back a {
-		color: #13283f;
+		align-self: flex-start;
+		margin: 0 0 1rem;
 	}
 </style>

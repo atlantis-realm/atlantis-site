@@ -1,6 +1,7 @@
 export type AtlantisEvent = {
 	name: string;
 	description: string;
+	image?: string;
 };
 
 export const upcomingEvents: AtlantisEvent[] = [

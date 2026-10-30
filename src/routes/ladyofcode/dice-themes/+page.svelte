@@ -11,6 +11,10 @@
 	import { PUBLIC_THEMES, SUBSCRIBER_THEMES } from '#lib/dice/themeCatalog.js';
 	import type { DicePreviewScene } from '#lib/dice/DicePreviewScene.js';
 	import { DEFAULT_THEME, getTheme } from '@ladyofcode/dice-themes';
+	import { getLoadingTracker } from '#lib/loading.svelte.js';
+
+	// On the first load, the loading screen waits for the dice preview to be set up.
+	const loading = getLoadingTracker();
 
 	const TABLET_MIN = 768;
 	const DESKTOP_MIN = 1024;
@@ -60,7 +64,7 @@
 
 		let cleanup: (() => void) | undefined;
 
-		void import('#lib/dice/DicePreviewScene.js').then(({ DicePreviewScene }) => {
+		const ready = import('#lib/dice/DicePreviewScene.js').then(({ DicePreviewScene }) => {
 			if (!canvas) return;
 
 			scene = new DicePreviewScene(canvas);
@@ -93,6 +97,7 @@
 				scene = undefined;
 			};
 		});
+		loading?.track(ready);
 
 		return () => {
 			cleanup?.();
@@ -106,7 +111,7 @@
 
 <OceanPage title="Dice Themes">
 	<div class="dice-themes">
-		<section class="card">
+		<section class="card hud">
 			<p class="lede">
 				Browse themes below and preview them on the dice set. During stream, use the chat command on
 				each card to set your theme.
@@ -117,7 +122,7 @@
 			</p>
 		</section>
 
-		<div class="canvas-shell">
+		<div class="canvas-shell hud">
 			<div class="canvas-frame" data-layout={layoutMode}>
 				{#if showCarousel}
 					<button
@@ -167,39 +172,32 @@
 </OceanPage>
 
 <style>
-	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
-	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap');
-
 	.dice-themes {
 		display: flex;
 		flex-direction: column;
 		gap: 1.5rem;
-		color: #eeefb7;
-		font-family: 'Ubuntu Sans Mono', monospace;
 	}
 
 	.lede {
 		margin: 0;
 		font-size: 1.05rem;
-		color: rgba(238, 239, 183, 0.85);
 		line-height: 1.7;
 	}
 
 	.policy-note {
-		margin: 1rem auto 0;
+		margin: 1rem 0 0;
 		max-width: 42rem;
-		font-size: 0.98rem;
+		font-size: 0.95rem;
 		line-height: 1.65;
-		color: rgba(238, 239, 183, 0.72);
-		text-align: center;
+		color: var(--hud-dim);
 	}
 
+	/* The preview in a HUD frame (see .hud in app.css), edge to edge inside it. */
 	.canvas-shell {
 		height: min(52vh, 520px);
 		min-height: 280px;
-		border-radius: 12px;
-		border: 1px solid rgba(238, 239, 183, 0.18);
-		background: radial-gradient(circle at 50% 35%, rgba(46, 64, 87, 0.95), rgba(20, 30, 44, 0.98));
+		padding: 0;
+		background: radial-gradient(circle at 50% 35%, rgb(10 44 64 / 0.9), rgb(4 14 24 / 0.95));
 		overflow: hidden;
 	}
 
@@ -215,6 +213,7 @@
 		height: 100%;
 	}
 
+	/* Small square HUD buttons with one corner cut. */
 	.nav {
 		position: absolute;
 		top: 50%;
@@ -222,22 +221,23 @@
 		transform: translateY(-50%);
 		width: 2.75rem;
 		height: 2.75rem;
-		border: 1px solid rgba(238, 239, 183, 0.35);
-		border-radius: 999px;
-		background: rgba(20, 30, 44, 0.72);
-		color: hsl(45, 67%, 74%);
+		border: 1px solid var(--hud-accent);
+		background: rgb(6 18 30 / 0.8);
+		color: var(--hud-accent);
+		font-family: var(--hud-font);
 		font-size: 1.75rem;
 		line-height: 1;
 		cursor: pointer;
+		clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 		transition:
 			background 0.15s ease,
-			border-color 0.15s ease,
+			color 0.15s ease,
 			opacity 0.15s ease;
 	}
 
 	.nav:hover:not(:disabled) {
-		background: rgba(46, 64, 87, 0.95);
-		border-color: hsl(45, 67%, 74%);
+		background: var(--hud-accent);
+		color: #06121e;
 	}
 
 	.nav:disabled {
@@ -259,14 +259,15 @@
 		bottom: 0.85rem;
 		transform: translateX(-50%);
 		margin: 0;
-		padding: 0.2rem 0.65rem;
-		border-radius: 999px;
-		background: rgba(20, 30, 44, 0.72);
-		border: 1px solid rgba(238, 239, 183, 0.22);
-		color: hsl(45, 67%, 74%);
-		font-family: 'Ubuntu Sans Mono', monospace;
-		font-size: 0.95rem;
-		letter-spacing: 0.08em;
+		padding: 0.25rem 0.75rem;
+		border: 1px solid hsl(185 90% 60% / 0.5);
+		background: rgb(6 18 30 / 0.8);
+		color: var(--hud-accent);
+		font-family: var(--hud-font);
+		font-size: 0.85rem;
+		font-weight: 600;
+		letter-spacing: 0.15em;
+		text-transform: uppercase;
 	}
 
 	@media (min-width: 768px) {

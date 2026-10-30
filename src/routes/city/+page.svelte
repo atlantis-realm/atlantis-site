@@ -2,36 +2,16 @@
 	import { onMount } from 'svelte';
 	import type { CityHeroMode, CityHeroScene } from '#lib/city/CityHeroScene.js';
 	import { coversViewport, heroScroll } from '#lib/city/heroCamera.js';
+	import { readMode, saveMode } from '#lib/city/mode.js';
 
 	const GLB_URL = '/city/hero.glb';
 	const PROPS_URL = '/city/hero_props.json';
 	const STILL_URL = '/city/hero-still.webp';
-	/** localStorage key remembering the visitor's day/night choice. */
-	const MODE_KEY = 'city-mode';
-
-	/** The saved mode; day when nothing (or nothing readable) is stored. */
-	function readMode(): CityHeroMode {
-		try {
-			return localStorage.getItem(MODE_KEY) === 'night' ? 'night' : 'day';
-		} catch {
-			return 'day';
-		}
-	}
-
-	function saveMode(value: CityHeroMode): void {
-		try {
-			localStorage.setItem(MODE_KEY, value);
-		} catch {
-			// Storage blocked (private window, disabled site data): the choice just isn't remembered.
-		}
-	}
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let below: HTMLElement | undefined = $state();
 	let modeButton: HTMLButtonElement | undefined = $state();
-	/** True once the live scene has loaded; the still then fades out. */
 	let live = $state(false);
-	/** The section has scrolled up under the Night toggle (hidden then on narrow screens). */
 	let toggleOverSection = $state(false);
 	let mode: CityHeroMode = $state('day');
 	let scene: CityHeroScene | undefined;
@@ -42,10 +22,6 @@
 		scene?.setMode(mode);
 	}
 
-	/**
-	 * Hero progress and floor drop from where the section after the track is
-	 * (heroScroll), and whether that section hides the whole canvas.
-	 */
 	function scrollState(): { progress: number; drop: number; covered: boolean } {
 		const h = window.innerHeight;
 		if (!below) return { progress: 0, drop: 0, covered: false };
@@ -72,12 +48,10 @@
 			scene?.resize(window.innerWidth, window.innerHeight);
 			onScroll();
 		};
-		// Registered before the scene, so the toggle also follows the page over the still.
 		window.addEventListener('scroll', onScroll, { passive: true });
 		window.addEventListener('resize', onResize);
 		onScroll();
 
-		// Any failure keeps the still on screen: no WebGL, or the glb/props fail to load.
 		const fail = (err: unknown): void => {
 			console.warn('City hero: showing the still instead of the live scene.', err);
 			scene?.destroy();
@@ -128,15 +102,8 @@
 </div>
 <h1 class="visually-hidden">Atlantis city</h1>
 <div class="track"></div>
-<!--
-	The page after the hero. Its top edge is the floor: the camera drops into it
-	as the edge rises to mid-screen (heroScroll), so the edge is drawn as a cut
-	through the paving, its foundation and the sea Atlantis floats on.
--->
-<!-- Night colours only over the live night scene: the still is a day view. -->
 <section class="below" class:night={live && mode === 'night'} bind:this={below}>
 	<div class="cut" aria-hidden="true"></div>
-	<!-- Placeholder copy: to be replaced with the real city text. -->
 	<div class="copy">
 		<h2>The city on the sea</h2>
 		<p>
@@ -172,12 +139,9 @@
 </button>
 
 <style>
-	/* The site's fonts, as on the home page. */
 	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
 	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500&display=swap');
 
-	/* Fixed behind the page: the layout's nav stays on top and clickable. The background
-	   continues the still's top and bottom edges where it doesn't fill a tall screen. */
 	.stage {
 		position: fixed;
 		inset: 0;
@@ -203,13 +167,6 @@
 		opacity: 0;
 	}
 
-	/*
-	 * Narrower than about 1:1 the live scene stops cropping the sides and keeps the
-	 * safe frame ("Welcome to Atlantis", hero_props safe_half_tan.f250 = 0.2998 of
-	 * the 16:9 half-width tan 0.5296) across the full screen width. Show the 16:9
-	 * still the same way, so the text isn't cut and the fade to live doesn't jump:
-	 * 0.5296 / 0.2998 = 1.766 screen widths wide, centred. 16:9 / 1.766 = 1.007.
-	 */
 	@media (max-aspect-ratio: 1007/1000) {
 		.still {
 			inset: auto;
@@ -242,13 +199,6 @@
 		white-space: nowrap;
 	}
 
-	/*
-	 * The section after the hero, scrolling up over the stage. Its top edge is a
-	 * cross-section of the floor: paving (sampled from the avenue just above the
-	 * edge at drop 1: about #b8b9bf by day, #162a46 at night), a darker joint,
-	 * foundation stone, then the sea. Tall enough to cover the screen, so the
-	 * scene can stop rendering (setPaused).
-	 */
 	.below {
 		--paving: #b8b9bf;
 		--joint: #8d8f97;
@@ -287,7 +237,6 @@
 	.copy {
 		max-width: 38rem;
 		margin: 0 auto;
-		/* Bottom room for the fixed Night toggle (wide screens keep it), so the last line clears it. */
 		padding: 3rem 1rem 6rem;
 		line-height: 1.7;
 	}
@@ -306,7 +255,6 @@
 		font-size: 1.05rem;
 	}
 
-	/* Day/night toggle, bottom-right corner, above the fixed stage. */
 	.mode {
 		position: fixed;
 		right: 1rem;
@@ -322,11 +270,6 @@
 		backdrop-filter: blur(4px);
 	}
 
-	/*
-	 * Narrower than the text column plus the toggle on either side, the toggle
-	 * would sit over the copy, so it steps aside while the section is under it
-	 * and comes back as the hero scrolls back down.
-	 */
 	@media (max-width: 52rem) {
 		.mode {
 			transition:

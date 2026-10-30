@@ -6,15 +6,24 @@
 	/*
 	 * One project, on the shared .card panel. Projects that need something of their own (extra
 	 * formatting, an embed) can pass it as children; it goes between the description and the links.
+	 * `class` adds to the panel's own classes (the homepage uses `hud`).
 	 */
-	let { project, children }: { project: Project; children?: Snippet } = $props();
+	let {
+		project,
+		children,
+		class: className
+	}: { project: Project; children?: Snippet; class?: string } = $props();
 
 	const external = (link: ProjectLink): boolean => /^https?:/.test(link.href);
+
+	// "Adam, Colin, and Tabs".
+	const names = new Intl.ListFormat('en', { type: 'conjunction' });
 </script>
 
-{#snippet linkTo(link: ProjectLink)}
+{#snippet linkTo(link: ProjectLink, outline: boolean)}
 	<a
 		href={link.href}
+		class={['hud-button', outline && 'hud-button--outline']}
 		target={external(link) ? '_blank' : undefined}
 		rel={external(link) ? 'noopener noreferrer' : undefined}
 	>
@@ -23,28 +32,26 @@
 	</a>
 {/snippet}
 
-<article class="card project">
+<article class={['card project', className]}>
 	<h3>{project.title}</h3>
 	<p>{project.description}</p>
 
 	{#if project.participants.length}
-		<p class="participants">With {project.participants.join(', ')}</p>
+		<p class="participants">With {names.format(project.participants)}</p>
 	{:else}
 		<p class="participants added">Participants go here.</p>
 	{/if}
 
 	{@render children?.()}
 
-	{#if project.writeups?.length}
-		<ul class="writeups">
-			{#each project.writeups as writeup (writeup.href)}
-				<li>{@render linkTo(writeup)}</li>
+	<!-- The project's own link is the filled button; write-ups about it are outlined. -->
+	{#if project.link || project.writeups?.length}
+		<div class="links">
+			{#if project.link}{@render linkTo(project.link, false)}{/if}
+			{#each project.writeups ?? [] as writeup (writeup.href)}
+				{@render linkTo(writeup, true)}
 			{/each}
-		</ul>
-	{/if}
-
-	{#if project.link}
-		<p class="project-link">{@render linkTo(project.link)}</p>
+		</div>
 	{/if}
 </article>
 
@@ -59,20 +66,24 @@
 		opacity: 0.75;
 	}
 
-	.writeups {
-		margin: 0 0 1rem;
-		padding-left: 1.2rem;
-	}
-
-	/* Push the project's own link to the bottom, so links line up across a row of cards. */
-	.project-link {
+	/* Pushed to the bottom, so buttons line up across a row of cards. */
+	.links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
 		margin-top: auto;
 		padding-top: 0.5rem;
 	}
 
-	a {
+	.links a {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.45em;
+		margin: 0;
+	}
+
+	/* No circuit traces: inside a card they'd run into the next button or off the panel. */
+	.links a::after {
+		content: none;
 	}
 </style>

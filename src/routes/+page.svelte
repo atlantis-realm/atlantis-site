@@ -1,18 +1,45 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { HomeScene } from '#lib/home/HomeScene.js';
-	import { blogPosts } from '#lib/content/blogPosts.js';
+	import type { CityHeroMode } from '#lib/city/CityHeroScene.js';
+	import { readMode, saveMode } from '#lib/city/mode.js';
+	import { blogPosts, type BlogPost } from '#lib/content/blogPosts.js';
 	import { upcomingEvents } from '#lib/content/events.js';
 	import { projects } from '#lib/content/projects.js';
 	import ProjectCard from '#lib/components/projects/ProjectCard.svelte';
+	import HoloEarth from '#lib/components/HoloEarth.svelte';
+	import NeonObject from '#lib/components/NeonObject.svelte';
+	import type { NeonObjectKind } from '#lib/objects/NeonObjects.js';
+	import { drift } from '#lib/actions/drift.js';
+	import { getLoadingTracker } from '#lib/loading.svelte.js';
 
 	const [featuredPost, ...otherPosts] = [...blogPosts].sort((a, b) => b.date.localeCompare(a.date));
 	const smallPosts = otherPosts.slice(0, 4);
 
-	// Placeholder slots until there's a member list to pull icons from.
+	const BARCODE_BARS = 7;
+
+	function barcodeFor(slug: string) {
+		let hash = 2166136261;
+		const bars: { x: number; width: number }[] = [];
+		let x = 0;
+		for (let i = 0; i < BARCODE_BARS; i++) {
+			hash = Math.imul(hash ^ slug.charCodeAt(i % slug.length), 16777619) ^ i;
+			const width = 1 + ((hash >>> 3) % 3);
+			bars.push({ x, width });
+			x += width + 1 + ((hash >>> 7) % 2);
+		}
+		return { bars, width: x };
+	}
+
+	const projectObjects: Record<string, NeonObjectKind> = {
+		'Design jam': 'iridescentD20',
+		Syrenware: 'angler'
+	};
+
+	const homeProjects = projects.filter((project) => project.title !== 'Stream dice themes');
+
 	const memberSlots = Array.from({ length: 12 }, (_, index) => index);
 
-	// Streams run Tuesday and Thursday, 6:30am - 9:30am GMT+1 (fixed offset, no DST shift).
 	const STREAM_DAYS = [2, 4];
 	const STREAM_END_HOUR = 9.5;
 	const HOUR_MS = 60 * 60 * 1000;
@@ -44,19 +71,41 @@
 
 	const upcomingStreams = nextStreamDates(2);
 
-	// The water scene is fixed behind the whole page. The intro (street, step back into the well,
-	// sink through it) plays over the first screens, down to where the light shafts are; then the
-	// content scrolls up over the water and the dive carries on underneath it, getting darker,
-	// reaching the abyss at the bottom of the page.
-	const INTRO_SCREENS = 4;
+	const eventCards = [
+		...upcomingEvents.map((event) => ({
+			...event,
+			href: '/events',
+			action: 'Details',
+			external: false,
+			placeholder: false
+		})),
+		{
+			name: 'Streams',
+			description: `${upcomingStreams.join(' and ')}, 6:30am–9:30am GMT+1`,
+			image: undefined,
+			href: 'https://www.twitch.tv/ladyofcode',
+			action: 'Watch on Twitch',
+			external: true,
+			placeholder: true
+		}
+	];
+
+	const INTRO_SCREENS = 5;
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let track: HTMLDivElement | undefined = $state();
 	let scene: HomeScene | undefined;
+	let mode: CityHeroMode = $state('day');
+
+	function toggleMode(): void {
+		mode = mode === 'night' ? 'day' : 'night';
+		saveMode(mode);
+		scene?.setMode(mode);
+	}
+
+	const loading = getLoadingTracker();
 
 	function syncScroll(): void {
-		// Measured rather than INTRO_SCREENS * innerHeight: the track is sized in vh, which on mobile
-		// is the large viewport (URL bar hidden), not the current innerHeight.
 		const intro = track?.offsetHeight ?? INTRO_SCREENS * window.innerHeight;
 		const rest = document.documentElement.scrollHeight - window.innerHeight - intro;
 		const scrolled = window.scrollY;
@@ -65,18 +114,25 @@
 
 	onMount(() => {
 		if (!canvas) return;
+		mode = readMode();
 
 		let observer: ResizeObserver | undefined;
 		let unmounted = false;
 
-		void import('#lib/home/HomeScene.js').then(({ HomeScene }) => {
+		const ready = import('#lib/home/HomeScene.js').then(({ HomeScene }) => {
 			if (unmounted || !canvas) return;
 
-			scene = new HomeScene(canvas);
+			const home = new HomeScene(canvas);
+			scene = home;
+			home.setMode(mode);
+			if (import.meta.env.DEV) (window as unknown as { __home?: HomeScene }).__home = home;
 			syncScroll();
 			observer = new ResizeObserver(() => scene?.resize());
 			observer.observe(canvas);
+			return home.load().then(() => home.warmUp());
 		});
+		ready.catch((err) => console.warn('Home scene: not fully loaded.', err));
+		loading?.track(ready);
 
 		return () => {
 			unmounted = true;
@@ -93,127 +149,161 @@
 	<canvas bind:this={canvas} aria-hidden="true"></canvas>
 </div>
 <div class="scene-track" style:--intro-screens={INTRO_SCREENS} bind:this={track}></div>
+<button
+	type="button"
+	class="mode"
+	class:night={mode === 'night'}
+	aria-pressed={mode === 'night'}
+	onclick={toggleMode}
+>
+	Night
+</button>
+
+{#snippet newsMeta(post: BlogPost)}
+	{@const barcode = barcodeFor(post.slug)}
+	<p class="news-meta">
+		<span class="news-author">{post.author}_</span>
+		<span class="news-date">&lt;&lt; {post.date.replaceAll('-', '.')}</span>
+		<svg class="news-barcode" viewBox="0 0 {barcode.width} 10" aria-hidden="true">
+			{#each barcode.bars as bar (bar.x)}
+				<rect x={bar.x} width={bar.width} height="10" />
+			{/each}
+		</svg>
+	</p>
+{/snippet}
 
 <section id="community-section">
 	<div class="content-wrapper">
-		<div class="subsection-container">
-			<h2>Think MMORPG vibes, but tech.</h2>
-			<p class="intro__text">
-				Atlantis is a community of high effort builders, bringing together nerds from around the world
-				in tech, design, arts, and more.
-			</p>
-			<p class="intro__text">We approach our crafts and each other with XXX.</p>
-			<p class="added">
-				<span class="text-link">See us doing stuff in person</span> — link to a video or photo gallery.
-			</p>
-			<p class="age-note">18+ only</p>
-			<a
-				href="https://discord.com/invite/4gQAndh"
-				target="_blank"
-				rel="noopener noreferrer"
-				class="discord-button"
-			>
-				Join us on Discord
-			</a>
-		</div>
-
-		<div class="divider"></div>
-
-		<h2>News</h2>
-		{#if featuredPost}
-			<div class="news-grid">
-				<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
-					{#if featuredPost.image}
-						<img src={featuredPost.image} alt="" />
-					{:else}
-						<div class="image-placeholder added">Featured image</div>
-					{/if}
-					<h3>{featuredPost.title}</h3>
-					<p class="news-meta">{featuredPost.author} · {featuredPost.date}</p>
-					<p>{featuredPost.excerpt}</p>
+		<div class="subsection-container intro">
+			<div class="card hud intro__card" use:drift>
+				<h2>MMORPG guild vibes, but for nerds</h2>
+				<p class="intro__text">
+					Atlantis is a community of high effort builders, bringing together nerds from around the
+					world in tech, design, arts, and more.
+				</p>
+				<p class="intro__text">We approach our crafts and each other with XXX.</p>
+				<a
+					href="https://discord.com/invite/4gQAndh"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="hud-button"
+				>
+					Join us on Discord
 				</a>
-				<div class="news-small">
-					{#each smallPosts as post (post.slug)}
-						<a href="/blog/{post.slug}" class="news-card">
-							{#if post.image}
-								<img src={post.image} alt="" />
-							{:else}
-								<div class="image-placeholder added">Image</div>
-							{/if}
-							<h3>{post.title}</h3>
-							<p class="news-meta">{post.author} · {post.date}</p>
-						</a>
-					{/each}
-				</div>
 			</div>
-		{/if}
-		<p class="added"><a href="/blog" class="text-link">All news</a></p>
 
-		<div class="divider"></div>
-
-		<div class="subsection-container">
-			<h2>Events</h2>
-			<ul class="event-list">
-				{#each upcomingEvents as event (event.name)}
-					<li><strong>{event.name}:</strong> {event.description}</li>
-				{/each}
-				<li class="added">
-					<strong>Streams:</strong>
-					{upcomingStreams.join(' and ')}, 6:30am–9:30am GMT+1 —
-					<a
-						href="https://www.twitch.tv/ladyofcode"
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-link">Watch on Twitch</a
-					>
-				</li>
-			</ul>
-			<p class="added"><a href="/events" class="text-link">All events and streams</a></p>
+			<div class="intro__media" use:drift={1.3}>
+				<HoloEarth />
+			</div>
 		</div>
 
-		<div class="divider"></div>
+		<div class="news" use:drift={0.85}>
+			<p class="file-label">&lt;&lt; news_highligh.ts</p>
+			{#if featuredPost}
+				<div class="news-grid">
+					<a href="/blog/{featuredPost.slug}" class="news-card news-card--main">
+						{#if featuredPost.image}
+							<img src={featuredPost.image} alt="" />
+						{:else}
+							<div class="image-placeholder added">Featured image</div>
+						{/if}
+						{@render newsMeta(featuredPost)}
+						<div class="news-body">
+							<h3>{featuredPost.title}</h3>
+							<p>{featuredPost.excerpt}</p>
+						</div>
+					</a>
+					<div class="news-small">
+						{#each smallPosts as post (post.slug)}
+							<a href="/blog/{post.slug}" class="news-card">
+								{#if post.image}
+									<img src={post.image} alt="" />
+								{:else}
+									<div class="image-placeholder added">Image</div>
+								{/if}
+								{@render newsMeta(post)}
+								<div class="news-body">
+									<h3>{post.title}</h3>
+									<p>{post.excerpt}</p>
+								</div>
+							</a>
+						{/each}
+					</div>
+				</div>
+			{/if}
+			<a href="/blog" class="hud-button hud-button--outline">All news</a>
+		</div>
 
-		<h2>Community projects</h2>
-		<div class="project-grid">
-			{#each projects as project (project.title)}
-				<ProjectCard {project} />
+		<div class="events" use:drift={1.1}>
+			<p class="file-label">&lt;&lt; even.ts</p>
+			<ul class="event-strip">
+				{#each eventCards as event (event.name)}
+					<li class="event-panel">
+						{#if event.image}
+							<img src={event.image} alt="" />
+						{:else}
+							<div class="image-placeholder added">Event image</div>
+						{/if}
+						<h3>{event.name}</h3>
+						<p class:added={event.placeholder}>{event.description}</p>
+						<a
+							href={event.href}
+							class="hud-button hud-button--outline"
+							target={event.external ? '_blank' : undefined}
+							rel={event.external ? 'noopener noreferrer' : undefined}>{event.action}</a
+						>
+					</li>
+				{/each}
+			</ul>
+			<a href="/events" class="hud-button hud-button--outline">All events and streams</a>
+		</div>
+
+		<div class="projects">
+			<p class="file-label">&lt;&lt; projec.ts</p>
+			{#each homeProjects as project, index (project.title)}
+				<div class="intro project-row" class:project-row--flipped={index % 2 === 1}>
+					<div class="intro__card" use:drift={0.9 + (index % 2) * 0.2}>
+						<ProjectCard {project} class="hud" />
+					</div>
+					<div class="intro__media" use:drift={1.3 - (index % 2) * 0.2}>
+						{#if projectObjects[project.title]}
+							<NeonObject kind={projectObjects[project.title]} />
+						{/if}
+					</div>
+				</div>
 			{/each}
+			<a href="/projects" class="hud-button hud-button--outline">All projects</a>
 		</div>
-		<p class="added"><a href="/projects" class="text-link">All projects</a></p>
-		
-		<div class="divider"></div>
 
 		<div class="subsection-container">
-			<h2>Join Atlantis</h2>
-			<h3 class="added">Who you'll be joining</h3>
-			<ul class="member-grid" aria-label="Members">
-				{#each memberSlots as slot (slot)}
-					<li class="member-icon"></li>
-				{/each}
-			</ul>
-			<p class="added member-note">
-				Member icons go here. Members without an icon get a generated default Atlantis symbol.
-			</p>
-	
-			<p class="age-note">18+ only</p>
-	
-			<a
-				href="https://discord.com/invite/4gQAndh"
-				target="_blank"
-				rel="noopener noreferrer"
-				class="discord-button"
-			>
-				Join us on Discord
-			</a>
+			<div class="card hud" use:drift={1.05}>
+				<h2>Join Atlantis</h2>
+				<h3 class="added">Who you'll be joining</h3>
+				<ul class="member-grid" aria-label="Members">
+					{#each memberSlots as slot (slot)}
+						<li class="member-icon"></li>
+					{/each}
+				</ul>
+				<p class="added member-note">
+					Member icons go here. Members without an icon get a generated default Atlantis symbol.
+				</p>
+
+				<p class="age-note">18+ only</p>
+
+				<a
+					href="https://discord.com/invite/4gQAndh"
+					target="_blank"
+					rel="noopener noreferrer"
+					class="hud-button"
+				>
+					Join us on Discord
+				</a>
+			</div>
 		</div>
 	</div>
 </section>
 
 <style>
-	@import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&display=swap');
-	@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:wght@400;500;600;700&display=swap');
-
-	/* The water scene, fixed behind the whole page; the layout's nav and the content draw over it. */
 	.scene-stage {
 		position: fixed;
 		inset: 0;
@@ -227,9 +317,33 @@
 		height: 100%;
 	}
 
-	/* Scroll room for the intro; the content starts coming up from the bottom of the screen as it ends. */
 	.scene-track {
 		height: calc(var(--intro-screens) * 100vh);
+	}
+
+	.mode {
+		position: fixed;
+		right: 1rem;
+		bottom: 1rem;
+		z-index: 2;
+		padding: 0.5rem 1rem;
+		border: 1px solid rgb(255 255 255 / 0.6);
+		border-radius: 999px;
+		background: rgb(20 30 50 / 0.55);
+		color: #fff;
+		font: inherit;
+		cursor: pointer;
+		backdrop-filter: blur(4px);
+	}
+
+	.mode.night {
+		background: rgb(255 214 150 / 0.85);
+		color: #1a1a2e;
+	}
+
+	.mode:focus-visible {
+		outline: 2px solid #fff;
+		outline-offset: 2px;
 	}
 
 	#community-section {
@@ -239,102 +353,97 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: #eeefb7;
 		z-index: 1;
-		font-family: 'Ubuntu Sans Mono', monospace;
+		font-family: 'Ubuntu Sans Mono Variable', monospace;
+		color: var(--hud-text);
 	}
 
 	.content-wrapper {
 		width: 100%;
-		text-align: center;
+		text-align: left;
 	}
 
-	.subsection-container{
+	#community-section :global(.card) {
+		color: var(--hud-text);
+	}
+
+	#community-section :global(.card h2),
+	#community-section :global(.card h3) {
+		color: var(--hud-heading);
+	}
+
+	.subsection-container {
 		min-height: 80vh;
 		display: flex;
 		flex-direction: column;
 		justify-content: center;
 	}
 
-	.intro__text {
-		font-size: 1.5rem;
-		line-height: 1.8;
-		margin-bottom: 1rem;
-		color: hsl(45, 67%, 74%);
+	.intro {
+		flex-direction: row;
+		align-items: center;
+		gap: 2rem;
+		width: 100%;
+		max-width: 75rem;
+		margin-inline: auto;
 	}
 
-	.tagline {
-		font-size: 1.2rem;
-		font-style: italic;
-		margin-bottom: 3rem;
-		color: rgba(238, 239, 183, 0.8);
+	.intro__card {
+		flex: 0 1 26rem;
 	}
 
-	.divider {
-		width: 100px;
-		height: 2px;
-		background: linear-gradient(to right, transparent, hsl(45, 67%, 74%), transparent);
-		/* Generous room between sections, so each one surfaces on its own as the water darkens. */
-		margin: clamp(6rem, 20vh, 12rem) auto;
+	.intro__media {
+		flex: 1;
+		max-width: 36rem;
+		margin-inline: auto;
+	}
+
+	.content-wrapper > * + * {
+		margin-top: clamp(10rem, 35vh, 20rem);
 	}
 
 	h2 {
-		font-family: 'Cinzel Decorative', cursive;
-		font-size: 2rem;
-		margin-bottom: 2rem;
-		color: hsl(45, 67%, 74%);
-		letter-spacing: 1px;
+		font-size: 1.9rem;
+		font-weight: 700;
+		line-height: 1.1;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+		color: var(--hud-heading);
+		margin-bottom: 1.5rem;
+	}
+
+	h2::after {
+		content: '';
+		display: block;
+		width: 3rem;
+		height: 3px;
+		margin-top: 1rem;
+		background: var(--hud-accent);
 	}
 
 	#community-section p {
-		font-size: 1.1rem;
-		line-height: 1.8;
-		margin-bottom: 1.5rem;
-		color: rgba(238, 239, 183, 0.9);
+		font-size: 1.05rem;
+		line-height: 1.6;
+		margin-bottom: 1rem;
+		color: var(--hud-text);
 	}
 
-	.discord-button {
-		display: inline-block;
-		margin: 3rem auto;
-		padding: 16px 40px;
-		background: linear-gradient(135deg, hsl(45, 67%, 80%) 0%, hsl(45, 67%, 68%) 100%);
-		color: #1a2838;
-		text-decoration: none;
-		font-family: 'Ubuntu Sans Mono', monospace;
-		font-size: 1.2rem;
+	#community-section .file-label {
+		margin: 0 0 1rem;
+		font-size: 0.8rem;
 		font-weight: 600;
-		border-radius: 8px;
-		transition: all 0.3s ease;
-		box-shadow: 0 4px 15px hsla(45, 67%, 74%, 0.4);
-		letter-spacing: 0.5px;
-	}
-
-	.discord-button:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 6px 20px hsla(45, 67%, 74%, 0.6);
-		background: linear-gradient(135deg, hsl(45, 67%, 76%) 0%, hsl(45, 67%, 64%) 100%);
-	}
-
-	.discord-button:active {
-		transform: translateY(0);
-		box-shadow: 0 2px 10px hsla(45, 67%, 74%, 0.4);
-	}
-
-	.text-link {
-		color: hsl(45, 67%, 74%);
-		font-weight: 600;
-		text-decoration: underline;
-		text-underline-offset: 0.18em;
-	}
-
-	.text-link:hover {
-		color: hsl(45, 67%, 82%);
+		letter-spacing: 0.15em;
+		text-transform: uppercase;
+		color: var(--hud-accent);
 	}
 
 	h3 {
-		font-size: 1.2rem;
+		font-size: 1.1rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
 		margin: 2rem 0 1rem;
-		color: hsl(45, 67%, 74%);
+		color: var(--hud-heading);
 	}
 
 	.news-grid {
@@ -352,8 +461,15 @@
 	}
 
 	.news-card {
-		display: block;
+		position: relative;
+		isolation: isolate;
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		gap: 1rem;
+		min-height: 12rem;
 		padding: 0.75rem;
+		overflow: hidden;
 		border-radius: 8px;
 		background: #243448;
 		color: inherit;
@@ -382,10 +498,34 @@
 
 	.news-card img,
 	.image-placeholder {
+		position: absolute;
+		inset: 0;
+		z-index: -2;
 		width: 100%;
-		aspect-ratio: 16 / 9;
+		height: 100%;
 		object-fit: cover;
-		border-radius: 6px;
+	}
+
+	.news-card::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background:
+			linear-gradient(to top, rgb(10 16 26 / 0.9), rgb(10 16 26 / 0.2) 60%, transparent),
+			linear-gradient(to bottom left, rgb(10 16 26 / 0.7), transparent 40%);
+	}
+
+	.news-body {
+		text-align: left;
+	}
+
+	#community-section .news-small .news-body p {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
 	}
 
 	.image-placeholder {
@@ -393,11 +533,11 @@
 		align-items: center;
 		justify-content: center;
 		background: #1d4a5d;
-		color: rgba(238, 239, 183, 0.7);
+		color: var(--hud-dim);
 	}
 
 	.news-card h3 {
-		margin: 0.75rem 0 0.25rem;
+		margin: 0 0 0.25rem;
 		font-size: 1rem;
 	}
 
@@ -412,35 +552,118 @@
 	}
 
 	#community-section .news-meta {
+		align-self: flex-end;
+		display: flex;
+		align-items: center;
+		gap: 0.6em;
+		margin: 0;
 		font-size: 0.85rem;
-		color: rgba(238, 239, 183, 0.6);
+		line-height: 1;
+		color: var(--hud-dim);
 	}
 
-	.event-list {
+	.news-author {
+		color: var(--hud-accent);
+		font-weight: 600;
+	}
+
+	.news-barcode {
+		height: 0.75em;
+		width: auto;
+		fill: currentColor;
+	}
+
+	.event-strip {
 		list-style: none;
 		padding: 0;
-		text-align: center;
-		line-height: 1.8;
-	}
-
-	.event-list li {
-		margin-bottom: 0.75rem;
-	}
-
-	.project-grid {
+		margin: 0;
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 1rem;
-		text-align: left;
+		grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+		gap: 4px;
+		clip-path: polygon(
+			28px 0,
+			100% 0,
+			100% calc(100% - 28px),
+			calc(100% - 28px) 100%,
+			0 100%,
+			0 28px
+		);
+	}
+
+	.event-panel {
+		position: relative;
+		isolation: isolate;
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		min-height: 32rem;
+		padding: 1.5rem;
+		overflow: hidden;
+	}
+
+	.event-panel img {
+		position: absolute;
+		inset: 0;
+		z-index: -2;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.event-panel::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background: linear-gradient(
+			to top,
+			rgb(6 14 24 / 0.95),
+			rgb(6 14 24 / 0.6) 40%,
+			transparent 70%
+		);
+	}
+
+	#community-section .event-panel h3 {
+		margin: 0 0 0.5rem;
+		font-size: 1.3rem;
+	}
+
+	#community-section .event-panel p {
+		margin-bottom: 0;
+	}
+
+	#community-section .event-panel .hud-button {
+		align-self: flex-start;
+		margin: 1.5rem 0 0;
+	}
+
+	#community-section .event-panel .hud-button::after {
+		content: none;
+	}
+
+	.projects {
+		max-width: 75rem;
+		margin-inline: auto;
+	}
+
+	.project-row {
+		display: flex;
+	}
+
+	.project-row + .project-row {
+		margin-top: clamp(10rem, 40vh, 20rem);
+	}
+
+	.project-row--flipped {
+		flex-direction: row-reverse;
 	}
 
 	.member-grid {
 		list-style: none;
 		padding: 0;
-		margin: 0 auto;
+		margin: 0;
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: center;
 		gap: 0.75rem;
 	}
 
@@ -486,21 +709,25 @@
 	#community-section .age-note {
 		font-weight: 600;
 		margin-top: 1rem;
+		color: var(--hud-dim);
 	}
 
-
 	@media (max-width: 768px) {
-		.news-grid,
-		.project-grid {
+		.news-grid {
 			grid-template-columns: 1fr;
 		}
 
-		.intro__text {
-			font-size: 1.2rem;
+		.project-row--flipped {
+			flex-direction: column;
 		}
 
-		.tagline {
-			font-size: 1rem;
+		.intro {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.intro__card {
+			flex: none;
 		}
 
 		h2 {
@@ -509,11 +736,6 @@
 
 		#community-section p {
 			font-size: 1rem;
-		}
-
-		.discord-button {
-			padding: 14px 32px;
-			font-size: 1.1rem;
 		}
 	}
 </style>

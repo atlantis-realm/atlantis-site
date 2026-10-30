@@ -1,5 +1,12 @@
 :root{
-    --nav-color: hsl(45, 67%, 74%);
+    /* HUD palette, shared by every page: bluish text, brightest for headings, dim for meta, cyan
+       for accents. */
+    --hud-heading: hsl(192, 75%, 90%);
+    --hud-text: hsl(200, 60%, 80%);
+    --hud-dim: hsl(203, 35%, 64%);
+    --hud-accent: hsl(185, 90%, 60%);
+    --hud-font: 'Ubuntu Sans Mono Variable', monospace;
+    --nav-color: hsl(200, 60%, 80%);
     --nav-current-color: rgba(8, 107, 125, 0.666)
 }
 
@@ -14,12 +21,17 @@ body {
     font-family: 'Times New Roman', Times, serif !important;
 }
 
-/* Headings whose letters wave in turn on hover; the wave action wraps each letter in a span. */
+/* Headings whose letters wave in turn on hover; the wave action wraps each letter in a span, and
+   each word's letters in one that doesn't wrap. */
+.wave-word {
+    white-space: nowrap;
+}
+
 .wave-char {
     display: inline-block;
 }
 
-:hover > .wave-char {
+:hover > .wave-word > .wave-char {
     animation: wave 2s infinite;
     animation-delay: calc(var(--i) * 120ms);
 }
@@ -32,7 +44,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    :hover > .wave-char {
+    :hover > .wave-word > .wave-char {
         animation: none;
     }
 }
@@ -65,4 +77,278 @@ body {
 
 .card a {
     color: hsl(190, 70%, 78%);
+}
+
+/* Cyan HUD panel on top of .card: bevelled top-left and bottom-right corners, and a thick cyan
+   frame. The frame is a ring cut with an evenodd clip-path (outer outline, then the inner one), so
+   the panel itself stays see-through.
+   Inner corners sit t*sqrt(2) further in along the bevel, which is where the 0.414 comes from. */
+.hud {
+    --hud-cyan: hsl(185, 90%, 60%);
+    --hud-bevel: 28px;
+    --hud-frame: 3px;
+    --hud-inner: calc(var(--hud-bevel) + var(--hud-frame) * 0.414);
+
+    position: relative;
+    isolation: isolate;
+    padding: 2rem 2.25rem;
+    border: none;
+    border-radius: 0;
+    background: linear-gradient(160deg, rgb(8 40 56 / 0.55), rgb(6 18 30 / 0.45));
+    clip-path: polygon(
+        var(--hud-bevel) 0, 100% 0, 100% calc(100% - var(--hud-bevel)),
+        calc(100% - var(--hud-bevel)) 100%, 0 100%, 0 var(--hud-bevel)
+    );
+}
+
+.hud::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--hud-cyan);
+    clip-path: polygon(
+        evenodd,
+        var(--hud-bevel) 0, 100% 0, 100% calc(100% - var(--hud-bevel)),
+        calc(100% - var(--hud-bevel)) 100%, 0 100%, 0 var(--hud-bevel), var(--hud-bevel) 0,
+        var(--hud-inner) var(--hud-frame), calc(100% - var(--hud-frame)) var(--hud-frame),
+        calc(100% - var(--hud-frame)) calc(100% - var(--hud-inner)),
+        calc(100% - var(--hud-inner)) calc(100% - var(--hud-frame)),
+        var(--hud-frame) calc(100% - var(--hud-frame)), var(--hud-frame) var(--hud-inner),
+        var(--hud-inner) var(--hud-frame)
+    );
+}
+
+@media (max-width: 768px) {
+    .hud {
+        --hud-bevel: 18px;
+        padding: 1.5rem 1.25rem;
+    }
+}
+
+/* A flat cyan block with cut corners, uppercase and tracked out. The fill is a clipped ::before
+   rather than clipping the button itself, so the circuit traces off its edge still show.
+   a.hud-button rather than .hud-button, to win over the .card a link colour. */
+a.hud-button {
+    --cut: 12px;
+    position: relative;
+    isolation: isolate;
+    display: inline-block;
+    margin: 2rem 0;
+    padding: 14px 32px;
+    color: #06121e;
+    text-decoration: none;
+    text-transform: uppercase;
+    font-family: 'Ubuntu Sans Mono Variable', monospace;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+}
+
+.hud-button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: hsl(185, 90%, 60%);
+    clip-path: polygon(
+        0 0,
+        calc(100% - var(--cut)) 0,
+        100% var(--cut),
+        100% 100%,
+        var(--cut) 100%,
+        0 calc(100% - var(--cut))
+    );
+    transition: background 0.2s ease;
+}
+
+/* Circuit traces running off the button's right edge, ending in vias. */
+.hud-button::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 100%;
+    width: 72px;
+    height: 40px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 40' fill='none' stroke='hsl(185,90%25,60%25)'%3E%3Cpath d='M0 17h18l8-8h32' stroke-width='2'/%3E%3Ccircle cx='63' cy='9' r='4' stroke-width='2'/%3E%3Cpath d='M0 25h28l6 6h12' stroke-width='1.5'/%3E%3Ccircle cx='50' cy='31' r='3' stroke-width='1.5'/%3E%3C/svg%3E")
+        no-repeat left center / contain;
+}
+
+.hud-button:hover::before {
+    background: hsl(185, 90%, 74%);
+}
+
+/* Smaller, outline-only variant: the ::before becomes a 2px ring (evenodd: outer shape, then the
+   inner one), with inner cut corners set in by line * 0.414 along the bevel. */
+a.hud-button--outline {
+    --cut: 8px;
+    --line: 2px;
+    --inset: calc(var(--cut) + var(--line) * 0.414);
+    margin: 1.5rem 0;
+    padding: 8px 18px;
+    font-size: 0.8rem;
+    color: var(--hud-accent);
+}
+
+.hud-button--outline::before {
+    clip-path: polygon(
+        evenodd,
+        0 0,
+        calc(100% - var(--cut)) 0,
+        100% var(--cut),
+        100% 100%,
+        var(--cut) 100%,
+        0 calc(100% - var(--cut)),
+        0 0,
+        var(--line) var(--line),
+        calc(100% - var(--inset)) var(--line),
+        calc(100% - var(--line)) var(--inset),
+        calc(100% - var(--line)) calc(100% - var(--line)),
+        var(--inset) calc(100% - var(--line)),
+        var(--line) calc(100% - var(--inset)),
+        var(--line) var(--line)
+    );
+}
+
+.hud-button--outline:hover {
+    color: var(--hud-heading);
+}
+
+.hud-button--outline::after {
+    width: 48px;
+    height: 27px;
+}
+
+.hud-button:active {
+    transform: translateY(1px);
+}
+
+/* Text inside HUD panels (.hud above) and bands (.hud-band below): the HUD palette in the
+   homepage's mono type, with its uppercase section headings under a short cyan rule. Later in the
+   file than .card, so these win over its gold text. */
+.hud,
+.hud-band {
+    color: var(--hud-text);
+    font-family: var(--hud-font);
+}
+
+.hud h2 {
+    margin: 0 0 1.5rem;
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--hud-heading);
+}
+
+.hud h2::after {
+    content: '';
+    display: block;
+    width: 3rem;
+    height: 3px;
+    margin-top: 1rem;
+    background: var(--hud-accent);
+}
+
+.hud h3,
+.hud-band h2,
+.hud-band h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--hud-heading);
+}
+
+.hud a:not(.hud-button),
+.hud-band a:not(.hud-button) {
+    color: var(--hud-accent);
+}
+
+/* A heading that's a link reads as the heading, lighting up on hover. */
+.hud-band h2 a:not(.hud-button),
+.hud-band h3 a:not(.hud-button) {
+    color: inherit;
+    text-decoration: none;
+}
+
+.hud-band h2 a:hover,
+.hud-band h3 a:hover {
+    color: var(--hud-accent);
+}
+
+@media (max-width: 768px) {
+    .hud h2 {
+        font-size: 1.5rem;
+    }
+}
+
+/* Small uppercase file-name tag above a section, in place of a big heading. */
+.file-label {
+    margin: 0 0 1rem;
+    font-family: var(--hud-font);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--hud-accent);
+}
+
+/* Who and when, like the homepage's news cards: "Alom_ << 2026.07.23". */
+.hud-meta {
+    margin: 0 0 0.75rem;
+    font-family: var(--hud-font);
+    font-size: 0.85rem;
+    color: var(--hud-dim);
+}
+
+.hud-meta-author {
+    margin-right: 0.6em;
+    font-weight: 600;
+    color: var(--hud-accent);
+}
+
+/* A run of panels in sequence (events, posts, milestones), banded together like the homepage's
+   event strip: a hairline apart, each faintly edged in cyan, with the band's outer corners
+   bevelled. Side by side, wrapping as needed; .hud-band--column stacks them. */
+.hud-band {
+    --hud-bevel: 28px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    clip-path: polygon(
+        var(--hud-bevel) 0, 100% 0, 100% calc(100% - var(--hud-bevel)),
+        calc(100% - var(--hud-bevel)) 100%, 0 100%, 0 var(--hud-bevel)
+    );
+}
+
+.hud-band--column {
+    grid-template-columns: 1fr;
+}
+
+.hud-band > * {
+    padding: 1.5rem 1.75rem;
+    background: linear-gradient(160deg, rgb(8 40 56 / 0.72), rgb(6 18 30 / 0.62));
+    box-shadow: inset 0 0 0 1px hsl(185 90% 60% / 0.18);
+}
+
+.hud-band > * > :last-child {
+    margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+    .hud-band {
+        --hud-bevel: 18px;
+    }
+
+    .hud-band > * {
+        padding: 1.25rem;
+    }
 }

@@ -1,17 +1,3 @@
-// Three.js scene for the /city hero: loads the exported glb, scrubs its baked
-// `Hero` camera animation from the scroll position, and draws the procedural
-// sky, the day/night cross-fade (night.ts) with bloom, and the circling
-// blimps (blimps.ts), the Lantern's heart glowing day and night with the energy spans and runes
-// inside it (lanternBeam.ts), the well's water (water.ts), walking, sitting, leaning and talking people
-// (people.ts: the baked characters of people.glb, or walking capsules without it) and the
-// robots crossing the avenue (robot.ts, robot.glb; none without it), the person-sized
-// minibots walking and talking among the people (minibots.ts, the same bake) and the drones
-// delivering and picking up parcels (drones.ts, procedural; none without the export's
-// drone_spots). Past frame 1 the camera drops to the floor for the section after
-// the hero (heroScroll, dropPose). Follows the
-// DicePreviewScene pattern (class owning renderer, scene, timer and RAF loop,
-// torn down by destroy()).
-
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -83,61 +69,29 @@ import {
 	type Minibots
 } from './minibots.ts';
 
-/** Device pixel ratio cap (budget: 1.5). */
 export const MAX_PIXEL_RATIO = 1.5;
-/** Name of the camera node and its animation clip in hero.glb. */
 export const HERO_CAMERA_NODE = 'HeroCamera';
 export const HERO_CLIP = 'Hero';
-/** The baked walkers (export_people.py, people_glb.mjs); optional, capsules without them. */
 export const PEOPLE_GLB_URL = '/city/people.glb';
 export const PEOPLE_META_URL = '/city/people_meta.json';
-/** The baked robots (export_robot.py, robot_glb.mjs); optional, no robots without them. */
 export const ROBOT_GLB_URL = '/city/robot.glb';
 export const ROBOT_META_URL = '/city/robot_meta.json';
-/**
- * Opening framing: the baked frame-250 shot has "Welcome to Atlantis" above the
- * middle of the screen, so the camera tilts up by this much at frame 250. The
- * tilt fades out (smoothstep) over the first OPENING_AIM_FADE_FRAMES of the
- * scroll, so the rest of the move is the Blender camera unchanged.
- */
 export const OPENING_PITCH_DEG = 3.6;
 export const OPENING_AIM_FADE_FRAMES = 60;
 
-/** Sun light (day). mixMode's sun level is scaled so that day gives exactly this. */
 const SUN_COLOR = 0xfff1dc;
 const SUN_INTENSITY = 2.6;
-/** The same light at night is the moon: cool, from the sky's uMoonDir (setSkyMoon). */
 const MOON_COLOR = 0xb4c4ff;
-/** Environment (PMREM of the sky) strength on the city's materials. */
 const ENV_INTENSITY = 1.0;
-/**
- * The night sky's PMREM is ~30-45x darker than the day one (sky.ts palettes:
- * horizon luminance 0.70 vs 0.024, zenith 0.20 vs 0.0043). mixMode's ambient is a
- * level relative to day, so a night bake is scaled back up by this gain; the
- * env keeps the night sky's colour while ambient 0.15 means 15% of day.
- */
 const NIGHT_ENV_GAIN = 30;
-/** Shadows: a square this many metres either side of the plaza, desktop only. */
 const SHADOW_HALF_SIZE = 150;
 const SHADOW_MAP_SIZE = 2048;
-/** How far back along the sun direction the shadow camera sits. */
 const SHADOW_LIGHT_DISTANCE = 600;
 const SHADOW_BIAS = -0.0004;
 const SHADOW_NORMAL_BIAS = 0.05;
-/**
- * UnrealBloomPass: strength comes from mixMode (halved on mobile). Its high pass
- * keeps whole texels above the threshold (linear, before exposure). Unscaled, 2.0
- * sits above the windows (~1.6) and bands (~1.4) and below the lamps (~2.6) and
- * the Lantern / well ring cyan (~3.1); every night glow is scaled by
- * NIGHT_GLOW_SCALE, so the threshold is too and the same lights bloom, only
- * calmer: bloom stays mild instead of hazing every facade.
- * Radius 0 weights the small mips, so the well ring at frame 250 (most of the
- * screen) glows without washing out "Welcome to Atlantis".
- */
 const BLOOM_RADIUS = 0;
 const BLOOM_THRESHOLD = 2.0 * NIGHT_GLOW_SCALE;
 const BLOOM_MOBILE_SCALE = 0.5;
-/** MSAA samples of the bloom path's render target (desktop; the canvas is antialiased there too). */
 const BLOOM_SAMPLES = 4;
 
 type NightMaterial = {
@@ -148,11 +102,26 @@ type NightMaterial = {
 export type CityHeroOptions = {
 	reducedMotion: boolean;
 	mobile: boolean;
+	rig?: CityRig;
 };
+
+export type CityRigPose = {
+	frame: number;
+	city: boolean;
+};
+
+export interface CityRig {
+	pose(camera: THREE.PerspectiveCamera, delta: number): CityRigPose;
+	render(
+		renderer: THREE.WebGLRenderer,
+		camera: THREE.PerspectiveCamera,
+		drawCity: () => void
+	): void;
+	onResize(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera): void;
+}
 
 export type CityHeroMode = 'day' | 'night';
 
-/** `safe_half_tan` interpolated linearly by frame, from f1 at frame 1 to f250 at frame 250. */
 export function safeHalfTanAt(frame: number, safe: HeroProps['safe_half_tan']): number {
 	const u = THREE.MathUtils.clamp(
 		(frame - HERO_FRAME_START) / (HERO_FRAME_END - HERO_FRAME_START),
@@ -174,10 +143,8 @@ export class CityHeroScene {
 	private readonly moonColor = new THREE.Color(MOON_COLOR);
 	private readonly sunDir = new THREE.Vector3(0, 1, 0);
 	private readonly plaza = new THREE.Vector3();
-	/** The camera's world position, for the robots' route weights. */
 	private readonly eye = new THREE.Vector3();
 	private nightMaterials: NightMaterial[] = [];
-	/** The energy spans and runes inside the Lantern's heart (lanternBeam.ts); null without a heart. */
 	private lanternEnergy: LanternEnergy | null = null;
 	private composer: EffectComposer | null = null;
 	private bloomPass: UnrealBloomPass | null = null;
@@ -186,22 +153,18 @@ export class CityHeroScene {
 	private robot: Robots | null = null;
 	private drones: Drones | null = null;
 	private minibots: Minibots | null = null;
-	/** The camera's view, for the drones' unseen entry and exit points. */
 	private readonly frustum = new THREE.Frustum();
 	private readonly viewProjection = new THREE.Matrix4();
 	private readonly probe = new THREE.Vector3();
 	private readonly inView = (p: Vec3): boolean =>
 		this.frustum.containsPoint(this.probe.set(p[0], p[1], p[2]));
-	/** The well's water material (water.ts), null when the glb has no props.well_water mesh. */
 	private water: THREE.Material | null = null;
-	/** Merged sun-shadow casters near the plaza (shadowProxy.ts), desktop only. */
 	private shadowProxy: THREE.Mesh | null = null;
 	private uninstallShadowLayer: (() => void) | null = null;
 	private camera: THREE.PerspectiveCamera;
 	private mixer: THREE.AnimationMixer | null = null;
 	private action: THREE.AnimationAction | null = null;
 	private envTarget: THREE.WebGLRenderTarget | null = null;
-	/** Gain of the current env bake (1 for day, NIGHT_ENV_GAIN for night), see applyMix(). */
 	private envGain = 1;
 	private animationFrameId: number | null = null;
 	private destroyed = false;
@@ -209,18 +172,10 @@ export class CityHeroScene {
 	private aspect = 16 / 9;
 	private frame = HERO_FRAME_END;
 	private targetFrame = HERO_FRAME_END;
-	/** Floor drop after frame 1 (heroScroll): 0 on the frame-1 pose, 1 with the eye on the floor. */
 	private drop = 0;
 	private targetDrop = 0;
-	/** Floor height under the frame-1 camera (found by groundUnderEnd()); null keeps the eye height. */
 	private groundY: number | null = null;
-	/** The render loop is stopped while the page covers the canvas (setPaused). */
 	private paused = false;
-	/**
-	 * The camera's pose as the mixer last set it. The mixer only writes a track
-	 * when its value changes, so setFrameTime() puts this back before the
-	 * opening tilt and the drop are applied again, and they never accumulate.
-	 */
 	private readonly animPos = new THREE.Vector3();
 	private readonly animQuat = new THREE.Quaternion();
 	private animSaved = false;
@@ -230,10 +185,8 @@ export class CityHeroScene {
 	private readonly dropMatrix = new THREE.Matrix4();
 	private readonly parentInverse = new THREE.Matrix4();
 	private readonly dropScale = new THREE.Vector3();
-	/** Clock of the moving things (clouds, blimps, water, people, minibots, robot, drones); frozen with reducedMotion. */
 	private motionTime = 0;
 	private mode: CityHeroMode = 'day';
-	/** Day/night mix: 0 day, 1 night; fades toward nightTarget. */
 	private night = 0;
 	private nightTarget = 0;
 
@@ -250,10 +203,8 @@ export class CityHeroScene {
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.renderer.shadowMap.enabled = !opts.mobile;
 		this.renderer.shadowMap.type = THREE.PCFShadowMap;
-		// Reset per frame in draw(), so stats() counts every pass of the bloom path.
 		this.renderer.info.autoReset = false;
 
-		// Placeholder until the glb's HeroCamera arrives.
 		this.camera = new THREE.PerspectiveCamera(33, this.aspect, 0.2, 8000);
 
 		this.sky = createSky();
@@ -269,12 +220,18 @@ export class CityHeroScene {
 		this.start();
 	}
 
-	/** hero_props.json, once load() has resolved. */
 	get props(): HeroProps | null {
 		return this.loadedProps;
 	}
 
-	/** The glTF scene, once load() has resolved. */
+	get webglRenderer(): THREE.WebGLRenderer {
+		return this.renderer;
+	}
+
+	addToScene(object: THREE.Object3D): void {
+		this.scene.add(object);
+	}
+
 	get root(): THREE.Group | null {
 		return this.loadedRoot;
 	}
@@ -312,9 +269,6 @@ export class CityHeroScene {
 		this.camera = camera;
 		this.scene.add(gltf.scene);
 
-		// Paused and time-driven: setFrameTime() sets action.time and applies it
-		// with mixer.update(0). (mixer.setTime() zeroes action.time, which a paused
-		// action never advances again.)
 		this.mixer = new THREE.AnimationMixer(gltf.scene);
 		this.action = this.mixer.clipAction(clip);
 		this.action.play();
@@ -323,10 +277,8 @@ export class CityHeroScene {
 		this.plazaCentre(gltf.scene, this.plaza);
 		this.prepareMaterials(gltf.scene);
 		this.nightMaterials = collectNightMaterials(gltf.scene);
-		// After prepareMaterials, so the water's clone keeps the vertex AO.
 		this.water = applyWater(gltf.scene, props.well_water);
 		if (this.water) {
-			// The glints are reflections of the night glows, so they calm down with them.
 			const lights = waterLights(gltf.scene, this.plaza.toArray()).map((l) => ({
 				...l,
 				color: l.color.map((c) => c * NIGHT_GLOW_SCALE) as Vec3
@@ -347,15 +299,12 @@ export class CityHeroScene {
 		const peopleOpts = {
 			perPath: this.opts.mobile ? PEOPLE_PER_PATH_MOBILE : PEOPLE_PER_PATH,
 			speed: WALK_SPEED,
-			// Sitting and leaning at the export's idle spots, talking at its talk spots; the capsules
-			// leave them out.
 			idle: this.opts.mobile
 				? { sit: IDLE_SITTERS_MOBILE, lean: IDLE_LEANERS_MOBILE }
 				: { sit: IDLE_SITTERS, lean: IDLE_LEANERS },
 			idleSpots: props.idle_spots,
 			convos: CONVO_GROUPS,
 			talkSpots: props.talk_spots,
-			// Conversation places for the minibots, only when robot.glb has their simplified meshes and clips.
 			botSlots:
 				robot && canMakeMinibots(robot.scene, robot.animations, robot.meta) ? MINIBOT_TALKERS : 0
 		};
@@ -363,12 +312,10 @@ export class CityHeroScene {
 			? createCharacterPeople(props.walk_paths, peopleOpts, cast)
 			: createPeople(props.walk_paths, peopleOpts);
 		for (const mesh of this.people.meshes) {
-			// Small casters near the camera; the shadow map only covers the plaza anyway.
 			mesh.castShadow = mesh.receiveShadow = !this.opts.mobile;
 			this.scene.add(mesh);
 		}
 		if (robot) {
-			// The minibots bake what they need from the robot scene, so they go first.
 			this.minibots = createMinibots(
 				robot.scene,
 				robot.animations,
@@ -390,22 +337,22 @@ export class CityHeroScene {
 		}
 		this.drones = createDrones(props.drone_spots, props.drone_sky, { shadows: !this.opts.mobile });
 		if (this.drones) this.scene.add(this.drones.object);
+		if (this.opts.rig) {
+			this.camera = new THREE.PerspectiveCamera(camera.fov, this.aspect, camera.near, camera.far);
+			this.camera.rotation.order = 'YXZ';
+			this.poseRig(this.opts.rig, 0);
+		}
 		this.updateMotion();
 		this.applyMix();
 		this.bakeEnvironment();
 		this.resize(this.canvas.clientWidth || 1, this.canvas.clientHeight || 1);
 	}
 
-	/** Scroll progress 0..1 → frame target (250..1), and the floor drop 0..1 after it (heroScroll). */
 	setScroll(progress: number, drop = 0): void {
 		this.targetFrame = scrollToFrame(progress);
 		this.targetDrop = THREE.MathUtils.clamp(drop, 0, 1);
 	}
 
-	/**
-	 * Stop the render loop while nothing of the canvas shows (the section after
-	 * the hero covers the viewport), and pick it up again where it was.
-	 */
 	setPaused(paused: boolean): void {
 		if (paused === this.paused || this.destroyed) return;
 		this.paused = paused;
@@ -413,10 +360,6 @@ export class CityHeroScene {
 			if (this.animationFrameId != null) cancelAnimationFrame(this.animationFrameId);
 			this.animationFrameId = null;
 		} else {
-			// No catch-up: the paused time doesn't reach the easing or motionTime.
-			// The scroll, mode and size may all have changed while covered (or the
-			// page loaded already covered), so the revealed strip shows the current
-			// pose and mode at once, drawn now rather than on the next frame.
 			this.frame = this.targetFrame;
 			this.drop = this.targetDrop * dropGate(this.frame);
 			this.setFrameTime(this.frame);
@@ -435,12 +378,9 @@ export class CityHeroScene {
 		this.renderer.setSize(w, h, false);
 		this.composer?.setSize(w, h);
 		this.updateProjection();
+		this.opts.rig?.onResize(this.renderer, this.camera);
 	}
 
-	/**
-	 * Switch day/night: a cross-fade over FADE_S, instant with reducedMotion or
-	 * before load. The environment map is re-baked from the sky once the fade ends.
-	 */
 	setMode(mode: CityHeroMode): void {
 		this.mode = mode;
 		this.nightTarget = mode === 'night' ? 1 : 0;
@@ -451,38 +391,31 @@ export class CityHeroScene {
 		return this.mode;
 	}
 
-	/** Draw calls and triangles of the last rendered frame. */
 	stats(): { calls: number; triangles: number } {
 		const { calls, triangles } = this.renderer.info.render;
 		return { calls, triangles };
 	}
 
-	/** Where each robot is: its route, direction, variant, palette and distance (none before load or without robot.glb). */
 	robotState(): RobotState[] {
 		return this.robot?.state() ?? [];
 	}
 
-	/** Each minibot's kind (walk / talk), variant, palette, height and position (none before load or without robot.glb). */
 	minibotState(): MinibotState[] {
 		return this.minibots?.state() ?? [];
 	}
 
-	/** Where each drone is: its trip kind, drop spot, take-off spot (-1: flew in), livery, position and whether its parcel is on the spot. */
 	droneState(): DroneState[] {
 		return this.drones?.state() ?? [];
 	}
 
-	/** Current (eased) Blender frame. */
 	getFrame(): number {
 		return this.frame;
 	}
 
-	/** Current (eased) floor drop, 0..1. */
 	getDrop(): number {
 		return this.drop;
 	}
 
-	/** Floor height under the frame-1 camera, null when nothing was found below it. */
 	getGround(): number | null {
 		return this.groundY;
 	}
@@ -509,7 +442,6 @@ export class CityHeroScene {
 		this.animPos.copy(this.camera.position);
 		this.animQuat.copy(this.camera.quaternion);
 		this.animSaved = true;
-		// The camera now holds the mixer's pose (animPos), so the tilt never accumulates.
 		const aim = THREE.MathUtils.smoothstep(
 			frame,
 			HERO_FRAME_END - OPENING_AIM_FADE_FRAMES,
@@ -519,12 +451,6 @@ export class CityHeroScene {
 		if (this.drop > 0) this.applyDrop();
 	}
 
-	/**
-	 * The floor drop on top of the frame's pose (frame 1 once the hero has
-	 * settled): straight down to groundY, keeping the heading while the pitch
-	 * and roll ease to level, so the horizon ends at the middle of the screen.
-	 * Worked in world space, then put back under the camera's parent.
-	 */
 	private applyDrop(): void {
 		const cam = this.camera;
 		cam.updateMatrixWorld();
@@ -548,10 +474,6 @@ export class CityHeroScene {
 		cam.updateMatrixWorld();
 	}
 
-	/**
-	 * The floor under the camera at frame 1 (the end of the hero move): the first
-	 * surface straight below it in the glb. Null, with a warning, when there is none.
-	 */
 	private groundUnderEnd(root: THREE.Object3D): number | null {
 		this.setFrameTime(HERO_FRAME_START);
 		root.updateMatrixWorld(true);
@@ -563,7 +485,6 @@ export class CityHeroScene {
 		return hit ? hit.point.y : null;
 	}
 
-	/** COLOR_0 carries the baked AO; make sure every material that has it uses it. */
 	private prepareMaterials(root: THREE.Object3D): void {
 		const castShadows = !this.opts.mobile;
 		const shadowSphere = new THREE.Sphere(this.plaza, SHADOW_HALF_SIZE * Math.SQRT2);
@@ -583,8 +504,6 @@ export class CityHeroScene {
 			mesh.castShadow = false;
 		});
 		if (!castShadows) return;
-		// Only meshes near the plaza cast (the shadow map covers just that area),
-		// and they cast through one merged proxy: one shadow draw call instead of ~110.
 		const built = buildShadowProxy(root, shadowSphere);
 		if (!built) return;
 		this.shadowProxy = built.proxy;
@@ -592,11 +511,6 @@ export class CityHeroScene {
 		this.uninstallShadowLayer = installShadowLayer(this.renderer);
 	}
 
-	/**
-	 * The Lantern's heart: a glowing glass tube (prepareHeartMaterial) with the
-	 * stone shaft cut away inside it (clipInsideHeart) and the energy spans and
-	 * runes drawn in it, after it.
-	 */
 	private setupLantern(root: THREE.Object3D, props: HeroProps): void {
 		const found = findLanternHeart(root, props.night_nodes);
 		if (!found) return;
@@ -609,7 +523,6 @@ export class CityHeroScene {
 		this.scene.add(this.lanternEnergy.object);
 	}
 
-	/** The well (props.well_water) marks the plaza; the export always writes it, so the origin is only a last resort. */
 	private plazaCentre(root: THREE.Object3D, centre: THREE.Vector3): THREE.Vector3 {
 		root.updateMatrixWorld(true);
 		centre.set(0, 0, 0);
@@ -617,7 +530,6 @@ export class CityHeroScene {
 		return water ? new THREE.Box3().setFromObject(water).getCenter(centre) : centre;
 	}
 
-	/** Horizontal direction from the camera's start (frame 250) toward the Lantern. */
 	private cityDirection(props: HeroProps): THREE.Vector3 {
 		const from = this.camera.getWorldPosition(new THREE.Vector3());
 		const dir = new THREE.Vector3(...props.lantern).sub(from);
@@ -625,7 +537,6 @@ export class CityHeroScene {
 		return dir.lengthSq() > 1e-6 ? dir.normalize() : new THREE.Vector3(0, 0, -1);
 	}
 
-	/** Aim the light at the plaza from `dir` (sun by day, moon by night). */
 	private placeLight(dir: THREE.Vector3): void {
 		this.sun.position.copy(this.plaza).addScaledVector(dir, SHADOW_LIGHT_DISTANCE);
 		this.sun.target.position.copy(this.plaza);
@@ -648,7 +559,6 @@ export class CityHeroScene {
 		cam.updateProjectionMatrix();
 	}
 
-	/** Advance the day/night fade by `delta` seconds; re-bake the environment when it lands. */
 	private stepNight(delta: number): void {
 		if (this.night === this.nightTarget) return;
 		this.night = fadeToward(this.night, this.nightTarget, delta);
@@ -656,7 +566,6 @@ export class CityHeroScene {
 		if (this.night === this.nightTarget && this.loadedRoot) this.bakeEnvironment();
 	}
 
-	/** Apply mixMode(night) to the light, environment, night list, sky, exposure and bloom. */
 	private applyMix(): void {
 		const t = this.night;
 		const mix = mixMode(t);
@@ -670,7 +579,6 @@ export class CityHeroScene {
 		const glow = nightGlow(t);
 		for (const { material, emissive } of this.nightMaterials) {
 			material.emissive.setRGB(emissive[0], emissive[1], emissive[2]);
-			// The Lantern's heart glows by day too.
 			material.emissiveIntensity =
 				material.name === LANTERN_HEART_MATERIAL
 					? heartGlow(t)
@@ -689,7 +597,6 @@ export class CityHeroScene {
 		else if (this.bloomPass) this.bloomPass.strength = 0;
 	}
 
-	/** Bloom path, built on first use: scene → bloom → output (tone mapping + sRGB). */
 	private ensureComposer(): UnrealBloomPass {
 		if (this.bloomPass) return this.bloomPass;
 		const size = this.renderer.getSize(new THREE.Vector2());
@@ -713,7 +620,6 @@ export class CityHeroScene {
 	private draw(delta: number): void {
 		this.renderer.info.reset();
 		if (this.composer && this.bloomPass && this.bloomPass.strength > 0) {
-			// The camera can be swapped by load(); keep the render pass on the current one.
 			(this.composer.passes[0] as RenderPass).camera = this.camera;
 			this.composer.render(delta);
 		} else {
@@ -721,10 +627,6 @@ export class CityHeroScene {
 		}
 	}
 
-	/**
-	 * Clouds, blimps, the Lantern's energy, water, people, minibots, the robots and the drones at motionTime (new
-	 * robot routes and drop spots picked in view at the frame, the near ones most).
-	 */
 	private updateMotion(): void {
 		this.sky.update(this.motionTime);
 		if (this.water) setWaterTime(this.water, this.motionTime);
@@ -748,7 +650,6 @@ export class CityHeroScene {
 			updateBlimps(this.blimps, props.blimps, props.lantern, this.motionTime);
 	}
 
-	/** Environment map from a sky-only scene (reflections and ambient light). */
 	private bakeEnvironment(): void {
 		const pmrem = new THREE.PMREMGenerator(this.renderer);
 		const skyScene = new THREE.Scene();
@@ -762,7 +663,6 @@ export class CityHeroScene {
 		this.updateEnvIntensity(mixMode(this.night).ambient);
 	}
 
-	/** Env strength: mixMode's ambient level (relative to day) times the current bake's gain. */
 	private updateEnvIntensity(ambient: number): void {
 		this.scene.environmentIntensity = ENV_INTENSITY * ambient * this.envGain;
 	}
@@ -773,28 +673,44 @@ export class CityHeroScene {
 		this.timer.update(timestamp);
 		const delta = this.timer.getDelta();
 
-		const prev = this.frame;
-		const prevDrop = this.drop;
-		this.frame = this.opts.reducedMotion
-			? this.targetFrame
-			: easeToward(this.frame, this.targetFrame, delta);
-		// The drop waits for the hero move to land on frame 1 (dropGate).
-		const dropTarget = this.targetDrop * dropGate(this.frame);
-		this.drop = this.opts.reducedMotion
-			? dropTarget
-			: easeToward(this.drop, dropTarget, delta, EASE_RATE, EASE_SNAP_DROP);
-		if (this.frame !== prev || this.drop !== prevDrop) {
-			this.setFrameTime(this.frame);
-			this.updateProjection();
+		const rig = this.opts.rig;
+		let showCity = true;
+		if (rig) {
+			showCity = this.poseRig(rig, delta);
+		} else {
+			const prev = this.frame;
+			const prevDrop = this.drop;
+			this.frame = this.opts.reducedMotion
+				? this.targetFrame
+				: easeToward(this.frame, this.targetFrame, delta);
+			const dropTarget = this.targetDrop * dropGate(this.frame);
+			this.drop = this.opts.reducedMotion
+				? dropTarget
+				: easeToward(this.drop, dropTarget, delta, EASE_RATE, EASE_SNAP_DROP);
+			if (this.frame !== prev || this.drop !== prevDrop) {
+				this.setFrameTime(this.frame);
+				this.updateProjection();
+			}
 		}
 
 		if (!this.opts.reducedMotion) this.motionTime += delta;
-		this.updateMotion();
+		if (showCity) this.updateMotion();
 		this.stepNight(delta);
 
-		this.draw(delta);
+		if (rig) rig.render(this.renderer, this.camera, () => this.draw(delta));
+		else this.draw(delta);
 		this.animationFrameId = requestAnimationFrame(this.tick);
 	};
+
+	private poseRig(rig: CityRig, delta: number): boolean {
+		const pose = rig.pose(this.camera, delta);
+		if (pose.frame !== this.frame) {
+			this.frame = pose.frame;
+			this.updateProjection();
+			rig.onResize(this.renderer, this.camera);
+		}
+		return pose.city;
+	}
 
 	start(): void {
 		if (this.animationFrameId != null || this.paused) return;
@@ -823,19 +739,16 @@ export class CityHeroScene {
 		this.uninstallShadowLayer?.();
 		this.sky.dispose();
 		this.envTarget?.dispose();
-		// The light's shadow map render target.
 		this.sun.dispose();
 		for (const pass of this.composer?.passes ?? []) pass.dispose();
 		this.composer?.dispose();
 		this.scene.clear();
 		this.scene.environment = null;
 		this.renderer.dispose();
-		// Release the WebGL context now rather than at garbage collection, so repeat visits don't pile them up.
 		this.renderer.forceContextLoss();
 	}
 }
 
-/** The baked walkers from people.glb + people_meta.json, or null (with one warning) when either fails. */
 async function loadCast(
 	loader: GLTFLoader,
 	glbUrl: string,
@@ -869,7 +782,6 @@ function findCamera(node: THREE.Object3D | undefined): THREE.PerspectiveCamera |
 	return found;
 }
 
-/** Every distinct NIGHT_ standard material under `root`, with its night emissive. */
 function collectNightMaterials(root: THREE.Object3D): NightMaterial[] {
 	const found = new Map<THREE.Material, NightMaterial>();
 	root.traverse((obj) => {
