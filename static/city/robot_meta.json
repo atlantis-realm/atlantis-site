@@ -1,0 +1,244 @@
+{
+ "version": 2,
+ "height": 4.063,
+ "walk_cycle_m": 3.69,
+ "walk_duration_s": 1.1667,
+ "idle_duration_s": 1.3333,
+ "palettes": [
+  "SimplePalette0000",
+  "SimplePalette0004",
+  "SimplePalette0007",
+  "SimplePalette0014",
+  "SimplePalette0020",
+  "SimplePalette0025",
+  "SimplePalette0029",
+  "SimplePalette0034",
+  "Gray_Col0025"
+ ],
+ "variants": [
+  {
+   "name": "ROBOT_V0",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 4452,
+   "main": "Base(A)_M_",
+   "slots": {
+    "Torso": "Base(A)_M_",
+    "Pelvis": "Base(A)_M_",
+    "Shoulder": "Base(A)_M_",
+    "Arm": "Base(A)_M_",
+    "Forearm": "Base(A)_M_",
+    "Thigh": "Base(A)_M_",
+    "Leg": "Base(A)_M_"
+   },
+   "attachments": [
+    [
+     "Attach_Back_JetPack_00",
+     "Back_M_Attachment"
+    ],
+    [
+     "Attach_Module_02",
+     "Shoulder_M_Attachment.L"
+    ],
+    [
+     "Attach_Module_02",
+     "Shoulder_M_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V1",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3428,
+   "main": "Base_S_",
+   "slots": {
+    "Torso": "Base_S_",
+    "Pelvis": "Base_S_",
+    "Shoulder": "Base_S_",
+    "Arm": "Base_S_",
+    "Forearm": "Base_S_",
+    "Thigh": "Base_S_",
+    "Leg": "Base_S_"
+   },
+   "attachments": [
+    [
+     "Attach_Back_JetPack_00",
+     "Back_S_Attachment"
+    ],
+    [
+     "Attach_Module_00",
+     "Thigh_S_Attachment.L"
+    ],
+    [
+     "Attach_Module_00",
+     "Thigh_S_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V2",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3388,
+   "main": "Base(A)_L_",
+   "slots": {
+    "Torso": "Base(A)_M_",
+    "Pelvis": "Base(A)_L_",
+    "Shoulder": "Base(A)_L_",
+    "Arm": "Base(A)_L_",
+    "Forearm": "Base(A)_L_",
+    "Thigh": "Base(A)_L_",
+    "Leg": "Base_S_"
+   },
+   "attachments": [
+    [
+     "Attach_Armour_02",
+     "Elbow_L_Attachment.L"
+    ],
+    [
+     "Attach_Armour_02",
+     "Elbow_L_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V3",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3430,
+   "main": "Base(A)_S_",
+   "slots": {
+    "Torso": "Base(A)_S_",
+    "Pelvis": "Base(A)_S_",
+    "Shoulder": "Base(A)_S_",
+    "Arm": "Base(A)_S_",
+    "Forearm": "Base(A)_S_",
+    "Thigh": "Base(A)_S_",
+    "Leg": "Base(A)_S_"
+   },
+   "attachments": [
+    [
+     "Attach_Armour_02",
+     "Elbow_S_Attachment.L"
+    ],
+    [
+     "Attach_Armour_02",
+     "Elbow_S_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V4",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3366,
+   "main": "Base_M_",
+   "slots": {
+    "Torso": "Base_M_",
+    "Pelvis": "Base(A)_M_",
+    "Shoulder": "Base_M_",
+    "Arm": "Base_M_",
+    "Forearm": "Base_M_",
+    "Thigh": "Base_M_",
+    "Leg": "Base_M_"
+   },
+   "attachments": [
+    [
+     "Attach_Module_02",
+     "Shoulder_M_Attachment.L"
+    ],
+    [
+     "Attach_Module_02",
+     "Shoulder_M_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V5",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3184,
+   "main": "Base_L_",
+   "slots": {
+    "Torso": "Base_L_",
+    "Pelvis": "Base_L_",
+    "Shoulder": "Base_L_",
+    "Arm": "Base_L_",
+    "Forearm": "Base_S_",
+    "Thigh": "Base_L_",
+    "Leg": "Base_L_"
+   },
+   "attachments": [
+    [
+     "Attach_Armour_00",
+     "Shoulder_L_Attachment.L"
+    ],
+    [
+     "Attach_Armour_00",
+     "Shoulder_L_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V6",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3630,
+   "main": "Base(A)_M_",
+   "slots": {
+    "Torso": "Base(A)_M_",
+    "Pelvis": "Base(A)_M_",
+    "Shoulder": "Base(A)_M_",
+    "Arm": "Base(A)_M_",
+    "Forearm": "Base(A)_M_",
+    "Thigh": "Base(A)_M_",
+    "Leg": "Base(A)_M_"
+   },
+   "attachments": [
+    [
+     "Attach_Armour_01",
+     "Knee_M_Attachment.L"
+    ],
+    [
+     "Attach_Armour_01",
+     "Knee_M_Attachment.R"
+    ]
+   ]
+  },
+  {
+   "name": "ROBOT_V7",
+   "height": 4.063,
+   "walk_cycle_m": 3.69,
+   "tris": 3450,
+   "main": "Base_S_",
+   "slots": {
+    "Torso": "Base_S_",
+    "Pelvis": "Base_S_",
+    "Shoulder": "Base_S_",
+    "Arm": "Base(A)_L_",
+    "Forearm": "Base_S_",
+    "Thigh": "Base_S_",
+    "Leg": "Base_S_"
+   },
+   "attachments": [
+    [
+     "Attach_Armour_01",
+     "Shoulder_S_Attachment.L"
+    ],
+    [
+     "Attach_Armour_01",
+     "Shoulder_S_Attachment.R"
+    ],
+    [
+     "Attach_Armour_02",
+     "Elbow_S_Attachment.L"
+    ],
+    [
+     "Attach_Armour_02",
+     "Elbow_S_Attachment.R"
+    ]
+   ]
+  }
+ ]
+}
